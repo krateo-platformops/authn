@@ -7,6 +7,10 @@
     "namespace": {
       "type": "string"
     },
+    "hitlApproval": {
+      "type": "boolean",
+      "description": "HITL approval gate on the mutating k8s tools (k8s_apply_manifest, k8s_patch_resource) \u2014 kagent requireApproval: true = pause for human approval (safe); false = autonomous."
+    },
     "modelConfig": {
       "type": "object",
       "additionalProperties": false,

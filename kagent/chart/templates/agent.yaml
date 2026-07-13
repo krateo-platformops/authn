@@ -31,6 +31,12 @@ spec:
           name: kagent-tool-server
           kind: RemoteMCPServer
           apiGroup: kagent.dev
+{{- if .Values.hitlApproval }}
+          # HITL: mutating tools pause for human approval (kagent requireApproval)
+          requireApproval:
+            - k8s_apply_manifest
+            - k8s_patch_resource
+{{- end }}
           toolNames:
             - k8s_get_resources
             - k8s_describe_resource
