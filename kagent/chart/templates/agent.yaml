@@ -9,9 +9,10 @@ metadata:
 spec:
   type: Declarative
   description: >-
-    Manages Krateo authentication (LDAP, OIDC, OAuth 2.0, basic auth) and is the dedicated expert on
-    the authn component — it knows the authn codebase (braghettos/krateo-authn) and the chart that packages
-    it (braghettos/krateo-authn-chart), declared in this chart's sources.
+    Authors and troubleshoots Krateo authentication across its four methods — basic-auth User
+    (basic.authn.krateo.io), LDAPConfig (ldap.authn.krateo.io), OIDCConfig (oidc.authn.krateo.io), and
+    OAuthConfig (oauth.authn.krateo.io) plus their auth Secrets — grounded in the braghettos/krateo-authn
+    codebase and braghettos/krateo-authn-chart CRDs/docs.
   declarative:
     deployment:
       env:
@@ -69,16 +70,27 @@ spec:
 {{- end }}
     a2aConfig:
       skills:
-        - id: manage-authn
-          name: Manage Krateo AuthN
+        - id: manage-authn-methods
+          name: Manage Krateo AuthN Methods
           description: >-
-            Create and troubleshoot Krateo authentication — basic auth Users, LDAPConfig,
-            OAuthConfig, OIDCConfig — grounded in the authn chart schema/CRDs and codebase.
+            Create and troubleshoot the four Krateo auth methods (basic User, LDAPConfig, OIDCConfig,
+            OAuthConfig) with their backing Secrets, grounded in the authn CRDs, chart, and codebase.
           tags: [krateo, authn, authentication, ldap, oidc, oauth]
           examples:
-            - Set up basic authentication for a new user.
-            - Configure OIDC against our identity provider.
-            - Which auth methods does Krateo support and what CRs do they need?
+            - Set up basic authentication by creating a User and its basic-auth Secret.
+            - Configure OIDCConfig against Azure Entra for our identity provider.
+            - Add a GitHub OAuthConfig with the mandatory restActionRef to resolve user groups.
+            - Why is my LDAPConfig not mapping LDAP groups to Krateo admins/devs?
+        - id: explain-authn-login-flow
+          name: Explain AuthN Login and Group Mapping
+          description: >-
+            Explain how each Krateo auth method logs a user in, the required redirect URIs, and how
+            users map to Krateo groups, verified against version-pinned docs.
+          tags: [krateo, authn, login, groups, redirect-uri]
+          examples:
+            - Which auth methods does Krateo support and what CRs and Secrets does each need?
+            - What redirect URI should I set for OIDC versus OAuth login?
+            - How do OAuthConfig users get mapped to the admins and devs groups?
     deployment:
       resources:
 {{- toYaml .Values.resources | nindent 8 }}
