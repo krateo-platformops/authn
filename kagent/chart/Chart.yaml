@@ -8,8 +8,8 @@ description: >-
 type: application
 # Pinned literally (NOT CHART_VERSION): this agent chart shares the krateo-authn-chart repo, whose
 # git tag is the authn chart's version — so the agent versions independently. Bump here on change.
-version: 0.1.8
-appVersion: CHART_VERSION
+version: CHART_VERSION
+appVersion: APP_VERSION
 home: https://krateo.io
 icon: https://github.com/krateoplatformops/krateo/blob/main/docs/media/logo.svg
 keywords:
