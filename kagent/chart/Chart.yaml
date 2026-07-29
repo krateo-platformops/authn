@@ -20,5 +20,5 @@ keywords:
   - authn
 # sources -> the codebase fork the agent is expert on, AND the chart that packages it.
 sources:
-  - https://github.com/braghettos/krateo-authn
+  - https://github.com/braghettos/krateo-authn/tree/APP_VERSION
   - https://github.com/braghettos/krateo-authn-chart/tree/SOURCE_REF
