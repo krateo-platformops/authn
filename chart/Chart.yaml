@@ -39,4 +39,4 @@ keywords:
   - identity
 # sources -> the braghettos fork of the authn codebase (hard rule).
 sources:
-  - https://github.com/braghettos/authn
+  - https://github.com/braghettos/krateo-authn/tree/APP_VERSION
