@@ -7,9 +7,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 
-	oauthv1alpha1 "github.com/krateoplatformops/authn/apis/authn/oauth/v1alpha1"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/client"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
+	oauthv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oauth/v1alpha1"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 )
 
 func GetOAuthConfig(rc *rest.Config, name string) (*oauthv1alpha1.OAuthConfig, error) {

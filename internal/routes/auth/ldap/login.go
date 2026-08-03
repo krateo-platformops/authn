@@ -7,12 +7,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/krateoplatformops/authn/internal/helpers/decode"
-	"github.com/krateoplatformops/authn/internal/helpers/encode"
-	kubeconfig "github.com/krateoplatformops/authn/internal/helpers/kube/config"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
-	"github.com/krateoplatformops/authn/internal/routes"
-	"github.com/krateoplatformops/authn/internal/status"
+	"github.com/krateo-platformops/authn/internal/helpers/decode"
+	"github.com/krateo-platformops/authn/internal/helpers/encode"
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
+	"github.com/krateo-platformops/authn/internal/routes"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
 	"k8s.io/client-go/rest"
 )

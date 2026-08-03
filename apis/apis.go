@@ -1,9 +1,9 @@
 package apis
 
 import (
-	basicv1alpha1 "github.com/krateoplatformops/authn/apis/authn/basic/v1alpha1"
-	oauthv1alpha1 "github.com/krateoplatformops/authn/apis/authn/oauth/v1alpha1"
-	serviceaccountv1alpha1 "github.com/krateoplatformops/authn/apis/authn/serviceaccount/v1alpha1"
+	basicv1alpha1 "github.com/krateo-platformops/authn/apis/authn/basic/v1alpha1"
+	oauthv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oauth/v1alpha1"
+	serviceaccountv1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 

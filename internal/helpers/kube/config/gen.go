@@ -8,7 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 
-	"github.com/krateoplatformops/authn/internal/helpers/kube"
+	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/rs/zerolog"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"

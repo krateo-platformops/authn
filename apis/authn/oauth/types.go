@@ -1,7 +1,7 @@
 // +k8s:deepcopy-gen=package
 package oauth
 
-import "github.com/krateoplatformops/authn/apis/core"
+import "github.com/krateo-platformops/authn/apis/core"
 
 type ConfigSpec struct {
 	// ClientID is the application's ID.

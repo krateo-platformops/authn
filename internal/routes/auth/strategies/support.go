@@ -1,6 +1,6 @@
 package strategies
 
-import "github.com/krateoplatformops/authn/apis/core"
+import "github.com/krateo-platformops/authn/apis/core"
 
 const (
 	defaultLoginText       = "Login with "

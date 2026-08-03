@@ -19,7 +19,7 @@ import (
 // cheap no-op — but the off-path in main.go skips wrapping entirely so the
 // handler chain stays byte-identical.
 func MetricsMiddleware(next http.Handler) http.Handler {
-	meter := otel.Meter("github.com/krateoplatformops/authn")
+	meter := otel.Meter("github.com/krateo-platformops/authn")
 
 	requestCount, _ := meter.Int64Counter(
 		"http.server.request.count",

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 
-	"github.com/krateoplatformops/plumbing/e2e"
+	"github.com/krateo-platformops/plumbing/e2e"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/envfuncs"

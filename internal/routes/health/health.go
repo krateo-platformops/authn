@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"sync/atomic"
 
-	"github.com/krateoplatformops/authn/internal/routes"
+	"github.com/krateo-platformops/authn/internal/routes"
 )
 
 // Path is the health probe route. Exported so instrumentation (e.g. OTel

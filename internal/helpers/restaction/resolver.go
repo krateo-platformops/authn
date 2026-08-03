@@ -7,12 +7,12 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/krateoplatformops/authn/apis/core"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/secrets"
-	"github.com/krateoplatformops/authn/internal/telemetry"
-	xcontext "github.com/krateoplatformops/plumbing/context"
-	"github.com/krateoplatformops/plumbing/kubeutil"
-	templatesv1 "github.com/krateoplatformops/snowplow/apis/templates/v1"
+	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/authn/internal/telemetry"
+	xcontext "github.com/krateo-platformops/plumbing/context"
+	"github.com/krateo-platformops/plumbing/kubeutil"
+	templatesv1 "github.com/krateo-platformops/snowplow/apis/templates/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 )

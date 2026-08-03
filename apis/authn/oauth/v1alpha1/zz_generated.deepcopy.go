@@ -21,7 +21,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"github.com/krateoplatformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/apis/core"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 

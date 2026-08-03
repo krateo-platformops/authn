@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/krateoplatformops/authn/internal/helpers/encode"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/config/storage"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
-	"github.com/krateoplatformops/authn/internal/routes"
+	"github.com/krateo-platformops/authn/internal/helpers/encode"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
+	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/rs/zerolog"
 	"k8s.io/client-go/rest"
 )

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/krateoplatformops/authn/internal/helpers/encode"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/resolvers"
+	"github.com/krateo-platformops/authn/internal/helpers/encode"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/rs/zerolog"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"

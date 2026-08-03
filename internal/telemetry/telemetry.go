@@ -17,7 +17,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/krateoplatformops/authn/internal/env"
+	"github.com/krateo-platformops/authn/internal/env"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"

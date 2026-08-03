@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/krateoplatformops/authn/internal/helpers/userinfo"
-	"github.com/krateoplatformops/plumbing/jwtutil"
+	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/plumbing/jwtutil"
 )
 
 type Extras struct {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/krateoplatformops/authn/apis/authn/oauth/v1alpha1"
-	"github.com/krateoplatformops/authn/apis/core"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
+	"github.com/krateo-platformops/authn/apis/authn/oauth/v1alpha1"
+	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"golang.org/x/oauth2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

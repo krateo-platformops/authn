@@ -9,10 +9,10 @@ import (
 	"text/template"
 
 	"github.com/go-ldap/ldap/v3"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/resolvers"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/secrets"
-	"github.com/krateoplatformops/authn/internal/helpers/userinfo"
-	"github.com/krateoplatformops/authn/internal/shortid"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/shortid"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 )

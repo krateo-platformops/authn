@@ -11,10 +11,10 @@ import (
 	"net/url"
 	"strings"
 
-	oidcv1alpha1 "github.com/krateoplatformops/authn/apis/authn/oidc/v1alpha1"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/client"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
-	"github.com/krateoplatformops/authn/internal/telemetry"
+	oidcv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oidc/v1alpha1"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
+	"github.com/krateo-platformops/authn/internal/telemetry"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )

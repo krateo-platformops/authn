@@ -1,7 +1,7 @@
 package v1alpha1
 
 import (
-	"github.com/krateoplatformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/apis/core"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 

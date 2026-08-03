@@ -10,10 +10,10 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/krateoplatformops/authn/apis/core"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/resolvers"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/secrets"
-	"github.com/krateoplatformops/authn/internal/telemetry"
+	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/authn/internal/telemetry"
 	"k8s.io/client-go/rest"
 )
 

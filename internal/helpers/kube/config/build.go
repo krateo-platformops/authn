@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/krateoplatformops/authn/internal/helpers/kube/config/storage"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/configmaps"
-	"github.com/krateoplatformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/configmaps"
+	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/rs/zerolog"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"

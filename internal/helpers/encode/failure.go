@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/krateoplatformops/authn/internal/status"
+	"github.com/krateo-platformops/authn/internal/status"
 )
 
 func Unauthorized(w http.ResponseWriter, err error) error {

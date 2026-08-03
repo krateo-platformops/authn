@@ -3,16 +3,16 @@ package restaction
 import (
 	"context"
 
-	"github.com/krateoplatformops/authn/apis/core"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/rest"
 
-	snowplowapis "github.com/krateoplatformops/snowplow/apis"
-	snowplow "github.com/krateoplatformops/snowplow/apis/templates/v1"
+	snowplowapis "github.com/krateo-platformops/snowplow/apis"
+	snowplow "github.com/krateo-platformops/snowplow/apis/templates/v1"
 )
 
 // Add this to your client package

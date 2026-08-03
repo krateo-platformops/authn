@@ -7,9 +7,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 
-	ldapv1alpha1 "github.com/krateoplatformops/authn/apis/authn/ldap/v1alpha1"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/client"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
+	ldapv1alpha1 "github.com/krateo-platformops/authn/apis/authn/ldap/v1alpha1"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 )
 
 func LDAPConfigGet(rc *rest.Config, name string) (*ldapv1alpha1.LDAPConfig, error) {

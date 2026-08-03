@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	sav1alpha1 "github.com/krateoplatformops/authn/apis/authn/serviceaccount/v1alpha1"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/client"
-	"github.com/krateoplatformops/authn/internal/helpers/kube/util"
+	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )
