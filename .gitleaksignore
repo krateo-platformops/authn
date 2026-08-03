@@ -1,0 +1,3 @@
+# gitleaks allowlist — VERIFIED FALSE POSITIVES (2026-08-03). README curl example (public reqbin.com echo service) — not a live credential.
+# Precise fingerprints only; new/real secrets in these files are still caught.
+feaef1054aa397d81359eb8c660aad90958a721e:README.md:curl-auth-header:111
