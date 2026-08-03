@@ -1,0 +1,136 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: oauthconfigs.oauth.authn.krateo.io
+spec:
+  group: oauth.authn.krateo.io
+  names:
+    categories:
+    - krateo
+    - authn
+    - oauth
+    kind: OAuthConfig
+    listKind: OAuthConfigList
+    plural: oauthconfigs
+    singular: oauthconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: OAuthConfig is a AuthN Service OAuth configuration.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              authStyle:
+                default: 0
+                description: |-
+                  AuthStyle optionally specifies how the endpoint wants the
+                  client ID & client secret sent. The zero value means to
+                  auto-detect.
+                type: integer
+              authURL:
+                description: 'AuthURL: oauth2 provider authorization URL'
+                type: string
+              clientID:
+                description: ClientID is the application's ID.
+                type: string
+              clientSecretRef:
+                description: ClientSecret is the application's secret.
+                properties:
+                  key:
+                    description: The key to select.
+                    type: string
+                  name:
+                    description: Name of the referenced object.
+                    type: string
+                  namespace:
+                    description: Namespace of the referenced object.
+                    type: string
+                required:
+                - key
+                - name
+                - namespace
+                type: object
+              graphics:
+                description: An object that contains the description of the frontend
+                  elements of this login method
+                properties:
+                  backgroundColor:
+                    description: Background color of the login button
+                    type: string
+                  displayName:
+                    description: Text on the login button
+                    type: string
+                  icon:
+                    description: Icon of the login button
+                    type: string
+                  textColor:
+                    description: Text color of the login button
+                    type: string
+                required:
+                - backgroundColor
+                - displayName
+                - icon
+                - textColor
+                type: object
+              redirectURL:
+                description: |-
+                  RedirectURL is the URL to redirect users going through
+                  the OAuth flow, after the resource owner's URLs.
+                type: string
+              restActionRef:
+                description: An ObjectRef is a reference to an object with a known
+                  type in an arbitrary namespace.
+                properties:
+                  name:
+                    description: Name of the referenced object.
+                    type: string
+                  namespace:
+                    description: Namespace of the referenced object.
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+              scopes:
+                description: Scope specifies optional requested permissions.
+                items:
+                  type: string
+                type: array
+              tokenURL:
+                description: 'TokenURL: oauth2 provider token exchange URL'
+                type: string
+            required:
+            - authURL
+            - clientID
+            - clientSecretRef
+            - redirectURL
+            - scopes
+            - tokenURL
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

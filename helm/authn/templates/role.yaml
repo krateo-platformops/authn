@@ -1,0 +1,66 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  # suffixed with the namespace (like the ClusterRoles) to avoid colliding with the
+  # release-named Role that Krateo's composition-dynamic-controller pre-creates when
+  # this chart is installed as a Composition.
+  name: {{ include "authn.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "authn.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  - configmaps
+  verbs:
+  - get
+  - list
+  - create
+  - update
+  - delete
+- apiGroups:
+  - templates.krateo.io
+  resources:
+  - restactions
+  verbs:
+  - get
+  - create
+  - update
+  - delete
+# krateo basic.authn crd
+- apiGroups:
+  - basic.authn.krateo.io
+  resources:
+  - users
+  verbs:
+  - get
+  - list
+  - watch
+# krateo oauth.authn crd
+- apiGroups:
+  - oauth.authn.krateo.io
+  resources:
+  - oauthconfigs
+  verbs:
+  - get
+  - list
+  - watch
+# LDAP crd
+- apiGroups:
+  - ldap.authn.krateo.io
+  resources:
+  - ldapconfigs
+  verbs:
+  - get
+  - list
+  - watch
+# OIDC crd
+- apiGroups:
+  - oidc.authn.krateo.io
+  resources:
+  - oidcconfigs
+  verbs:
+  - get
+  - list
+  - watch

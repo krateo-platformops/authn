@@ -1,0 +1,12 @@
+# Registers the authn blueprint with Krateo: generates a CRD + controller from the
+# published OCI chart's values.schema.json. Apply this (or let the installer umbrella
+# emit it) before creating an Authn Composition.
+apiVersion: core.krateo.io/v1alpha1
+kind: CompositionDefinition
+metadata:
+  name: krateo-authn
+  namespace: krateo-system
+spec:
+  chart:
+    url: oci://ghcr.io/krateo-platformops/charts/authn
+    version: "0.22.13"

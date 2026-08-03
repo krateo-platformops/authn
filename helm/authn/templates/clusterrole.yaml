@@ -1,0 +1,67 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "authn.fullname" . }}-{{ .Release.Namespace }}
+  labels:
+    {{- include "authn.labels" . | nindent 4 }}
+rules:
+# allow creating, deleting and retrieving any CertificateSigningRequest
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - certificatesigningrequests
+  verbs:
+  - get
+  - create
+  - list
+  - delete
+  - watch
+  - approve
+  - update
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - signers
+  resourceNames:
+  - kubernetes.io/kube-apiserver-client
+  verbs:
+  - approve
+# allow approving a CertificateSigningRequest:
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - certificatesigningrequests/approval
+  verbs:
+  - update
+# allow validating a presented ServiceAccount token via the TokenReview API
+# (the /serviceaccount/login intra-service auth strategy, authn >= 0.23.0).
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+# allow reading the ServiceAccount exchange-allowlist mappings that
+# /serviceaccount/login resolves the authenticated ServiceAccount against.
+- apiGroups:
+  - serviceaccount.authn.krateo.io
+  resources:
+  - serviceaccounts
+  verbs:
+  - get
+  - list
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "authn.fullname" . }}-group-{{ .Release.Namespace }}
+  labels:
+    {{- include "authn.labels" . | nindent 4 }}
+rules:
+- apiGroups:
+  - templates.krateo.io
+  resources:
+  - restactions
+  verbs:
+  - get

@@ -1,0 +1,122 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: oidcconfigs.oidc.authn.krateo.io
+spec:
+  group: oidc.authn.krateo.io
+  names:
+    categories:
+    - krateo
+    - authn
+    - oidc
+    kind: OIDCConfig
+    listKind: OIDCConfigList
+    plural: oidcconfigs
+    singular: oidcconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: OIDCConfig is a AuthN Service OIDC configuration.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            properties:
+              additionalScopes:
+                type: string
+              authorizationURL:
+                type: string
+              clientID:
+                type: string
+              clientSecret:
+                description: A SecretKeySelector is a reference to a secret key in
+                  an arbitrary namespace.
+                properties:
+                  key:
+                    description: The key to select.
+                    type: string
+                  name:
+                    description: Name of the referenced object.
+                    type: string
+                  namespace:
+                    description: Namespace of the referenced object.
+                    type: string
+                required:
+                - key
+                - name
+                - namespace
+                type: object
+              discoveryURL:
+                type: string
+              graphics:
+                description: An object that contains the description of the frontend
+                  elements of this login method
+                properties:
+                  backgroundColor:
+                    description: Background color of the login button
+                    type: string
+                  displayName:
+                    description: Text on the login button
+                    type: string
+                  icon:
+                    description: Icon of the login button
+                    type: string
+                  textColor:
+                    description: Text color of the login button
+                    type: string
+                required:
+                - backgroundColor
+                - displayName
+                - icon
+                - textColor
+                type: object
+              redirectURI:
+                type: string
+              restActionRef:
+                description: An ObjectRef is a reference to an object with a known
+                  type in an arbitrary namespace.
+                properties:
+                  name:
+                    description: Name of the referenced object.
+                    type: string
+                  namespace:
+                    description: Namespace of the referenced object.
+                    type: string
+                required:
+                - name
+                - namespace
+                type: object
+              tokenURL:
+                type: string
+              userInfoURL:
+                type: string
+            required:
+            - clientID
+            - clientSecret
+            - redirectURI
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true

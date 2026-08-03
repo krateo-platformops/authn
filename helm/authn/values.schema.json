@@ -1,0 +1,299 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "type": "object",
+  "title": "Authn",
+  "description": "Krateo PlatformOps AuthN service. Full-coverage schema for the authn chart (pinned to installer 2.7.0 / chart 0.22.2). Every key of the chart's values.yaml is settable on the Composition spec; omitted keys use chart defaults.",
+  "additionalProperties": false,
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "title": "Replica count",
+      "minimum": 0
+    },
+    "image": {
+      "type": "object",
+      "title": "Image",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "title": "Repository"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "title": "Pull policy",
+          "enum": [
+            "IfNotPresent",
+            "Always",
+            "Never"
+          ]
+        },
+        "tag": {
+          "type": "string",
+          "title": "Tag",
+          "description": "Overrides the image tag whose default is the chart appVersion."
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "title": "Image pull secrets",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "nameOverride": {
+      "type": "string"
+    },
+    "fullnameOverride": {
+      "type": "string"
+    },
+    "serviceAccount": {
+      "type": "object",
+      "title": "Service account",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "automount": {
+          "type": "boolean"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podSecurityContext": {
+      "type": "object"
+    },
+    "securityContext": {
+      "type": "object"
+    },
+    "service": {
+      "type": "object",
+      "title": "Service",
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "type": {
+          "type": "string",
+          "title": "Service type",
+          "enum": [
+            "ClusterIP",
+            "NodePort",
+            "LoadBalancer"
+          ]
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "title": "Ingress",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "host": {
+                "type": "string"
+              },
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "pathType": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "secretName": {
+                "type": "string"
+              },
+              "hosts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "title": "Resources"
+    },
+    "livenessProbe": {
+      "type": "object",
+      "title": "Liveness probe"
+    },
+    "readinessProbe": {
+      "type": "object",
+      "title": "Readiness probe"
+    },
+    "autoscaling": {
+      "type": "object",
+      "title": "Autoscaling",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxReplicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "targetCPUUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "targetMemoryUtilizationPercentage": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "volumes": {
+      "type": "array",
+      "title": "Volumes",
+      "items": {
+        "type": "object"
+      }
+    },
+    "volumeMounts": {
+      "type": "array",
+      "title": "Volume mounts",
+      "items": {
+        "type": "object"
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "affinity": {
+      "type": "object"
+    },
+    "env": {
+      "type": "object",
+      "title": "Environment",
+      "description": "AuthN service environment variables.",
+      "properties": {
+        "AUTHN_DEBUG": {
+          "type": "string"
+        },
+        "AUTHN_KUBECONFIG_CLUSTER_NAME": {
+          "type": "string"
+        },
+        "AUTHN_KUBECONFIG_CRT_EXPIRES_IN": {
+          "type": "string"
+        },
+        "AUTHN_KUBECONFIG_SERVER_URL": {
+          "type": "string"
+        },
+        "AUTHN_CORS": {
+          "type": "string"
+        },
+        "AUTHN_DUMP_ENV": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "jwtSignKeySecretName": {
+      "type": "string",
+      "title": "JWT sign key secret name",
+      "description": "Name of the Secret holding the JWT signing key (created by the installer umbrella before authn)."
+    },
+    "global": {
+      "type": "object",
+      "title": "Global values",
+      "description": "Helm global values (injected when this chart is used as a subchart)."
+    }
+  }
+}
