@@ -15,6 +15,11 @@
       "title": "Image",
       "additionalProperties": false,
       "properties": {
+        "registry": {
+          "type": "string",
+          "title": "Registry",
+          "default": "ghcr.io"
+        },
         "repository": {
           "type": "string",
           "title": "Repository"
@@ -293,7 +298,14 @@
     "global": {
       "type": "object",
       "title": "Global values",
-      "description": "Helm global values (injected when this chart is used as a subchart)."
+      "description": "Helm global values (injected when this chart is used as a subchart).",
+      "properties": {
+        "imageRegistry": {
+          "type": "string",
+          "title": "Image registry",
+          "description": "Registry-host override applied to every image (mirror / air-gapped installs). Replaces the per-image registry host; repository paths are preserved."
+        }
+      }
     }
   }
 }

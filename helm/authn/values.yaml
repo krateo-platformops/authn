@@ -2,10 +2,17 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+# Global values shared across (sub)charts.
+global:
+  # Optional registry-host override applied to EVERY image (mirror / air-gapped installs).
+  # When set, it replaces the per-image `registry` host; repository paths are preserved.
+  imageRegistry: ""
+
 replicaCount: 1
 
 image:
-  repository: ghcr.io/krateo-platformops/authn
+  registry: ghcr.io
+  repository: krateo-platformops/authn
   pullPolicy: IfNotPresent
   # Overrides the image tag whose default is the chart appVersion.
   tag: ""
