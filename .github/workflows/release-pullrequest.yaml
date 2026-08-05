@@ -15,9 +15,8 @@ jobs:
       contents: read
       packages: write
     with:
-      context: go/authn
+      modules: '[{"mod":"authn","context":"go/authn"}]'
       push: false
-
   checks:
     uses: krateo-platformops/.github/.github/workflows/component-go-checks.yaml@main
     with:
