@@ -1,3 +1,6 @@
+# PR CI via shared reusable workflows (krateo-platformops/.github): a validate-only multi-platform
+# image build (component-image-build, push: false) + Go checks (component-go-checks: unit tests +
+# CRD-drift guard) run from the go/authn module dir. One source of truth, and go/-fold-safe.
 name: release-pullrequest
 
 on:
@@ -5,86 +8,19 @@ on:
     branches:
       - main
 
-env:
-  GHCR_REPO: ghcr.io/${{ github.repository }}
-
 jobs:
   build:
-    name: Build and Push
-    strategy:
-      matrix:
-        runner: [ubuntu-22.04-arm, ubuntu-22.04]
-        include:
-          - runner: ubuntu-22.04-arm
-            platform: linux/arm64
-          - runner: ubuntu-22.04
-            platform: linux/amd64
-    runs-on: ${{ matrix.runner }}
-
+    uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@main
     permissions:
       contents: read
       packages: write
-
-    steps:
-      - name: Prepare
-        run: |
-          platform=${{ matrix.platform }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.GHCR_REPO }}
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and NOT push
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          platforms: ${{ matrix.platform }}
-          push: false
-          labels: ${{ steps.meta.outputs.labels }}
-
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
-      - name: Gather dependencies
-        run: go mod download
-      - name: Run coverage
-        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-
-  crds-drift:
-    name: CRDs drift guard
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
-      - name: Regenerate CRDs
-        run: make generate
-      - name: Fail on stale CRDs
-        run: |
-          if ! git diff --exit-code crds/; then
-            echo "::error::Committed CRDs in crds/ are stale. Run 'make generate' and commit the result." >&2
-            exit 1
-          fi
-          echo "CRDs are up to date."
+    with:
+      modules: '[{"mod":"authn","context":"go/authn"}]'
+      push: false
+  checks:
+    uses: krateo-platformops/.github/.github/workflows/component-go-checks.yaml@main
+    with:
+      module: go/authn
+      crd_drift: true
+      test_args: -race -coverprofile=coverage.txt -covermode=atomic ./...
+    secrets: inherit
