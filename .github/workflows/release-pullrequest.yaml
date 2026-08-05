@@ -23,4 +23,5 @@ jobs:
     with:
       module: go/authn
       crd_drift: true
+      test_args: -race -coverprofile=coverage.txt -covermode=atomic ./...
     secrets: inherit
