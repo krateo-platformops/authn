@@ -1,0 +1,21 @@
+---
+# The intra-service-auth exchange allowlist entry: the Kubernetes ServiceAccount
+# referenced below may exchange its projected (audience=authn) token for a Krateo
+# identity named by metadata.name, grouped by spec.groups.
+apiVersion: serviceaccount.authn.krateo.io/v1alpha1
+kind: ServiceAccount
+metadata:
+  # metadata.name is the ISSUED username (the minted cert's CN) — it need not
+  # equal the Kubernetes ServiceAccount name.
+  name: my-backend-service
+  # MUST be authn's operator namespace (the release namespace).
+  namespace: krateo-system
+spec:
+  serviceAccountRef:
+    # The Kubernetes ServiceAccount allowed to exchange its token.
+    namespace: krateo-system
+    name: my-backend-service
+  groups:
+    # Becomes the issued cert's O= — bind RBAC to this group, not in authn.
+    - krateo:services
+  displayName: My Backend Service

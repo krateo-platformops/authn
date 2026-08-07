@@ -1,0 +1,26 @@
+---
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/basic-auth
+metadata:
+  name: cyberjoker-password
+  namespace: krateo-system
+stringData:
+  password: "123456"
+---
+apiVersion: basic.authn.krateo.io/v1alpha1
+kind: User
+metadata:
+  # metadata.name is the login username (and the minted cert's CN).
+  name: cyberjoker
+  # MUST be authn's operator namespace (the release namespace) — CRs elsewhere are invisible.
+  namespace: krateo-system
+spec:
+  displayName: Cyber Joker
+  avatarURL: https://i.pravatar.cc/256?img=70
+  groups:
+    - devs
+  passwordRef:
+    namespace: krateo-system
+    name: cyberjoker-password
+    key: password
