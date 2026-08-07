@@ -1,6 +1,35 @@
+---
+type: Decision
+title: Kubernetes intra-service authentication (SA token → service JWT)
+description: Decision record — let any in-cluster Krateo service exchange its own audience-bound ServiceAccount token (TokenReview-validated) for an authn JWT + clientconfig; shipped as the serviceaccount login strategy in 0.23.0.
+resource: serviceaccounts.serviceaccount.authn.krateo.io
+status: implemented
+tags: [decision, serviceaccount, tokenreview, intra-service-auth]
+timestamp: 2026-08-07T00:00:00Z
+---
+
 # Design: Kubernetes intra-service authentication (SA token → service JWT)
 
-> Status: **Draft for discussion** · Date: 2026-06-20
+> Status: **implemented** — shipped in 0.23.0 (2026-06-20) as designed. The
+> `serviceaccount` strategy (`go/authn/internal/routes/auth/serviceaccount/login.go`),
+> the `ServiceAccount` mapping CRD
+> (`go/authn/apis/authn/serviceaccount/v1alpha1/types.go`) and the TokenReview +
+> allowlist flow all match §2–§4. Implementation deltas from the letter of this
+> design:
+> - the mapping ref type is the existing `core.ObjectRef` (`{namespace,name}`), not a
+>   new `ServiceAccountSelector`;
+> - the handler issues the kubeconfig + JWT through the shared
+>   `KubeconfigGenerator` (which persists the `AuthInfo`) like every other strategy —
+>   `signup.Do` stays boot-only for authn's own identity;
+> - the issued-JWT TTL is the standard cert-duration knob
+>   (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, default 24h), not a separate short
+>   service-token TTL;
+> - the audience is configurable (`--serviceaccount-audience` /
+>   `AUTHN_SERVICEACCOUNT_AUDIENCE`, default `authn`).
+> Current behavior contract: [behavior.md](../behavior.md); pitfalls:
+> [gotchas.md](../gotchas.md). The multi-cluster question (§6) remains open.
+>
+> Original: Draft for discussion · Date: 2026-06-20
 >
 > Goal: let any in-cluster Krateo **service** authenticate to authn with its **own
 > Kubernetes ServiceAccount token** and receive an authn-issued **JWT bound to a scoped
@@ -33,10 +62,10 @@ The two obvious workarounds are both bad:
 provisions its own scoped identity to call snowplow's RESTActions:
 
 - `jwtutil.CreateToken({ Username: "authn", Groups: ["authn"], SigningKey, Duration: 1y })`
-  — `main.go:158`.
+  — `go/authn/main.go:195-203`.
 - `signup.Do({ Username: "authn", UserGroups: ["authn"], … })` → provisions
-  `authn-clientconfig` — `main.go:230` ("Create authn clientconfig to call snowplow's
-  RESTActions").
+  `authn-clientconfig` — `go/authn/main.go:290-299` ("Create authn clientconfig to call
+  snowplow's RESTActions").
 
 It can do this only because **it holds the signing key** and runs the signup machinery.
 **Generalising that to other services — without handing them the key — is this proposal.**
