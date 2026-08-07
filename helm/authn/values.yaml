@@ -79,14 +79,27 @@ resources: {}
   #   cpu: 100m
   #   memory: 128Mi
 
+# Probe tolerances are explicit because the Kubernetes defaults (timeoutSeconds: 1,
+# failureThreshold: 3) are too twitchy for authn under CPU contention: a healthy pod that
+# misses the 1s deadline three times gets killed, and since authn fronts login, every
+# restart is a visible "can't retrieve authentication methods" window. Liveness is lenient
+# (~60s of unresponsiveness before a restart — only truly dead processes get killed);
+# readiness keeps the default failureThreshold so a genuinely slow pod still drops from
+# endpoints promptly, but with a 5s timeout so load alone doesn't flap it.
 livenessProbe:
   httpGet:
     path: /health
     port: http
+  timeoutSeconds: 5
+  periodSeconds: 10
+  failureThreshold: 6
 readinessProbe:
   httpGet:
     path: /health
     port: http
+  timeoutSeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
 
 autoscaling:
   enabled: false
