@@ -1,5 +1,5 @@
 ---
-type: Guide
+type: Integration
 title: authn — RBAC: binding Kubernetes roles to certificate users and groups
 description: How a login's generated client certificate carries the identity (CN=username, O=groups) and how standard Kubernetes RBAC — RoleBinding/ClusterRoleBinding with User and Group subjects — authorizes it. authn issues identity; it never authors RBAC.
 resource: oci://ghcr.io/krateo-platformops/charts/authn
