@@ -6,6 +6,7 @@ docs/overview.md: what it does and how it works — five login strategies, CSR-m
 docs/usage.md: install via the Krateo installer pin or direct helm install oci://…; JWT-secret + RBAC dependencies
 docs/configuration.md: the whole config surface — values, env ConfigMap contract, flags, OTel gates
 docs/api.md: the five *.authn.krateo.io CRDs + the HTTP surface and login response contract
+docs/rbac.md: how the minted client cert (CN=username, O=groups) binds to Kubernetes RBAC — RoleBinding/ClusterRoleBinding with User/Group subjects; authn issues identity, never authors RBAC
 docs/examples.md: index of the runnable examples
 docs/release.md: how a release ships — one plain-semver tag drives image + charts
 docs/log.md: curated history
