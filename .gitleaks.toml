@@ -1,0 +1,42 @@
+# gitleaks configuration for authn.
+#
+# This REPLACES .gitleaksignore, which is deleted in the same commit. An ignore entry is a
+# FINGERPRINT — commit:file:rule:line. In git mode gitleaks attributes a finding to the commit that
+# INTRODUCES the line, so re-introducing a credential line in a new commit (editing the line itself,
+# not merely moving it) produces a NEW fingerprint and main goes red again.
+#
+# Reproduced against this repo before deleting the old file: after editing the `curl -u` line in
+# examples/basic-user/README.md, a fingerprints-only scan reports the finding again, while this
+# config stays clean. That brittleness is why .gitleaksignore had grown two entries — the second
+# needed only because a docs change post-dated the first allowlist by four days and turned main red.
+#
+# The two mechanisms were deliberately not left side by side: with both present, a green CI run
+# cannot distinguish "the allowlist works" from "the stale fingerprints are still doing the work".
+[extend]
+useDefault = true
+
+# The curl examples in the docs deliberately show working credentials — the login walkthrough's user
+# matches this repo's own go/authn/testdata fixtures, which is what makes it copy-pasteable.
+#
+# condition = "AND": a finding is exempt only if it is BOTH in a markdown doc AND matches one of these
+# literals. Either criterion alone would be far too broad — paths alone would exempt every secret in
+# every README.
+#
+# One alternation rather than a list, so there is no ambiguity about whether list entries are ANY or
+# ALL. Both literals are demonstrably placeholders:
+#   cyberjoker           — the walkthrough user; appears only in docs, examples and go/authn/testdata
+#   QWxhZGRpbjpvcGVuI…   — base64 "Aladdin:open sesame", the RFC 7617 example, formerly in README.md
+#                          against the public reqbin.com echo service.
+#
+# DO NOT DELETE the base64 literal because grep finds it in no current file. It was removed from
+# README.md by the docs-standard commit, but gitleaks scans the whole of git history, so the finding
+# is still raised from the commit that introduced it. Dropping the literal turns main red.
+#
+# Verified narrow, with this config in place: a `curl -u svc-prod:<pass>` line, a well-formed
+# ghp_ token and an AWS access key added to an ALLOWLISTED README are each still reported. The
+# allowlist regexes match the detected secret, not the surrounding line, which is what keeps it tight.
+[allowlist]
+description = "documentation curl examples — placeholders, not live credentials"
+condition = "AND"
+regexes = ['''(cyberjoker|QWxhZGRpbjpvcGVuIHNlc2FtZQ==)''']
+paths = ['''(^|/)README\.md$''', '''^examples/.*\.md$''', '''^docs/.*\.md$''']
