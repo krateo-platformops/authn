@@ -1,0 +1,33 @@
+# gitleaks configuration for authn.
+#
+# Why this exists alongside .gitleaksignore: an ignore entry is a FINGERPRINT —
+# commit:file:rule:line. In git mode gitleaks attributes a finding to the commit that INTRODUCES the
+# line, so any later edit to an allowlisted line produces a NEW fingerprint and main goes red again.
+# Verified against this repo: re-adding the same credential line in a new commit yields a fresh
+# finding with a different fingerprint.
+#
+# That brittleness is already visible in .gitleaksignore — two entries, both documentation examples,
+# the second needed only because a docs change post-dated the first allowlist by four days and turned
+# main red. Scoping by path + literal survives edits, so a README can be reworded without breaking CI.
+[extend]
+useDefault = true
+
+# The curl examples in the docs deliberately show working credentials — the login walkthrough's user
+# matches this repo's own go/authn/testdata fixtures, which is what makes it copy-pasteable.
+#
+# condition = "AND": a finding is exempt only if it is BOTH in a markdown doc AND matches one of these
+# literals. Either criterion alone would be far too broad — paths alone would exempt every secret in
+# every README.
+#
+# One alternation rather than a list, so there is no ambiguity about whether list entries are ANY or
+# ALL. Both literals are demonstrably placeholders:
+#   cyberjoker           — the walkthrough user; appears only in docs, examples and go/authn/testdata
+#   QWxhZGRpbjpvcGVuI…   — base64 "Aladdin:open sesame", the RFC 7617 example used by the public
+#                          reqbin.com echo service in README.md
+#
+# Verified narrow: a genuine-looking credential added to the SAME README is still reported.
+[allowlist]
+description = "documentation curl examples — placeholders, not live credentials"
+condition = "AND"
+regexes = ['''(cyberjoker|QWxhZGRpbjpvcGVuIHNlc2FtZQ==)''']
+paths = ['''(^|/)README\.md$''', '''^examples/.*\.md$''', '''^docs/.*\.md$''']
