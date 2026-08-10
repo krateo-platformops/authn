@@ -1,14 +1,17 @@
 # gitleaks configuration for authn.
 #
-# Why this exists alongside .gitleaksignore: an ignore entry is a FINGERPRINT —
-# commit:file:rule:line. In git mode gitleaks attributes a finding to the commit that INTRODUCES the
-# line, so any later edit to an allowlisted line produces a NEW fingerprint and main goes red again.
-# Verified against this repo: re-adding the same credential line in a new commit yields a fresh
-# finding with a different fingerprint.
+# This REPLACES .gitleaksignore, which is deleted in the same commit. An ignore entry is a
+# FINGERPRINT — commit:file:rule:line. In git mode gitleaks attributes a finding to the commit that
+# INTRODUCES the line, so re-introducing a credential line in a new commit (editing the line itself,
+# not merely moving it) produces a NEW fingerprint and main goes red again.
 #
-# That brittleness is already visible in .gitleaksignore — two entries, both documentation examples,
-# the second needed only because a docs change post-dated the first allowlist by four days and turned
-# main red. Scoping by path + literal survives edits, so a README can be reworded without breaking CI.
+# Reproduced against this repo before deleting the old file: after editing the `curl -u` line in
+# examples/basic-user/README.md, a fingerprints-only scan reports the finding again, while this
+# config stays clean. That brittleness is why .gitleaksignore had grown two entries — the second
+# needed only because a docs change post-dated the first allowlist by four days and turned main red.
+#
+# The two mechanisms were deliberately not left side by side: with both present, a green CI run
+# cannot distinguish "the allowlist works" from "the stale fingerprints are still doing the work".
 [extend]
 useDefault = true
 
@@ -22,10 +25,16 @@ useDefault = true
 # One alternation rather than a list, so there is no ambiguity about whether list entries are ANY or
 # ALL. Both literals are demonstrably placeholders:
 #   cyberjoker           — the walkthrough user; appears only in docs, examples and go/authn/testdata
-#   QWxhZGRpbjpvcGVuI…   — base64 "Aladdin:open sesame", the RFC 7617 example used by the public
-#                          reqbin.com echo service in README.md
+#   QWxhZGRpbjpvcGVuI…   — base64 "Aladdin:open sesame", the RFC 7617 example, formerly in README.md
+#                          against the public reqbin.com echo service.
 #
-# Verified narrow: a genuine-looking credential added to the SAME README is still reported.
+# DO NOT DELETE the base64 literal because grep finds it in no current file. It was removed from
+# README.md by the docs-standard commit, but gitleaks scans the whole of git history, so the finding
+# is still raised from the commit that introduced it. Dropping the literal turns main red.
+#
+# Verified narrow, with this config in place: a `curl -u svc-prod:<pass>` line, a well-formed
+# ghp_ token and an AWS access key added to an ALLOWLISTED README are each still reported. The
+# allowlist regexes match the detected secret, not the surrounding line, which is what keeps it tight.
 [allowlist]
 description = "documentation curl examples — placeholders, not live credentials"
 condition = "AND"

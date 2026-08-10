@@ -1,9 +1,0 @@
-# gitleaks allowlist — VERIFIED FALSE POSITIVES (2026-08-03). README curl example (public reqbin.com echo service) — not a live credential.
-# Precise fingerprints only; new/real secrets in these files are still caught.
-feaef1054aa397d81359eb8c660aad90958a721e:README.md:curl-auth-header:111
-# examples/basic-user/README.md — the `curl -u cyberjoker:123456` line in the login walkthrough. A
-# documentation placeholder, not a credential: `cyberjoker` exists only in docs and go/authn/testdata,
-# and the example is explicitly labelled "Basic login — username cyberjoker, password 123456".
-# Added 2026-08-10; the finding post-dates the 2026-08-03 allowlist (commit 6250f4ed, 2026-08-07),
-# which is why security/filesystem started failing on main.
-6250f4ed2700ed7001242b845182127a43aa4348:examples/basic-user/README.md:curl-auth-user:38
