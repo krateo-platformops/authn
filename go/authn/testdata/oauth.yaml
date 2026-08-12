@@ -48,6 +48,8 @@ spec:
       { "name": .userInfo.login, "email": .userInfo.email, "preferredUsername": .userInfo.login, "avatarURL": .userInfo.avatar_url }
   - name: groups
     verb: POST
+    dependsOn:
+      name: userInfo
     headers:
     - 'Content-Type: application/json'
     - "${ \"Authorization: Bearer \" + .token }"
