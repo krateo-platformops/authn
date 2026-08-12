@@ -1,5 +1,5 @@
 ---
-type: Reference
+type: Integration
 title: authn — JWT signing & JWKS
 description: How authn signs JWTs with RS256, publishes a JWKS, and how validators (Snowplow, agentgateway) consume it.
 tags: [authn, jwt, jwks, rs256, security]

@@ -7,6 +7,7 @@ docs/usage.md: install via the Krateo installer pin or direct helm install oci:/
 docs/configuration.md: the whole config surface — values, env ConfigMap contract, flags, OTel gates
 docs/api.md: the five *.authn.krateo.io CRDs + the HTTP surface and login response contract
 docs/rbac.md: how the minted client cert (CN=username, O=groups) binds to Kubernetes RBAC — RoleBinding/ClusterRoleBinding with User/Group subjects; authn issues identity, never authors RBAC
+docs/jwt-jwks.md: RS256 signing + the JWKS endpoint (/.well-known/jwks.json) — key config, rotation, and how Snowplow/agentgateway consume it
 docs/examples.md: index of the runnable examples
 docs/release.md: how a release ships — one plain-semver tag drives image + charts
 docs/log.md: curated history
