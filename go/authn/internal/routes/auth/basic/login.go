@@ -2,6 +2,7 @@ package basic
 
 import (
 	"context"
+	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"os"
@@ -27,25 +28,28 @@ const (
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
 	JwtDuration         time.Duration
-	JwtSingKey          string
+	JwtPrivateKey       *rsa.PrivateKey
+	JwtKeyID            string
 }
 
 func Login(rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
-		rc:          rc,
-		gen:         opts.KubeconfigGenerator,
-		jwtDuration: opts.JwtDuration,
-		jwtSignKey:  opts.JwtSingKey,
+		rc:            rc,
+		gen:           opts.KubeconfigGenerator,
+		jwtDuration:   opts.JwtDuration,
+		jwtPrivateKey: opts.JwtPrivateKey,
+		jwtKeyID:      opts.JwtKeyID,
 	}
 }
 
 var _ routes.Route = (*loginRoute)(nil)
 
 type loginRoute struct {
-	rc          *rest.Config
-	gen         kubeconfig.Generator
-	jwtDuration time.Duration
-	jwtSignKey  string
+	rc            *rest.Config
+	gen           kubeconfig.Generator
+	jwtDuration   time.Duration
+	jwtPrivateKey *rsa.PrivateKey
+	jwtKeyID      string
 }
 
 func (r *loginRoute) Name() string {
@@ -97,9 +101,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		encode.Success(wri, dat, &encode.Extras{
-			UserInfo:    user,
-			JwtDuration: r.jwtDuration,
-			JwtSingKey:  r.jwtSignKey,
+			UserInfo:      user,
+			JwtDuration:   r.jwtDuration,
+			JwtPrivateKey: r.jwtPrivateKey,
+			JwtKeyID:      r.jwtKeyID,
 		})
 	}
 }

@@ -7,6 +7,7 @@ package serviceaccount
 
 import (
 	"context"
+	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"strings"
@@ -34,7 +35,8 @@ const (
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
 	JwtDuration         time.Duration
-	JwtSingKey          string
+	JwtPrivateKey       *rsa.PrivateKey
+	JwtKeyID            string
 	// Audience the projected SA token must carry (enforced via TokenReview); defaults to
 	// DefaultAudience. Binding the audience prevents replay of tokens minted for the
 	// apiserver or another service.
@@ -47,22 +49,24 @@ func Login(rc *rest.Config, opts LoginOptions) routes.Route {
 		aud = DefaultAudience
 	}
 	return &loginRoute{
-		rc:          rc,
-		gen:         opts.KubeconfigGenerator,
-		jwtDuration: opts.JwtDuration,
-		jwtSignKey:  opts.JwtSingKey,
-		audience:    aud,
+		rc:            rc,
+		gen:           opts.KubeconfigGenerator,
+		jwtDuration:   opts.JwtDuration,
+		jwtPrivateKey: opts.JwtPrivateKey,
+		jwtKeyID:      opts.JwtKeyID,
+		audience:      aud,
 	}
 }
 
 var _ routes.Route = (*loginRoute)(nil)
 
 type loginRoute struct {
-	rc          *rest.Config
-	gen         kubeconfig.Generator
-	jwtDuration time.Duration
-	jwtSignKey  string
-	audience    string
+	rc            *rest.Config
+	gen           kubeconfig.Generator
+	jwtDuration   time.Duration
+	jwtPrivateKey *rsa.PrivateKey
+	jwtKeyID      string
+	audience      string
 }
 
 func (r *loginRoute) Name() string    { return "serviceaccount" }
@@ -99,9 +103,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		encode.Success(wri, dat, &encode.Extras{
-			UserInfo:    user,
-			JwtDuration: r.jwtDuration,
-			JwtSingKey:  r.jwtSignKey,
+			UserInfo:      user,
+			JwtDuration:   r.jwtDuration,
+			JwtPrivateKey: r.jwtPrivateKey,
+			JwtKeyID:      r.jwtKeyID,
 		})
 	}
 }

@@ -1,6 +1,7 @@
 package ldap
 
 import (
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,15 +21,17 @@ import (
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
 	JwtDuration         time.Duration
-	JwtSingKey          string
+	JwtPrivateKey       *rsa.PrivateKey
+	JwtKeyID            string
 }
 
 func Login(rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
-		rc:          rc,
-		gen:         opts.KubeconfigGenerator,
-		jwtDuration: opts.JwtDuration,
-		jwtSignKey:  opts.JwtSingKey,
+		rc:            rc,
+		gen:           opts.KubeconfigGenerator,
+		jwtDuration:   opts.JwtDuration,
+		jwtPrivateKey: opts.JwtPrivateKey,
+		jwtKeyID:      opts.JwtKeyID,
 	}
 }
 
@@ -43,10 +46,11 @@ var (
 )
 
 type loginRoute struct {
-	rc          *rest.Config
-	gen         kubeconfig.Generator
-	jwtDuration time.Duration
-	jwtSignKey  string
+	rc            *rest.Config
+	gen           kubeconfig.Generator
+	jwtDuration   time.Duration
+	jwtPrivateKey *rsa.PrivateKey
+	jwtKeyID      string
 }
 
 func (r *loginRoute) Name() string {
@@ -117,9 +121,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		encode.Success(wri, dat, &encode.Extras{
-			UserInfo:    nfo,
-			JwtDuration: r.jwtDuration,
-			JwtSingKey:  r.jwtSignKey,
+			UserInfo:      nfo,
+			JwtDuration:   r.jwtDuration,
+			JwtPrivateKey: r.jwtPrivateKey,
+			JwtKeyID:      r.jwtKeyID,
 		})
 	}
 }

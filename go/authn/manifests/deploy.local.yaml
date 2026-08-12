@@ -73,6 +73,17 @@ spec:
         app: authn
     spec:
       serviceAccountName: authn
+      volumes:
+      # The RSA private key authn signs RS256 JWTs with. Create it first:
+      #   openssl genrsa -out private.pem 2048
+      #   kubectl create secret generic authn-jwt-signing-key -n demo-system \
+      #     --from-file=private.pem=./private.pem
+      - name: jwt-signing-key
+        secret:
+          secretName: authn-jwt-signing-key
+          items:
+          - key: private.pem
+            path: private.pem
       containers:
       - name: authn
         #image: kind.local/authn:latest
@@ -82,7 +93,12 @@ spec:
           - --debug=true
           - --kubeconfig-server-url=https://127.0.0.1:57456
           - --namespace=demo-system
-          - --jwt-sign-key=AbbraCadabbra
+          - --jwt-sign-key-file=/etc/authn/jwt/private.pem
+          - --jwt-kid=krateo-authn-key-1
         ports:
         - name: http
           containerPort: 8082
+        volumeMounts:
+        - name: jwt-signing-key
+          mountPath: /etc/authn/jwt
+          readOnly: true

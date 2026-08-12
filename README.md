@@ -22,9 +22,12 @@ Normally installed by the **Krateo installer**, which pins the chart. Standalone
 # CRDs first (User, ServiceAccount, LDAPConfig, OAuthConfig, OIDCConfig):
 helm install authn-crds oci://ghcr.io/krateo-platformops/charts/authn-crds --version 0.26.0
 
-# The JWT signing-key Secret the Deployment hard-requires (shared with snowplow):
-kubectl create secret generic jwt-sign-key -n krateo-system \
-  --from-literal=JWT_SIGN_KEY="$(openssl rand -hex 32)"
+# The JWT signing-key Secret the Deployment hard-requires — a PEM-encoded RSA
+# private key. authn signs asymmetrically (RS256) and publishes the public key
+# at /.well-known/jwks.json for validators like snowplow (see docs/jwt-jwks.md):
+openssl genrsa -out private.pem 2048
+kubectl create secret generic authn-jwt-signing-key -n krateo-system \
+  --from-file=private.pem=./private.pem
 
 helm install authn oci://ghcr.io/krateo-platformops/charts/authn \
   --version 0.26.0 --namespace krateo-system
@@ -40,7 +43,7 @@ See [docs/configuration.md](docs/configuration.md). Most used:
 |---|---|---|
 | `env.AUTHN_KUBECONFIG_SERVER_URL` | `https://kube-apiserver:6443` | The apiserver URL written into every generated kubeconfig — set it to your cluster's reachable endpoint. |
 | `env.AUTHN_KUBECONFIG_CRT_EXPIRES_IN` | `24h` | Lifetime of the minted client certificate (and the login JWT). |
-| `jwtSignKeySecretName` | `jwt-sign-key` | Secret holding `JWT_SIGN_KEY`; the pod does not start without it. |
+| `jwt.signKeySecretName` / `jwt.signKeySecretKey` | `authn-jwt-signing-key` / `private.pem` | Secret holding the PEM-encoded RSA private key; the pod does not start without it. |
 
 ## Examples
 
