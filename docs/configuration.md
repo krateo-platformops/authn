@@ -25,8 +25,10 @@ goes through `envFrom`
    ([`configmap.yaml`](../helm/authn/templates/configmap.yaml)) — `AUTHN_PORT` (from
    `service.port`), `AUTHN_NAMESPACE` + `POD_NAMESPACE` (the release namespace),
    plus everything under `.Values.env`;
-2. the JWT signing-key Secret — `jwtSignKeySecretName` (default `jwt-sign-key`, key
-   `JWT_SIGN_KEY`); the pod does not start without it.
+2. the JWT signing-key Secret — `jwt.signKeySecretName` (default `authn-jwt-signing-key`, key
+   `jwt.signKeySecretKey` / `private.pem`), mounted as a **file** (not injected as an
+   env value) and read via `JWT_SIGN_KEY_FILE`; the pod does not start without it. See
+   [jwt-jwks](./jwt-jwks.md).
 
 A `checksum/configmap` pod annotation rolls the Deployment when the ConfigMap
 changes. Every flag of the binary has an env fallback (`go/authn/main.go:49-80`), so
@@ -42,7 +44,8 @@ changes. Every flag of the binary has an env fallback (`go/authn/main.go:49-80`)
 | `replicaCount` | `1` | With `autoscaling.enabled: false` (default). |
 | `livenessProbe` / `readinessProbe` | `GET /health` | `/health` flips 200 once the listener goroutine starts, 503 on shutdown — process lifecycle only ([gotchas](./gotchas.md)). |
 | `ingress` | `enabled: false` | Standard chart ingress if you need it. |
-| `jwtSignKeySecretName` | `jwt-sign-key` | Secret holding `JWT_SIGN_KEY` (shared platform-wide with the JWT validators). |
+| `jwt.signKeySecretName` / `jwt.signKeySecretKey` | `authn-jwt-signing-key` / `private.pem` | Secret holding the PEM-encoded RSA private key, mounted as a file. |
+| `jwt.kid` | `krateo-authn-key-1` | Key ID (`kid`) stamped into every token header and the JWKS ([jwt-jwks](./jwt-jwks.md)). |
 | `serviceAccount.create` | `true` | The SA the CSR/TokenReview ClusterRoles bind to. |
 | `env.*` | see below | Rendered into the ConfigMap. |
 
@@ -64,16 +67,17 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `POD_NAMESPACE` | chart: release namespace | The operator namespace — **all config CRs are resolved here**. |
 | `AUTHN_USERNAME` | `authn` | The service's own identity for calling snowplow RESTActions. |
 | `AUTHN_SERVICEACCOUNT_AUDIENCE` | `authn` | Audience the projected SA token must carry for `/serviceaccount/login`. |
-| `JWT_SIGN_KEY` | (from the Secret) | JWT signing key; without it no `accessToken` is issued ([gotchas](./gotchas.md)). |
+| `JWT_SIGN_KEY_FILE` | (mounted from the Secret) | Path to the PEM-encoded RSA private key; without a valid one authn exits at boot ([gotchas](./gotchas.md)). |
+| `JWT_KID` | (from `jwt.kid`) | Key ID stamped into every token header and the JWKS; required, non-empty. |
 | `SNOWPLOW_SERVICE_HOST` / `SNOWPLOW_SERVICE_PORT` | unset / `8081` | Preferred snowplow endpoint source; beware the resolution quirk ([gotchas](./gotchas.md)). |
 | `URL_SNOWPLOW` | `http://snowplow.krateo-system.svc.cluster.local:8081` | Fallback snowplow URL when the SERVICE_HOST pair is unset. |
 | `OTEL_ENABLED` | `false` | Master OpenTelemetry gate; tracing and metrics each default to it. |
 | `OTEL_TRACING_ENABLED` / `OTEL_METRICS_ENABLED` | = `OTEL_ENABLED` | Per-signal overrides (`go/authn/internal/telemetry/telemetry.go:36-44`). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (SDK standard) | OTLP/HTTP collector endpoint when telemetry is on. |
 
-Flags mirror all of the above (`--port`, `--cert-expires`, `--jwt-sign-key`,
-`--serviceaccount-audience`, `--otel-tracing`, `--kubeconfig` for out-of-cluster
-runs, …) — flags win over env ([architecture](./architecture.md)).
+Flags mirror all of the above (`--port`, `--cert-expires`, `--jwt-sign-key-file`,
+`--jwt-kid`, `--serviceaccount-audience`, `--otel-tracing`, `--kubeconfig` for
+out-of-cluster runs, …) — flags win over env ([architecture](./architecture.md)).
 
 ## The CRDs chart
 

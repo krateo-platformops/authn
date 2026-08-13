@@ -48,9 +48,11 @@ spec:
 # CRDs first:
 helm install authn-crds oci://ghcr.io/krateo-platformops/charts/authn-crds --version 0.26.0
 
-# The JWT signing-key Secret (hard dependency, see below):
-kubectl create secret generic jwt-sign-key -n krateo-system \
-  --from-literal=JWT_SIGN_KEY="$(openssl rand -hex 32)"
+# The JWT signing-key Secret (hard dependency, see below) — a PEM-encoded RSA
+# private key, not a shared secret:
+openssl genrsa -out private.pem 2048
+kubectl create secret generic authn-jwt-signing-key -n krateo-system \
+  --from-file=private.pem=./private.pem
 
 # The app chart:
 helm install authn oci://ghcr.io/krateo-platformops/charts/authn \
@@ -59,11 +61,11 @@ helm install authn oci://ghcr.io/krateo-platformops/charts/authn \
 
 ### Install-time dependencies
 
-- **The JWT signing-key Secret** — the Deployment `envFrom`-mounts the Secret named
-  by `jwtSignKeySecretName` (default `jwt-sign-key`, key `JWT_SIGN_KEY`); the pod
-  does not start without it. The same key must be shared with every service that
-  validates authn's JWTs (snowplow, sse-proxy) — the installer provisions one key
-  for all of them.
+- **The JWT signing-key Secret** — the Deployment mounts, as a file, the Secret named
+  by `jwt.signKeySecretName` (default `authn-jwt-signing-key`, key `jwt.signKeySecretKey` /
+  `private.pem`); the pod does not start without it. authn signs asymmetrically
+  (RS256) and publishes the matching **public** key at `/.well-known/jwks.json` — see
+  [jwt-jwks](./jwt-jwks.md) for how validators (snowplow, agentgateway) consume it.
 - **CRDs before the app** — the app only *reads* the five `*.authn.krateo.io` CRDs
   at request time, so a missing CRD does not block startup, but every login of that
   strategy fails until its CRD (and a config CR) exists. Install `authn-crds` first.

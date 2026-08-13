@@ -135,4 +135,19 @@ env:
   AUTHN_CORS: "true"
   AUTHN_DUMP_ENV: "true"
 
-jwtSignKeySecretName: jwt-sign-key
+# JWT signing key configuration.
+# authn signs tokens with an RSA private key (RS256) and publishes the matching
+# public key as a JWKS at GET /.well-known/jwks.json. The private key is mounted
+# from a Secret as a file (never injected as an env var).
+jwt:
+  # Name of the Secret holding the PEM-encoded RSA private key.
+  signKeySecretName: authn-jwt-signing-key
+  # Key inside that Secret whose value is the PEM private key; it is also the
+  # mounted filename.
+  signKeySecretKey: private.pem
+  # Directory the Secret is mounted into. The container reads
+  # <mountPath>/<signKeySecretKey> (exposed as JWT_SIGN_KEY_FILE).
+  mountPath: /etc/authn/jwt
+  # Key ID advertised in every token header and in the JWKS "kid". Must be
+  # stable for the lifetime of the key so validators can match it.
+  kid: krateo-authn-key-1

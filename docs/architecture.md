@@ -30,8 +30,8 @@ API.
    (`main.go:59-60`), apiserver URL for the generated kubeconfig (`main.go:61-62`),
    the snowplow URL for RESTAction calls (`main.go:63-72`), the storage namespace
    (`AUTHN_NAMESPACE`, `main.go:73-74`), the authn service username (`AUTHN_USERNAME`,
-   default `authn`, `main.go:75-76`), the JWT signing key (`JWT_SIGN_KEY`,
-   `main.go:77`), and the ServiceAccount-token audience
+   default `authn`, `main.go:75-76`), the JWT signing-key file and key ID
+   (`JWT_SIGN_KEY_FILE` / `JWT_KID`), and the ServiceAccount-token audience
    (`AUTHN_SERVICEACCOUNT_AUDIENCE`, default `authn`, `main.go:78-80`).
 2. **Logger.** zerolog to stdout, `info` unless `--debug` (`main.go:94-105`).
 3. **OpenTelemetry (default OFF).** `telemetry.Setup` initializes the gated
@@ -147,8 +147,10 @@ is enforced later by the apiserver, not by authn.
 ## The response encoder + JWT — `internal/helpers/encode`
 
 `encode.Success` (`success.go:18-53`) wraps the kubeconfig bytes in
-`{accessToken,user,groups,data}` and, when a `JwtSingKey` is configured, mints a JWT
-via `plumbing/jwtutil` (default 8h if no duration, `success.go:32-46`).
+`{accessToken,user,groups,data}` and, when a `JwtPrivateKey` is configured, mints an
+RS256 JWT (with `kid` header) via `plumbing/jwtutil` (default 8h if no duration,
+`success.go:32-46`). The matching public key is served at `/.well-known/jwks.json`
+by the `jwks` route ([jwt-jwks](./jwt-jwks.md)).
 `encode.Attach` (`attach.go`) instead streams the kubeconfig as a file download when
 the basic route is called with `?d` (`basic/login.go:94-96`).
 

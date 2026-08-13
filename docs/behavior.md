@@ -23,6 +23,7 @@ Every route is registered in `main.go:169-233` and implements `routes.Route`.
 | GET    | `/strategies`   | List configured login strategies (for the frontend login page) | `internal/routes/auth/strategies/strategies.go` |
 | GET    | `/info`         | Fetch a stored `AuthInfo` by `?name=` | `internal/routes/auth/info/info.go` |
 | GET    | `/health`       | Liveness/readiness; returns `{name,version}` once healthy, else `503` | `internal/routes/health/health.go` |
+| GET    | `/.well-known/jwks.json` | Public key set for verifying authn's RS256 JWTs ([jwt-jwks](./jwt-jwks.md)) | `internal/routes/jwks/jwks.go` |
 | GET    | `/basic/login`  | HTTP Basic login → kubeconfig (+JWT) | `internal/routes/auth/basic/login.go` |
 | POST   | `/serviceaccount/login` | Kubernetes intra-service auth: SA token (TokenReview) → kubeconfig (+JWT) | `internal/routes/auth/serviceaccount/login.go` |
 | POST   | `/ldap/login`   | LDAP login (JSON body) → kubeconfig (+JWT) | `internal/routes/auth/ldap/login.go` |
@@ -58,7 +59,7 @@ return:
 ```
 
 - `data` is the per-user kubeconfig minted by the generator (`config/build.go:115-147`).
-- `accessToken` is present only when `JWT_SIGN_KEY` is set; the JWT duration is the
+- `accessToken` is always present — authn fails to boot without a valid signing key; the JWT duration is the
   cert-duration knob, with an 8h default if no explicit duration
   (`success.go:32-46`).
 - `/basic/login?d` instead returns the kubeconfig as a file download

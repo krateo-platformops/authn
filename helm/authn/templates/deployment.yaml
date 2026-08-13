@@ -36,8 +36,11 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "authn.fullname" . }}
-            - secretRef:
-                name: {{ .Values.jwtSignKeySecretName }}
+          env:
+            - name: JWT_SIGN_KEY_FILE
+              value: "{{ .Values.jwt.mountPath }}/{{ .Values.jwt.signKeySecretKey }}"
+            - name: JWT_KID
+              value: {{ .Values.jwt.kid | quote }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: {{ include "krateo.image" (dict "img" .Values.image "global" .Values.global "defaultTag" .Chart.AppVersion) | quote }}
@@ -52,14 +55,23 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- with .Values.volumeMounts }}
           volumeMounts:
+            - name: jwt-signing-key
+              mountPath: {{ .Values.jwt.mountPath }}
+              readOnly: true
+            {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
-      {{- with .Values.volumes }}
+            {{- end }}
       volumes:
+        - name: jwt-signing-key
+          secret:
+            secretName: {{ .Values.jwt.signKeySecretName }}
+            items:
+              - key: {{ .Values.jwt.signKeySecretKey }}
+                path: {{ .Values.jwt.signKeySecretKey }}
+        {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -118,12 +118,13 @@ flags are parsed, so when those env vars are unset it produces the literal
 other than `8081`, the fallback check (`== "http://:8081"`) misses and authn calls a
 hostless URL. Set `URL_SNOWPLOW` explicitly to be safe.
 
-## No JWT without a signing key
-If `JWT_SIGN_KEY` is empty, `encode.Success` omits `accessToken` entirely
-(`encode/success.go:32`) and the service-identity token used to call snowplow is
-signed with an empty key (`main.go:195-203`). Clients expecting a bearer token, and
-RESTAction enrichment, both depend on `JWT_SIGN_KEY` being set. The chart makes this
-structural: the Deployment `envFrom`-requires the `jwt-sign-key` Secret.
+## No boot without a signing key
+authn signs asymmetrically with RS256 ([jwt-jwks](./jwt-jwks.md)) and fails fast at
+startup — not per-request — if `JWT_KID` is empty or `JWT_SIGN_KEY_FILE` is
+missing/unparseable (`main.go`): `log.Fatal` before any route is registered. The
+chart makes the dependency structural: the Deployment mounts the `authn-jwt-signing-key`
+Secret's PEM private key as a file. Rotating the key without changing `kid` (or vice
+versa) makes previously issued tokens unverifiable against the new JWKS.
 
 ## Health gates on a flag flipped after listen
 `/health` returns `503` until the goroutine sets `healthy=1` (`main.go:302`), and

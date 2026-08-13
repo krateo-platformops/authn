@@ -25,6 +25,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/routes/auth/strategies"
 	"github.com/krateo-platformops/authn/internal/routes/health"
+	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/krateo-platformops/plumbing/jwtutil"
@@ -74,7 +75,8 @@ func main() {
 		env.String("AUTHN_NAMESPACE", ""), "namespace where to store secrets with generated config")
 	authnUsername := flag.String("authn-username",
 		env.String("AUTHN_USERNAME", "authn"), "authn username for clientconfig for restaction api calls")
-	signKey := flag.String("jwt-sign-key", env.String("JWT_SIGN_KEY", ""), "secret key used to sign JWT tokens")
+	signKeyFile := flag.String("jwt-sign-key-file", env.String("JWT_SIGN_KEY_FILE", ""), "path to the PEM-encoded RSA private key used to sign JWT tokens (mounted from a Secret)")
+	jwtKeyID := flag.String("jwt-kid", env.String("JWT_KID", ""), "key ID (kid) set in the JWT header; must match the kid published in the JWKS")
 	serviceAccountAudience := flag.String("serviceaccount-audience",
 		env.String("AUTHN_SERVICEACCOUNT_AUDIENCE", serviceaccount.DefaultAudience),
 		"audience the projected ServiceAccount token must carry for the /serviceaccount/login strategy")
@@ -164,17 +166,33 @@ func main() {
 		kubeconfig.Log(log),
 	)
 
+	// JWT signing key: an RSA private key, PEM-encoded, mounted from a Secret.
+	// The matching public key must be published in the JWKS under *jwtKeyID.
+	if *jwtKeyID == "" {
+		log.Fatal().Msg("JWT key ID must be set (--jwt-kid / JWT_KID)")
+	}
+	pemBytes, err := os.ReadFile(*signKeyFile)
+	if err != nil {
+		log.Fatal().Err(err).Msg("reading JWT signing key file")
+	}
+	privateKey, err := jwtutil.ParseRSAPrivateKeyFromPEM(pemBytes)
+	if err != nil {
+		log.Fatal().Err(err).Msg("parsing JWT signing key")
+	}
+
 	healthy := int32(0)
 
 	all := []routes.Route{}
 	all = append(all, strategies.List(cfg))
 	all = append(all, info.Info(cfg))
 	all = append(all, health.Check(&healthy, Version, serviceName))
+	all = append(all, jwks.Endpoint(&privateKey.PublicKey, *jwtKeyID))
 
 	all = append(all, basic.Login(cfg, basic.LoginOptions{
 		KubeconfigGenerator: gen,
 		JwtDuration:         *certExpiresIn,
-		JwtSingKey:          *signKey,
+		JwtPrivateKey:       privateKey,
+		JwtKeyID:            *jwtKeyID,
 	}))
 
 	// Kubernetes intra-service auth: backend services exchange their own (audience-bound)
@@ -182,20 +200,23 @@ func main() {
 	all = append(all, serviceaccount.Login(cfg, serviceaccount.LoginOptions{
 		KubeconfigGenerator: gen,
 		JwtDuration:         *certExpiresIn,
-		JwtSingKey:          *signKey,
+		JwtPrivateKey:       privateKey,
+		JwtKeyID:            *jwtKeyID,
 		Audience:            *serviceAccountAudience,
 	}))
 
 	all = append(all, ldap.Login(cfg, ldap.LoginOptions{
 		KubeconfigGenerator: gen,
 		JwtDuration:         *certExpiresIn,
-		JwtSingKey:          *signKey,
+		JwtPrivateKey:       privateKey,
+		JwtKeyID:            *jwtKeyID,
 	}))
 
 	accessToken, err := jwtutil.CreateToken(jwtutil.CreateTokenOptions{
 		Username:   *authnUsername,
 		Groups:     []string{"authn"},
-		SigningKey: *signKey,
+		KeyID:      *jwtKeyID,
+		PrivateKey: privateKey,
 		Duration:   time.Hour * 8760, // 1 year,
 	})
 	if err != nil {
@@ -214,7 +235,8 @@ func main() {
 		), cfg, oauth.LoginOptions{
 			KubeconfigGenerator: gen,
 			JwtDuration:         *certExpiresIn,
-			JwtSingKey:          *signKey,
+			JwtPrivateKey:       privateKey,
+			JwtKeyID:            *jwtKeyID,
 		}))
 
 	all = append(all, oidc.Login(
@@ -229,7 +251,8 @@ func main() {
 		), cfg, oidc.LoginOptions{
 			KubeconfigGenerator: gen,
 			JwtDuration:         *certExpiresIn,
-			JwtSingKey:          *signKey,
+			JwtPrivateKey:       privateKey,
+			JwtKeyID:            *jwtKeyID,
 		}))
 
 	var handler http.Handler = routes.Serve(all, log)

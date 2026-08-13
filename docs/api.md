@@ -57,7 +57,7 @@ Every strategy returns the same shape:
 
 ```json
 {
-  "accessToken": "<JWT — omitted when JWT_SIGN_KEY is unset>",
+  "accessToken": "<RS256 JWT, kid header set — see jwt-jwks.md>",
   "user":   { "displayName": "…", "username": "…", "avatarURL": "…" },
   "groups": ["…"],
   "data":   { "kind": "Config", "…": "the per-user kubeconfig" }

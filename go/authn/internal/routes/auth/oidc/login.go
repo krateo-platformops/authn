@@ -2,6 +2,7 @@ package oidc
 
 import (
 	"context"
+	"crypto/rsa"
 	"fmt"
 	"net/http"
 	"os"
@@ -28,26 +29,29 @@ const (
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
 	JwtDuration         time.Duration
-	JwtSingKey          string
+	JwtPrivateKey       *rsa.PrivateKey
+	JwtKeyID            string
 }
 
 func Login(ctx context.Context, rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
 		rc: rc, ctx: ctx,
-		gen:         opts.KubeconfigGenerator,
-		jwtDuration: opts.JwtDuration,
-		jwtSignKey:  opts.JwtSingKey,
+		gen:           opts.KubeconfigGenerator,
+		jwtDuration:   opts.JwtDuration,
+		jwtPrivateKey: opts.JwtPrivateKey,
+		jwtKeyID:      opts.JwtKeyID,
 	}
 }
 
 var _ routes.Route = (*loginRoute)(nil)
 
 type loginRoute struct {
-	rc          *rest.Config
-	gen         kubeconfig.Generator
-	ctx         context.Context
-	jwtDuration time.Duration
-	jwtSignKey  string
+	rc            *rest.Config
+	gen           kubeconfig.Generator
+	ctx           context.Context
+	jwtDuration   time.Duration
+	jwtPrivateKey *rsa.PrivateKey
+	jwtKeyID      string
 }
 
 func (r *loginRoute) Name() string {
@@ -144,9 +148,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		encode.Success(wri, dat, &encode.Extras{
-			UserInfo:    nfo,
-			JwtDuration: r.jwtDuration,
-			JwtSingKey:  r.jwtSignKey,
+			UserInfo:      nfo,
+			JwtDuration:   r.jwtDuration,
+			JwtPrivateKey: r.jwtPrivateKey,
+			JwtKeyID:      r.jwtKeyID,
 		})
 	}
 }

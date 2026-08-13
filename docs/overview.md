@@ -12,8 +12,10 @@ timestamp: 2026-08-07T00:00:00Z
 authn is the **authentication service of the Krateo platform**: it converts a
 successful login into a Kubernetes identity. Whatever the strategy, the output is the
 same — a short-lived, per-user **client-certificate kubeconfig** minted through the
-Kubernetes CSR API (cert `CN=username, O=groups`) plus a **JWT** signed with the
-platform's shared `JWT_SIGN_KEY`. authn authenticates; it never authorizes — RBAC on
+Kubernetes CSR API (cert `CN=username, O=groups`) plus a **JWT** signed
+asymmetrically (RS256) with authn's own RSA private key; the matching public key is
+published as a JWKS at `/.well-known/jwks.json` ([jwt-jwks](./jwt-jwks.md)). authn
+authenticates; it never authorizes — RBAC on
 the minted identity is enforced by the apiserver via standard bindings on the cert's
 groups.
 
@@ -61,7 +63,7 @@ controller, no cache and no state beyond the persisted `AuthInfo` Secrets.
 | Peer | Relationship |
 |---|---|
 | **frontend** | Consumes `GET /strategies` to render the login page and the login response (`data` + `accessToken`) to authenticate the user; CORS is on by default for the cross-origin browser hop. |
-| **snowplow** | Two-way: authn calls snowplow's `/call` to resolve RESTActions that enrich OAuth2/OIDC identities (authenticating with its own self-minted service JWT), and snowplow validates the JWTs authn issues (shared `JWT_SIGN_KEY`). snowplow's prewarm seed is itself a `serviceaccount`-strategy consumer. |
+| **snowplow** | Two-way: authn calls snowplow's `/call` to resolve RESTActions that enrich OAuth2/OIDC identities (authenticating with its own self-minted service JWT), and snowplow validates the JWTs authn issues using authn's RSA **public** key (RS256). snowplow's prewarm seed is itself a `serviceaccount`-strategy consumer. |
 | **core-provider / cdc** | Backend services use the `serviceaccount` strategy to obtain a scoped Krateo identity without holding the signing key — the exchange allowlist is the `ServiceAccount` CRD authn owns. |
 | **the cluster** | The CSR API is the identity mint (broad CSR RBAC required); the TokenReview API validates intra-service SA tokens ([gotchas](./gotchas.md)). |
 

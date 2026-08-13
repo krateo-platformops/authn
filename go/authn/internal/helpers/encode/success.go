@@ -1,6 +1,7 @@
 package encode
 
 import (
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -10,9 +11,10 @@ import (
 )
 
 type Extras struct {
-	UserInfo    userinfo.Info
-	JwtDuration time.Duration
-	JwtSingKey  string
+	UserInfo      userinfo.Info
+	JwtDuration   time.Duration
+	JwtPrivateKey *rsa.PrivateKey
+	JwtKeyID      string
 }
 
 func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
@@ -29,7 +31,7 @@ func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
 			}
 			out.Groups = nfo.GetGroups()
 
-			if extras.JwtSingKey != "" {
+			if extras.JwtPrivateKey != nil {
 				if extras.JwtDuration <= 0 {
 					extras.JwtDuration = time.Hour * 8
 				}
@@ -38,7 +40,8 @@ func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
 					Username:   nfo.GetUserName(),
 					Groups:     nfo.GetGroups(),
 					Duration:   extras.JwtDuration,
-					SigningKey: extras.JwtSingKey,
+					KeyID:      extras.JwtKeyID,
+					PrivateKey: extras.JwtPrivateKey,
 				})
 				if err != nil {
 					return err
