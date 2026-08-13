@@ -35,16 +35,27 @@ serviceAccount:
 podAnnotations: {}
 podLabels: {}
 
-podSecurityContext: {}
-  # fsGroup: 2000
+# Hardened by default. The shipped image is gcr.io/distroless/static:nonroot (USER nonroot,
+# UID/GID 65532); authn persists kubeconfigs as Kubernetes Secrets via the API (never the local
+# filesystem) and listens on an unprivileged port, so runAsNonRoot + readOnlyRootFilesystem are
+# safe. Override per-field if you run a custom image with a different user.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
 
-securityContext: {}
-  # capabilities:
-  #   drop:
-  #   - ALL
-  # readOnlyRootFilesystem: true
-  # runAsNonRoot: true
-  # runAsUser: 1000
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
 
 service:
   annotations: {}
