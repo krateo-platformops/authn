@@ -1,0 +1,26 @@
+# Trivy misconfiguration exceptions — intentional, security-reviewed accepts.
+#
+# HIGH/CRITICAL findings are FIXED in-tree, never ignored:
+#   - DS-0029  : Dockerfile builder now uses `apt-get install --no-install-recommends`.
+#   - KSV-0014 : readOnlyRootFilesystem: true on the chart default + dev manifest.
+#   - KSV-0118 : explicit pod + container securityContext on the chart default + dev manifest.
+#
+# Only these MEDIUM, by-design findings are accepted, each scoped to its file with a rationale.
+misconfigurations:
+  - id: KSV-0013
+    paths:
+      - "go/authn/manifests/deploy.local.yaml"
+    statement: >-
+      Local-only dev manifest: authn:latest is built locally and run with imagePullPolicy: Never.
+      Not a shipped artifact — the Helm chart resolves a real, pinned image tag.
+  - id: KSV-0113
+    paths:
+      - "go/authn/manifests/deploy.local.yaml"
+    statement: >-
+      authn's core function is issuing and persisting kubeconfigs as Kubernetes Secrets, so its
+      ServiceAccount must manage namespace secrets. This is a required capability, not a misconfig.
+  - id: KSV-0111
+    paths:
+      - "go/authn/testdata/ldap-forumsys.yaml"
+    statement: >-
+      Test fixture exercising an admin-access user mapping. testdata only, never deployed.

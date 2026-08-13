@@ -73,6 +73,15 @@ spec:
         app: authn
     spec:
       serviceAccountName: authn
+      # Mirror the chart's hardened defaults so local dev matches prod posture. The image is
+      # distroless/static:nonroot (UID/GID 65532); authn writes kubeconfigs as Secrets via the API.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
       # The RSA private key authn signs RS256 JWTs with. Create it first:
       #   openssl genrsa -out private.pem 2048
@@ -89,6 +98,15 @@ spec:
         #image: kind.local/authn:latest
         image: authn:latest
         imagePullPolicy: Never
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
         args:
           - --debug=true
           - --kubeconfig-server-url=https://127.0.0.1:57456
