@@ -29,7 +29,7 @@ version: CHART_VERSION
 # Pinned to the authn app version shipped with chart 0.22.2 (installer 2.7.0).
 appVersion: APP_VERSION
 home: https://krateo.io
-icon: https://raw.githubusercontent.com/krateoplatformops/krateo/main/docs/media/logo.svg
+icon: https://raw.githubusercontent.com/krateo-platformops/.github/main/brand/logo.svg
 keywords:
   - krateo
   - platformops
