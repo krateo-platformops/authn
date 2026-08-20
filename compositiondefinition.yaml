@@ -9,4 +9,4 @@ metadata:
 spec:
   chart:
     url: oci://ghcr.io/krateo-platformops/charts/authn
-    version: "0.22.13"
+    version: "0.27.2"
