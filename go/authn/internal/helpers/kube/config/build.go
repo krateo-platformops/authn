@@ -17,7 +17,13 @@ import (
 )
 
 type Generator interface {
-	Generate(user userinfo.Info) ([]byte, error)
+	// Generate mints a client certificate for user, stores it as a
+	// `<username>-clientconfig` Secret and returns the kubeconfig document
+	// together with the certificate's REAL expiry. The signer may grant less
+	// than the requested duration, so callers must bound anything derived from
+	// the credential — the login JWT above all — by the returned notAfter and
+	// never by the duration they asked for.
+	Generate(user userinfo.Info) (dat []byte, notAfter time.Time, err error)
 }
 
 type GeneratorOption func(*kubeconfigGenerator)
@@ -93,23 +99,25 @@ type kubeconfigGenerator struct {
 	log           zerolog.Logger
 }
 
-func (g *kubeconfigGenerator) Generate(userInfo userinfo.Info) ([]byte, error) {
+func (g *kubeconfigGenerator) Generate(userInfo userinfo.Info) ([]byte, time.Time, error) {
+	var notAfter time.Time
+
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
-			return nil, err
+			return nil, notAfter, err
 		}
 		g.caData = caCrt
 	}
 
-	certInfo, clusterInfo, err := g.generateCertAndClusterInfo(userInfo)
+	certInfo, clusterInfo, notAfter, err := g.generateCertAndClusterInfo(userInfo)
 	if err != nil {
-		return nil, err
+		return nil, notAfter, err
 	}
 
 	err = g.storeCertAndClusterInfo(userInfo.GetUserName(), certInfo, clusterInfo)
 	if err != nil {
-		return nil, err
+		return nil, notAfter, err
 	}
 
 	c := KubeConfig{
@@ -141,10 +149,10 @@ func (g *kubeconfigGenerator) Generate(userInfo userinfo.Info) ([]byte, error) {
 
 	out, err := json.Marshal(c)
 	if err != nil {
-		return nil, fmt.Errorf("converting generated config to json: %w", err)
+		return nil, notAfter, fmt.Errorf("converting generated config to json: %w", err)
 	}
 
-	return out, nil
+	return out, notAfter, nil
 }
 
 func (g *kubeconfigGenerator) storeCertAndClusterInfo(name string, certInfo CertInfo, clusterInfo ClusterInfo) error {
@@ -159,29 +167,30 @@ func (g *kubeconfigGenerator) storeCertAndClusterInfo(name string, certInfo Cert
 	return g.store.Put(name, &nfo)
 }
 
-func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info) (certInfo CertInfo, clusterInfo ClusterInfo, err error) {
+func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info) (certInfo CertInfo, clusterInfo ClusterInfo, notAfter time.Time, err error) {
 	if len(g.kubernetesURL) == 0 {
 		host, port := os.Getenv("KUBERNETES_SERVICE_HOST"), os.Getenv("KUBERNETES_SERVICE_PORT")
 		if len(host) == 0 || len(port) == 0 {
-			return certInfo, clusterInfo, rest.ErrNotInCluster
+			return certInfo, clusterInfo, notAfter, rest.ErrNotInCluster
 		}
 		g.kubernetesURL = "https://" + net.JoinHostPort(host, port)
 	}
 
 	cli, err := kubernetes.NewForConfig(g.restconfig)
 	if err != nil {
-		return certInfo, clusterInfo, err
+		return certInfo, clusterInfo, notAfter, err
 	}
 
-	cert, key, err := generateClientCertAndKey(cli, g.log, generateClientCertAndKeyOpts{
+	cert, key, leaf, err := generateClientCertAndKey(cli, g.log, generateClientCertAndKeyOpts{
 		userID:   userInfo.GetID(),
 		username: userInfo.GetUserName(),
 		groups:   userInfo.GetGroups(),
 		duration: g.certDuration,
 	})
 	if err != nil {
-		return certInfo, clusterInfo, err
+		return certInfo, clusterInfo, notAfter, err
 	}
+	notAfter = leaf.NotAfter
 
 	clusterInfo.CertificateAuthorityData = g.caData
 	//clusterInfo.ProxyURL = g.proxyURL

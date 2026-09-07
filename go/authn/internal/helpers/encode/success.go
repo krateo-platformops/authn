@@ -10,11 +10,44 @@ import (
 	"github.com/krateo-platformops/plumbing/jwtutil"
 )
 
+// DefaultJwtDuration is the token lifetime used when a caller supplies none.
+const DefaultJwtDuration = time.Hour * 8
+
 type Extras struct {
 	UserInfo      userinfo.Info
 	JwtDuration   time.Duration
 	JwtPrivateKey *rsa.PrivateKey
 	JwtKeyID      string
+	// CertNotAfter is the real expiry of the client certificate carried in the
+	// same response. The token is clamped to it. Zero leaves it unclamped.
+	CertNotAfter time.Time
+}
+
+// tokenDuration resolves the lifetime of the issued token: the requested
+// duration, but never past the certificate shipped alongside it.
+//
+// The two are NOT the same knob even though one value configures both. The
+// requested certificate duration is a wish; the signer grants
+// min(requested, cluster-signing-duration, signer CA remaining life). Issuing a
+// token for the requested duration would let a session outlive the credential
+// it authenticates with — the user stays logged in while every user-scoped call
+// fails with `x509: certificate has expired`, and there is no refresh endpoint
+// to recover from it. Clamping makes the session end with the credential, so
+// the user is sent back through login instead.
+func tokenDuration(requested time.Duration, notAfter time.Time) time.Duration {
+	if requested <= 0 {
+		requested = DefaultJwtDuration
+	}
+
+	if notAfter.IsZero() {
+		return requested
+	}
+
+	if remaining := time.Until(notAfter); remaining < requested {
+		return remaining
+	}
+
+	return requested
 }
 
 func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
@@ -32,14 +65,10 @@ func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
 			out.Groups = nfo.GetGroups()
 
 			if extras.JwtPrivateKey != nil {
-				if extras.JwtDuration <= 0 {
-					extras.JwtDuration = time.Hour * 8
-				}
-
 				out.AccessToken, err = jwtutil.CreateToken(jwtutil.CreateTokenOptions{
 					Username:   nfo.GetUserName(),
 					Groups:     nfo.GetGroups(),
-					Duration:   extras.JwtDuration,
+					Duration:   tokenDuration(extras.JwtDuration, extras.CertNotAfter),
 					KeyID:      extras.JwtKeyID,
 					PrivateKey: extras.JwtPrivateKey,
 				})

@@ -95,7 +95,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Str("groups", strings.Join(user.GetGroups(), ",")).
 			Msg("serviceaccount auth succeeded")
 
-		dat, err := r.gen.Generate(user)
+		dat, notAfter, err := r.gen.Generate(user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)
@@ -107,6 +107,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
+			CertNotAfter:  notAfter,
 		})
 	}
 }

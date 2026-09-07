@@ -290,6 +290,23 @@
         },
         "AUTHN_DUMP_ENV": {
           "type": "string"
+        },
+        "AUTHN_SERVICE_CRT_EXPIRES_IN": {
+          "type": "string",
+          "description": "Requested lifetime of authn's own client certificate (Go duration). The signer may grant less."
+        },
+        "AUTHN_CRT_RENEWAL_THRESHOLD": {
+          "type": "string",
+          "pattern": "^0?\\.[0-9]+$",
+          "description": "Fraction (0-1, exclusive) of the granted certificate lifetime after which authn's own certificate is re-issued."
+        },
+        "AUTHN_CRT_RENEWAL_ENABLED": {
+          "type": "string",
+          "enum": [
+            "true",
+            "false"
+          ],
+          "description": "Keep authn's own client certificate renewed in the background."
         }
       },
       "additionalProperties": {

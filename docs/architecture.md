@@ -54,8 +54,11 @@ API.
    is on, wrapped with a permissive `*`-origin handler that allows the custom
    `X-Auth-Code` header plus the W3C trace-context headers
    (`traceparent`/`tracestate`/`baggage`, `main.go:257-270`).
-9. **Self-signup.** `signup.Do(...)` (`main.go:290-299`) creates an authn
-   ClientConfig so authn can call snowplow's RESTActions as itself.
+9. **Own identity, kept renewed.** `certrenewal.New(...)` + `Ensure` (`main.go:328`)
+   issue authn's own `authn-clientconfig`, so authn can call snowplow's RESTActions as
+   itself. Then `go renewer.Run` (`main.go:355`) re-issues it at a fraction of the
+   certificate's granted lifetime ([certificate-renewal](./certificate-renewal.md)).
+   Issuing still goes through `plumbing` `signup.Do` (`certrenewal/renewal.go:238`); it used to run only once, at boot.
 10. **Serve + graceful shutdown.** `http.Server` with read/write/idle timeouts
     (`main.go:272-278`), served in a goroutine that flips the `healthy` flag
     (`main.go:301-306`); SIGINT/SIGTERM trigger a 30s graceful `Shutdown` that also

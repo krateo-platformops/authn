@@ -153,6 +153,14 @@ env:
   AUTHN_KUBECONFIG_SERVER_URL: "https://kubernetes.default.svc"
   AUTHN_CORS: "true"
   AUTHN_DUMP_ENV: "true"
+  # authn's own client certificate (authn-clientconfig, the identity snowplow
+  # presents for authn's RESTActions) is renewed in the background. The signer may
+  # grant less than requested (OpenShift caps at 720h), so renewal fires at
+  # AUTHN_CRT_RENEWAL_THRESHOLD of the GRANTED lifetime. The loop assumes a single
+  # writer: keep replicaCount 1 and autoscaling off. See docs/certificate-renewal.md.
+  AUTHN_SERVICE_CRT_EXPIRES_IN: "8760h"
+  AUTHN_CRT_RENEWAL_THRESHOLD: "0.66"
+  AUTHN_CRT_RENEWAL_ENABLED: "true"
 
 # JWT signing key configuration.
 # authn signs tokens with an RSA private key (RS256) and publishes the matching

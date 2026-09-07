@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/krateo-platformops/authn/internal/certrenewal"
 	"github.com/krateo-platformops/authn/internal/env"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
@@ -29,7 +30,6 @@ import (
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/krateo-platformops/plumbing/jwtutil"
-	"github.com/krateo-platformops/plumbing/signup"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"k8s.io/client-go/rest"
@@ -55,7 +55,16 @@ func main() {
 		"enable OpenTelemetry tracing (OTLP/HTTP); defaults to OTEL_TRACING_ENABLED, which defaults to OTEL_ENABLED; default off")
 	servicePort := flag.Int("port", env.Int("AUTHN_PORT", 8082), "port to listen on")
 	certExpiresIn := flag.Duration("cert-expires",
-		env.Duration("AUTHN_KUBECONFIG_CRT_EXPIRES_IN", time.Hour*24), "generated certificate duration (default: 24h)")
+		env.Duration("AUTHN_KUBECONFIG_CRT_EXPIRES_IN", time.Hour*24), "requested duration of a login certificate (default: 24h)")
+	serviceCertExpiresIn := flag.Duration("service-cert-expires",
+		env.Duration("AUTHN_SERVICE_CRT_EXPIRES_IN", certrenewal.DefaultDuration),
+		"requested duration of authn's own service certificate (default: 8760h)")
+	certRenewalOn := flag.Bool("cert-renewal",
+		env.Bool("AUTHN_CRT_RENEWAL_ENABLED", true),
+		"keep authn's own service certificate renewed in the background")
+	certRenewalThreshold := flag.Float64("cert-renewal-threshold",
+		env.Float64("AUTHN_CRT_RENEWAL_THRESHOLD", certrenewal.DefaultThreshold),
+		"fraction of the GRANTED certificate lifetime after which it is re-issued (default: 0.66)")
 
 	clusterName := flag.String("kubeconfig-cluster-name",
 		env.String("AUTHN_KUBECONFIG_CLUSTER_NAME", "krateo"), "cluster name for generated kubeconfig")
@@ -115,7 +124,9 @@ func main() {
 			Str("port", fmt.Sprintf("%d", *servicePort)).
 			Str("clusterName", *clusterName).
 			Str("kubernetesURL", *kubernetesURL).
-			Dur("certExpire", *certExpiresIn)
+			Dur("certExpire", *certExpiresIn).
+			Dur("serviceCertExpire", *serviceCertExpiresIn).
+			Bool("certRenewal", *certRenewalOn)
 
 		if *dumpEnv {
 			evt = evt.Strs("env-vars", os.Environ())
@@ -310,16 +321,44 @@ func main() {
 	}...)
 	defer stop()
 
-	// Create authn clientconfig to call snowplow's RESTActions
-	_, _ = signup.Do(context.TODO(), signup.Options{
-		RestConfig:   cfg,
-		Namespace:    *storageNamespace,
-		CAData:       string(cfg.CAData),
-		ServerURL:    *kubernetesURL,
-		CertDuration: time.Hour * 8760, // 1 year
-		Username:     *authnUsername,
-		UserGroups:   []string{"authn"},
+	// authn's own clientconfig — the identity snowplow presents when it runs
+	// RESTActions on authn's behalf. Issued synchronously here, as it always
+	// was, and then kept alive: the signer may grant far less than the year we
+	// ask for, and nothing but a pod restart used to re-issue it.
+	renewer, err := certrenewal.New(certrenewal.Options{
+		RestConfig: cfg,
+		Namespace:  *storageNamespace,
+		CAData:     string(cfg.CAData),
+		ServerURL:  *kubernetesURL,
+		Username:   *authnUsername,
+		Groups:     []string{"authn"},
+		Duration:   *serviceCertExpiresIn,
+		Threshold:  *certRenewalThreshold,
+		Log:        log,
 	})
+	switch {
+	case err != nil:
+		// A clientconfig authn cannot create has never been a reason to refuse
+		// logins — only snowplow-backed identity enrichment degrades — so this
+		// stays as non-fatal as the fire-and-forget signup it replaces.
+		log.Err(err).Msg("client certificate renewal unavailable")
+
+	default:
+		// This read is the only one until renewal falls due: the wait it
+		// returns is handed straight to the loop.
+		wait, err := renewer.Ensure(context.Background())
+		if err != nil {
+			log.Err(err).Msg("issuing authn clientconfig")
+		}
+
+		if *certRenewalOn {
+			go renewer.Run(ctx, wait)
+		} else {
+			log.Warn().
+				Str("secret", renewer.SecretName()).
+				Msg("client certificate renewal is disabled; the stored certificate will expire without a restart")
+		}
+	}
 
 	go func() {
 		atomic.StoreInt32(&healthy, 1)

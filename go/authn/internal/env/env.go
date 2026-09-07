@@ -33,6 +33,19 @@ func Int(key string, defaultValue int) int {
 	return res
 }
 
+func Float64(key string, defaultValue float64) float64 {
+	val, ok := os.LookupEnv(key)
+	if !ok {
+		return defaultValue
+	}
+
+	res, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
+	if err != nil {
+		return defaultValue
+	}
+	return res
+}
+
 func Bool(key string, defaultValue bool) bool {
 	val, ok := os.LookupEnv(key)
 	if !ok {

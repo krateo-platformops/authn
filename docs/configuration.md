@@ -58,7 +58,10 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 |---|---|---|
 | `AUTHN_KUBECONFIG_SERVER_URL` | chart: `https://kube-apiserver:6443` | The apiserver URL written into every generated kubeconfig — **set it to a reachable endpoint**. |
 | `AUTHN_KUBECONFIG_CLUSTER_NAME` | `krateo` | Cluster name in the generated kubeconfig. |
-| `AUTHN_KUBECONFIG_CRT_EXPIRES_IN` | `24h` | Minted client-cert lifetime — and the login JWT lifetime (same knob wires both). |
+| `AUTHN_KUBECONFIG_CRT_EXPIRES_IN` | `24h` | Requested lifetime of a login's client certificate, and of its JWT. The JWT is clamped to the certificate's **granted** `NotAfter`, so a signer that grants less ends the session early ([certificate-renewal](./certificate-renewal.md)). |
+| `AUTHN_SERVICE_CRT_EXPIRES_IN` | `8760h` | Requested lifetime of authn's own certificate (`authn-clientconfig`). |
+| `AUTHN_CRT_RENEWAL_THRESHOLD` | `0.66` | Fraction of the granted lifetime after which authn's own certificate is re-issued (0 < x < 1). |
+| `AUTHN_CRT_RENEWAL_ENABLED` | `true` | Background renewal of authn's own certificate; `false` lets it expire until a restart. |
 | `AUTHN_CORS` | `true` | Permissive `*`-origin CORS for the browser hop (allows `X-Auth-Code` + W3C trace-context headers). |
 | `AUTHN_DEBUG` | chart: `true` | Verbose (debug-level) logging. |
 | `AUTHN_DUMP_ENV` | chart: `true` | Dump env vars in the debug boot log. |
@@ -76,7 +79,8 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (SDK standard) | OTLP/HTTP collector endpoint when telemetry is on. |
 
 Flags mirror all of the above (`--port`, `--cert-expires`, `--jwt-sign-key-file`,
-`--jwt-kid`, `--serviceaccount-audience`, `--otel-tracing`, `--kubeconfig` for
+`--jwt-kid`, `--serviceaccount-audience`, `--service-cert-expires`,
+`--cert-renewal`, `--cert-renewal-threshold`, `--otel-tracing`, `--kubeconfig` for
 out-of-cluster runs, …) — flags win over env ([architecture](./architecture.md)).
 
 ## The CRDs chart

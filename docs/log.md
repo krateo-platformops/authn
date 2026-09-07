@@ -14,6 +14,27 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — client certificates: authn's own is renewed, login JWTs are clamped (#28)
+
+Fixes [#28](https://github.com/krateo-platformops/authn/issues/28), ported from
+krateoplatformops/authn#76 (EdmondDantes21), which never reached this repo:
+- `authn-clientconfig` was written once at boot and never renewed. A pod that outlived
+  its certificate failed every RESTAction call with `x509: certificate has expired`
+  until restarted.
+- The signer may grant far less than requested: OpenShift caps at 720h and rotates its
+  CA every 30 days.
+
+What changed:
+- authn now reads the **granted** `NotAfter` and annotates every Secret with it.
+- It renews its own certificate in the background at a fraction of the granted lifetime.
+- Every login JWT, including `serviceaccount`, is clamped to its certificate's real
+  expiry, so a session can no longer outlive its credential.
+- New knobs: `AUTHN_SERVICE_CRT_EXPIRES_IN`, `AUTHN_CRT_RENEWAL_THRESHOLD`,
+  `AUTHN_CRT_RENEWAL_ENABLED`.
+
+See [certificate-renewal](./certificate-renewal.md). Verified on kind; capped-signer
+distributions are still unverified.
+
 ## 2026-10-29 — intra-service auth: §6 open questions closed
 
 The [decision record](./design/kubernetes-intra-service-auth.md) still listed token

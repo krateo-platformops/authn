@@ -3,8 +3,10 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/plumbing/kubeutil"
@@ -19,7 +21,30 @@ const (
 	CALabel         = "certificate-authority-data"
 	ProxyUrlLabel   = "proxy-url"
 	ServerUrlLabel  = "server-url"
+
+	// NotBeforeAnnotation and NotAfterAnnotation record the validity window the
+	// signer actually GRANTED, which can be far shorter than the one requested
+	// (see internal/helpers/kube/certinfo.go). They are the only place the real
+	// expiry of a stored credential is observable without decoding the Secret.
+	NotBeforeAnnotation = "authn.krateo.io/certificate-not-before"
+	NotAfterAnnotation  = "authn.krateo.io/certificate-not-after"
 )
+
+// CertValidityAnnotations reports the granted validity window of a base64-PEM
+// client certificate, ready to be stamped onto the Secret that stores it. An
+// unparseable certificate yields no annotations rather than an error: the
+// annotations are observability, never a precondition for storing a credential.
+func CertValidityAnnotations(certData string) map[string]string {
+	crt, err := kube.ParseCertificateBase64(certData)
+	if err != nil {
+		return nil
+	}
+
+	return map[string]string{
+		NotBeforeAnnotation: crt.NotBefore.UTC().Format(time.RFC3339),
+		NotAfterAnnotation:  crt.NotAfter.UTC().Format(time.RFC3339),
+	}
+}
 
 type AuthInfo struct {
 	Server   string `json:"server"`
@@ -53,6 +78,7 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 	sec := corev1.Secret{}
 	sec.SetName(fmt.Sprintf("%s-clientconfig", kubeutil.MakeDNS1123Compatible(name)))
 	sec.SetNamespace(ns)
+	sec.SetAnnotations(CertValidityAnnotations(nfo.CertData))
 	sec.StringData = map[string]string{
 		CALabel:         nfo.CAData,
 		ClientCertLabel: nfo.CertData,

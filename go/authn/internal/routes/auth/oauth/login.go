@@ -155,7 +155,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Strs("groups", user.GetGroups()).
 			Msg("user info successfully fetched")
 
-		dat, err := r.gen.Generate(user)
+		dat, notAfter, err := r.gen.Generate(user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)
@@ -167,6 +167,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
+			CertNotAfter:  notAfter,
 		})
 	}
 }
