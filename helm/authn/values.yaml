@@ -142,7 +142,15 @@ env:
   AUTHN_DEBUG: "true"
   AUTHN_KUBECONFIG_CLUSTER_NAME: "krateo"
   AUTHN_KUBECONFIG_CRT_EXPIRES_IN: "24h"
-  AUTHN_KUBECONFIG_SERVER_URL: "https://kube-apiserver:6443"
+  # In-cluster apiserver URL baked into every generated <user>-clientconfig Secret's
+  # server-url. MUST be reachable + CA/SAN-valid from in-cluster consumers (the
+  # cert-replay per-user RBAC hop reads it raw via endpoints.FromSecret). The old
+  # placeholder "https://kube-apiserver:6443" is a kubeadm-style name that resolves
+  # NOWHERE on managed k8s (GKE: NXDOMAIN, wrong port) — it broke every per-user
+  # RBAC call. kubernetes.default.svc is a universal apiserver SAN validated by the
+  # cluster CA already stored in each Secret (matches plumbing context.go / snowplow
+  # sa_client.go). Leave empty ("") to let authn auto-derive KUBERNETES_SERVICE_HOST:PORT.
+  AUTHN_KUBECONFIG_SERVER_URL: "https://kubernetes.default.svc"
   AUTHN_CORS: "true"
   AUTHN_DUMP_ENV: "true"
 
