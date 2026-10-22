@@ -163,7 +163,7 @@ type ServiceAccountSpec struct {
     Groups []string `json:"groups,omitempty"`
     // +optional DisplayName, TokenTTL, Audiences
 }
-// +kubebuilder:resource:scope=Namespaced,categories={krateo,authn,serviceaccount}
+// +kubebuilder:resource:scope=Namespaced,categories={krateo,authn}
 // metadata.name == the issued username (exactly like basic.User).
 ```
 

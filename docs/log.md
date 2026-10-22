@@ -14,6 +14,15 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-22 — the ServiceAccount CRD drops the `serviceaccount` category
+
+`serviceaccounts.serviceaccount.authn.krateo.io` declared the categories `krateo`, `authn` and
+`serviceaccount`. kubectl expands a category before it looks up a resource name, so on any cluster
+with authn's CRDs `kubectl get serviceaccount <name>` read authn's ServiceAccount, not the core one,
+and answered NotFound for a ServiceAccount that exists. Scripts that read "not found" as "gone"
+then decided wrongly. The category is gone; `kubectl get krateo` and `kubectl get authn` still list
+it.
+
 ## 2026-08-07 — adopted the Krateo Documentation Standard
 
 This bundle: root `docs/` core set + `examples/` + thin README. The internals corpus
