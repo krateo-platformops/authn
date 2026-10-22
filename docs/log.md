@@ -14,6 +14,15 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — The ServiceAccount CRD drops the `serviceaccount` category (#34)
+
+`serviceaccounts.serviceaccount.authn.krateo.io` declared the categories `krateo`, `authn` and
+`serviceaccount`. kubectl expands a category before it looks up a resource name. So on any
+cluster with authn's CRDs, `kubectl get serviceaccount <name>` read authn's ServiceAccount
+instead of the core one, and answered NotFound for a ServiceAccount that exists. Scripts that read
+"not found" as "gone" then decided wrongly. The category is gone; `kubectl get krateo` and
+`kubectl get authn` still list it. The fix is EdmondDantes21's branch (Oct 22), rebased onto main.
+
 ## 2026-10-30 — Step-up login (#49)
 
 `POST /oidc/stepup` issues a short-lived credential carrying `krateo:loa:2` to an OIDC
