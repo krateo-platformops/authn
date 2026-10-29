@@ -14,6 +14,38 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — `/serviceaccount/login` failures name their cause and their side
+
+core-provider's `ApiResolved` condition (core-provider#251) needs to say why a cdc could
+not authenticate without parsing English. Every serviceaccount login failure now carries a
+stable token in `details.causes[0].reason`, Kubernetes `StatusDetails`-style. The status
+code says whose failure it is.
+
+Refusals of the caller (`401`/`403`):
+- `MissingBearer`
+- `TokenNotAuthenticated`
+- `AudienceMismatch`
+- `NotAServiceAccount`
+- `NoMapping`
+- `AmbiguousMapping`
+
+Failures of authn (`500`, `InternalError`):
+- `TokenReviewFailed`
+- `MappingLookupFailed`
+- `IssuanceFailed`
+
+Status codes changed:
+- A failed TokenReview call and a failed mapping list used to be `403`. They are now
+  `500`: a client that classifies on the code would otherwise send an operator to check
+  audiences and mappings when the fault was authn's own dependency (core-provider's
+  review).
+- A TokenReview `status.error` (invalid or expired token) is the apiserver's verdict on
+  the caller, so it is `TokenNotAuthenticated` with that error in the message.
+- The missing-bearer `401` is now a JSON `Status` like every other failure; it used to be
+  plain text.
+- A JWT that could not be signed used to produce an empty `200`. It is now `500`
+  `IssuanceFailed`, because `encode.Success` builds the whole body before writing.
+
 ## 2026-10-29 — authn can run more than one replica (#45)
 
 0.28.0 renewed `authn-clientconfig` in a loop that assumed a single replica: its CSR is

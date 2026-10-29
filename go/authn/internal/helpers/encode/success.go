@@ -50,6 +50,11 @@ func tokenDuration(requested time.Duration, notAfter time.Time) time.Duration {
 	return requested
 }
 
+// Success writes the login response. It builds the whole body (signing the
+// token) before writing anything, so a non-nil error means nothing was sent
+// and the caller must still reply with a failure. Once the body is built, a
+// failure to write it means the client is gone; there is no one left to tell,
+// so it is not returned.
 func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
 	out := response{
 		Data: dat,
@@ -79,9 +84,15 @@ func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
 		}
 	}
 
+	body, err := json.Marshal(&out)
+	if err != nil {
+		return err
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(&out)
+	_, _ = w.Write(append(body, '\n'))
+	return nil
 }
 
 type user struct {

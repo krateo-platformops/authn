@@ -99,3 +99,22 @@ func TestSuccessClampsTokenToCertificate(t *testing.T) {
 	assert.WithinDuration(t, notAfter, exp.Time, time.Second*2,
 		"the token must expire with the certificate, not 24h later")
 }
+
+// A token that cannot be signed must leave the response untouched, so the
+// handler can still answer with a failure instead of an empty 200.
+func TestSuccessWritesNothingWhenSigningFails(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	err = Success(rec, nil, &Extras{
+		UserInfo:      userinfo.NewDefaultUser("cdc", "1", []string{"g"}, userinfo.Extensions{}),
+		JwtDuration:   time.Hour,
+		JwtPrivateKey: key,
+		JwtKeyID:      "", // the signer refuses an empty key ID
+	})
+	require.Error(t, err)
+	assert.False(t, rec.Flushed)
+	assert.Empty(t, rec.Header())
+	assert.Zero(t, rec.Body.Len())
+}

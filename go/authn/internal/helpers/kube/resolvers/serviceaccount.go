@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
@@ -16,6 +17,14 @@ import (
 // exchange allowlist: not-found means that SA may not exchange its token. The CR is looked
 // up by listing the operator namespace and matching the ref (a CR's name is the issued
 // username, which need not equal the SA name, so a name Get would not suffice).
+// ErrNoMapping and ErrAmbiguousMapping are returned (wrapped) by
+// ServiceAccountForSA so callers can tell an allowlist miss from an ambiguous
+// allowlist and from a failed lookup.
+var (
+	ErrNoMapping        = errors.New("no ServiceAccount mapping")
+	ErrAmbiguousMapping = errors.New("ambiguous ServiceAccount mapping")
+)
+
 func ServiceAccountForSA(rc *rest.Config, saNamespace, saName string) (*sav1alpha1.ServiceAccount, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
@@ -44,13 +53,13 @@ func ServiceAccountForSA(rc *rest.Config, saNamespace, saName string) (*sav1alph
 		ref := res.Items[i].Spec.ServiceAccountRef
 		if ref != nil && ref.Namespace == saNamespace && ref.Name == saName {
 			if match != nil {
-				return nil, fmt.Errorf("ambiguous mapping: multiple ServiceAccount resources reference %s/%s", saNamespace, saName)
+				return nil, fmt.Errorf("%w: multiple ServiceAccount resources reference %s/%s", ErrAmbiguousMapping, saNamespace, saName)
 			}
 			match = &res.Items[i]
 		}
 	}
 	if match == nil {
-		return nil, fmt.Errorf("no ServiceAccount mapping for serviceaccount %s/%s (not in the exchange allowlist)", saNamespace, saName)
+		return nil, fmt.Errorf("%w for serviceaccount %s/%s (not in the exchange allowlist)", ErrNoMapping, saNamespace, saName)
 	}
 	return match, nil
 }

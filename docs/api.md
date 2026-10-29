@@ -75,5 +75,40 @@ log a success response.
 use the JWT ([#36](https://github.com/krateo-platformops/authn/issues/36)). JWT lifetime = the cert lifetime knob
 (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, default 24h).
 
+### `/serviceaccount/login` failures
+
+Every failure is a Kubernetes-style `Status`. **The status code says whose failure it
+is**, so a client can classify on the code alone:
+
+- `401`/`403`: authn refused the caller. Retrying unchanged fails again; the fix is the
+  caller's token, audience or mapping.
+- `500`: authn could not finish the job because one of its own dependencies failed.
+  Nothing is known to be wrong with the caller, and the same request may succeed later.
+
+The top-level `reason` stays generic (`Unauthorized`, `Forbidden`, `InternalError`). The
+specific cause is a stable, machine-readable token in `details.causes[0].reason`,
+mirroring Kubernetes `StatusDetails`:
+
+```json
+{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,
+ "message":"token audience mismatch (require \"authn\")",
+ "details":{"causes":[{"reason":"AudienceMismatch","message":"token audience mismatch (require \"authn\")"}]}}
+```
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `MissingBearer` | 401 | No `Authorization: Bearer` header (also sets `WWW-Authenticate`) |
+| `TokenNotAuthenticated` | 403 | The apiserver did not authenticate the token; its `status.error` (e.g. invalid or expired token) is in the message |
+| `AudienceMismatch` | 403 | The token isn't bound to authn's audience (default `authn`) |
+| `NotAServiceAccount` | 403 | The token's user isn't `system:serviceaccount:<ns>:<name>` |
+| `NoMapping` | 403 | No `ServiceAccount` mapping allowlists this SA |
+| `AmbiguousMapping` | 403 | More than one mapping references this SA |
+| `TokenReviewFailed` | 500 | authn could not call the TokenReview API |
+| `MappingLookupFailed` | 500 | authn could not list the mappings |
+| `IssuanceFailed` | 500 | The caller was authenticated and mapped, but authn could not issue its clientconfig or sign its JWT |
+
+Values are added, never renamed, and a cause never changes its code. "authn was
+unreachable" is the remaining case: no response at all.
+
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).

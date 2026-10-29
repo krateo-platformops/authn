@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
-	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"os"
 	"strings"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
