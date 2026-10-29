@@ -29,7 +29,8 @@ timestamp: 2026-10-29T00:00:00Z
 > Current behavior contract: [behavior.md](../behavior.md); pitfalls:
 > [gotchas.md](../gotchas.md). §6: token audience & naming, JWT lifetime and the
 > endpoint shape were closed on 2026-10-29 by recording what shipped; multi-cluster was
-> decided (target-local authn); bootstrap ordering remains open.
+> decided (target-local authn); bootstrap ordering was resolved as caller-side
+> degradation. §6 has no open items.
 >
 > Original: Draft for discussion · Date: 2026-06-20
 >
@@ -248,8 +249,21 @@ Consequences (all inherited from the existing model):
   the SA token as `Authorization: Bearer`. It follows the `/<strategy>/login` convention of
   every other strategy and returns the same response shape (JWT + kubeconfig). An RFC 8693
   `/token` exchange endpoint is not adopted.
-- **Bootstrap ordering** — authn must be reachable before dependent controllers can resolve
-  `apiRef`; degrade gracefully (status fields stale, never a failed reconcile).
+- ~~Bootstrap ordering~~ — **resolved: callers degrade; authn does not sequence.**
+  authn has no startup dependency on its callers, and nothing orders authn before them.
+  Every caller must treat "authn unreachable" as degraded, never as fatal. Both shipped
+  callers do:
+  - **core-provider's cdc** (`internal/authn/authn.go`): a failed `apiRef` resolution is
+    logged at Info (`support.go:199-205`). `.api` is left out of the status projection, the
+    other sources still project, and the next reconcile retries. Compositions are never
+    failed.
+  - **snowplow's prewarm seed** (`phase1_walk.go`, `installSeedLoopbackToken`): bounded
+    exponential backoff within the phase-1 budget. If the budget runs out, the seed continues
+    without a token, logs one WARN and increments `seedLoopbackTokenErrTotal`. Readiness
+    never blocks on authn.
+
+  Both cache the JWT until `exp − 60s` and do not invalidate on a `401`. So, as the
+  JWT-lifetime item says, a revoked mapping shows up at the next re-exchange.
 
 ---
 
