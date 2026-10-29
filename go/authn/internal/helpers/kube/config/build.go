@@ -112,6 +112,22 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 		return nil, notAfter, err
 	}
 
+	// Reserved groups are authn's to grant (userinfo.ReservedGroupPrefix).
+	// Report the ones an identity source tried to assert, and refuse an
+	// identity that still carries one: that means it was built without
+	// userinfo's guard, and it must fail loudly rather than be granted.
+	if dropped := userInfo.DroppedGroups(); len(dropped) > 0 {
+		g.log.Warn().
+			Str("username", userInfo.GetUserName()).
+			Strs("groups", dropped).
+			Msg("dropped reserved groups asserted by the identity source")
+	}
+	for _, grp := range userInfo.GetGroups() {
+		if userinfo.IsReserved(grp) {
+			return nil, notAfter, fmt.Errorf("group %q is reserved to authn and cannot be issued by a login", grp)
+		}
+	}
+
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {

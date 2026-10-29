@@ -108,12 +108,22 @@ With `spec.tls: true`, the LDAP `StartTLS` call uses `InsecureSkipVerify: true`
 **no certificate validation** — it does not protect against a MITM with a forged
 cert.
 
-## OIDC ID token is decoded, not cryptographically verified
-`decodeJWT` base64-decodes the ID token payload and JSON-parses the claims
-(`oidc/support.go:210-231`); it does **not** verify the signature, issuer, audience,
-or expiry. Trust rests on the TLS channel to the token endpoint and the preceding
-code exchange, not on token verification. Treat any field copied from the ID token
-accordingly.
+## OIDC ID token claims are validated, its signature is not
+Since 0.29.0 (#50), `validateIDToken` (`oidc/idtoken.go`) checks `iss`, `aud`/`azp`
+and `exp` before any claim is used. It does **not** verify the signature: trust in
+the token's integrity rests on the TLS channel to the configured token endpoint and
+the client-authenticated code exchange, which OIDC Core §3.1.3.7 allows. A
+hand-configured OIDCConfig (no `discoveryURL`) must set `spec.issuer`, or every login
+is refused with `IssuerUnknown`.
+
+## `krateo:loa:*` groups are dropped from every identity source
+Groups prefixed `krateo:loa:` are reserved: they record a step-up login's assurance
+level (#49), and admission policies trust them. If an IdP groups claim, a RESTAction, a
+basic `User` or a `ServiceAccount` mapping asserts one, authn drops it from both the
+certificate and the JWT, and logs `dropped reserved groups asserted by the identity
+source`. The guard is in `userinfo.NewDefaultUser`/`SetGroups`. As a backstop, the
+generator refuses to mint any identity that still carries one. Don't name a real
+group with this prefix: its members will lose it.
 
 ## OIDC groups never come from UserInfo
 Missing `name`/`email`/`picture`/`preferred_username` claims trigger a UserInfo call,
