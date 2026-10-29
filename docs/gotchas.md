@@ -38,6 +38,22 @@ recreates** it (`config/gen.go:41-55`) rather than reusing the prior cert. Repea
 logins for the same user churn CSR objects; concurrent logins for the same user can
 race on that delete/recreate.
 
+## Certificate renewal assumes a single replica
+authn's own certificate (`authn-clientconfig`) is renewed by a background loop
+(`go/authn/internal/certrenewal`). Its CSR is named after the username (`authn`), and
+an existing CSR is deleted and recreated (above), so two replicas would race on it,
+each deleting the other's in-flight CSR. Keep `replicaCount: 1` and
+`autoscaling.enabled: false`, which are the chart defaults. Set
+`AUTHN_CRT_RENEWAL_ENABLED=false` only if you accept that the certificate expires in
+place until a restart ([certificate-renewal](./certificate-renewal.md)).
+
+## The requested certificate lifetime is a wish
+The signer grants `min(requested, --cluster-signing-duration, signer CA remaining
+life)`. OpenShift caps it at 720h with a 30-day CA rotation, so a 24h login certificate
+can come back shorter. The login JWT is clamped to the **granted** `NotAfter`, so on a
+capped signer sessions end earlier than `AUTHN_KUBECONFIG_CRT_EXPIRES_IN` suggests.
+That is intended. Look for the `warn` logged when the grant is under 90% of the request.
+
 ## Config CRs live in the operator namespace — everywhere
 Every lookup (`User`, `ServiceAccount` mappings, `LDAPConfig`, `OAuthConfig`,
 `OIDCConfig`) lists/gets **only the operator namespace**

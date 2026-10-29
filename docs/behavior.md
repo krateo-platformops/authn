@@ -59,9 +59,10 @@ return:
 ```
 
 - `data` is the per-user kubeconfig minted by the generator (`config/build.go:115-147`).
-- `accessToken` is always present — authn fails to boot without a valid signing key; the JWT duration is the
-  cert-duration knob, with an 8h default if no explicit duration
-  (`success.go:32-46`).
+- `accessToken` is always present, since authn fails to boot without a valid signing key. The JWT
+  duration is the cert-duration knob (8h default if none is given), **clamped to the issued
+  certificate's real `NotAfter`**, so a token never outlives the credential minted with it
+  (`tokenDuration`, `success.go:37`; [certificate-renewal](./certificate-renewal.md)).
 - `/basic/login?d` instead returns the kubeconfig as a file download
   (`Content-Disposition`, `basic/login.go:94-96` → `encode/attach.go`).
 

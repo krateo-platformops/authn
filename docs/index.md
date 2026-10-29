@@ -28,6 +28,8 @@ and one version line: image and charts ship together from a single plain-semver 
 - [api](./api.md) — the five `*.authn.krateo.io` CRDs and the HTTP surface.
 - [jwt-jwks](./jwt-jwks.md) — RS256 signing, the JWKS endpoint, and how Snowplow /
   agentgateway consume it.
+- [certificate-renewal](./certificate-renewal.md) — authn's own certificate is renewed in
+  the background; per-user login JWTs are clamped to the certificate's granted expiry.
 - [rbac](./rbac.md) — how the generated client cert (CN=username, O=groups) maps to
   Kubernetes RBAC: binding roles to `User` and `Group` subjects. authn issues identity;
   RBAC authorizes it.
