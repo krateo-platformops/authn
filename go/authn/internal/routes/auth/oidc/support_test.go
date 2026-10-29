@@ -8,9 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+const testIssuer = "https://idp.example/realms/krateo"
 
 func TestDoLogin(t *testing.T) {
 	testCases := []struct {
@@ -96,7 +99,13 @@ func TestDoLogin(t *testing.T) {
 				headerJSON, _ := json.Marshal(header)
 				headerBase64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 
-				payloadJSON, _ := json.Marshal(tc.idTokenClaims)
+				claims := map[string]interface{}{
+					"iss": testIssuer, "aud": "test-client-id", "exp": float64(time.Now().Add(time.Hour).Unix()),
+				}
+				for k, v := range tc.idTokenClaims {
+					claims[k] = v
+				}
+				payloadJSON, _ := json.Marshal(claims)
 				payloadBase64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
 
 				idToken := headerBase64 + "." + payloadBase64 + ".signature"
@@ -135,6 +144,7 @@ func TestDoLogin(t *testing.T) {
 			}
 
 			cfg := &oidcConfig{
+				Issuer:       testIssuer,
 				ClientID:     "test-client-id",
 				ClientSecret: "test-client-secret",
 				RedirectURI:  "http://example.com/callback",

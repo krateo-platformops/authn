@@ -14,6 +14,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/certrenewal"
 	"github.com/krateo-platformops/authn/internal/env"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
@@ -269,6 +270,17 @@ func main() {
 			JwtPrivateKey:       privateKey,
 			JwtKeyID:            *jwtKeyID,
 		}))
+
+	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
+	// startup so the cause is visible before the first user hits it.
+	if names, err := resolvers.OIDCConfigsWithoutIssuer(context.Background(), cfg); err != nil {
+		log.Warn().Err(err).Msg("checking OIDCConfigs for an issuer")
+	} else {
+		for _, name := range names {
+			log.Warn().Str("oidcconfig", name).
+				Msg("OIDCConfig sets neither spec.issuer nor spec.discoveryURL: its logins are refused until one is set")
+		}
+	}
 
 	var handler http.Handler = routes.Serve(all, log)
 

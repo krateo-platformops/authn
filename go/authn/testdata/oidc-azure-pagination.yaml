@@ -26,6 +26,7 @@ spec:
   # authorizationURL: authorization endpoint
   # tokenURL: token endpoint
   # userInfoURL: userinfo endpoint
+  # issuer: the ID token's expected `iss`, required without discoveryURL (e.g. https://login.microsoftonline.com/<tenant>/v2.0)
   redirectURI: http://localhost:8080/auth?kind=oidc # While any redirect URI can be used, the Krateo frontend requires /auth?kind=oidc
   clientID: <client-id-provided-by-service>
   clientSecret:

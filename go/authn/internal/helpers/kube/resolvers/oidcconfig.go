@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +20,12 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// ErrIssuerConflict reports an OIDCConfig whose spec.issuer differs from the
+// issuer its discovery document advertises.
+var ErrIssuerConflict = errors.New("spec.issuer differs from the discovered issuer")
+
 type DiscoveryEndpointResponse struct {
+	Issuer                 string `json:"issuer"`
 	Authorization_endpoint string `json:"authorization_endpoint"`
 	Token_endpoint         string `json:"token_endpoint"`
 	Userinfo_endpoint      string `json:"userinfo_endpoint"`
@@ -44,17 +50,88 @@ func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1al
 		Namespace(ns).Name(name).
 		Do(context.Background()).
 		Into(res)
+	if err != nil {
+		return nil, err
+	}
 
-	if (res.Spec.AuthorizationURL == "" || res.Spec.TokenURL == "" || res.Spec.UserInfoURL == "") && res.Spec.DiscoveryURL != "" {
-		err = doDiscovery(ctx, res)
-	} else if res.Spec.AuthorizationURL != "" && !strings.Contains(res.Spec.AuthorizationURL, "?") {
-		res.Spec.AuthorizationURL = authCodeURL(res)
+	return res, resolveOIDCConfig(ctx, res)
+}
+
+// resolveOIDCConfig completes cfg for a login: the endpoints, and the issuer
+// the ID token is validated against. With a discoveryURL the discovery
+// document is always read, because it is where the issuer comes from. Its
+// endpoints are applied only when some endpoint is not set, as before.
+// cfg.Spec.Issuer stays empty when neither spec.issuer nor discovery provides
+// one; the login refuses such a config.
+func resolveOIDCConfig(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) error {
+	if cfg.Spec.DiscoveryURL == "" {
+		if cfg.Spec.AuthorizationURL != "" && !strings.Contains(cfg.Spec.AuthorizationURL, "?") {
+			cfg.Spec.AuthorizationURL = authCodeURL(cfg)
+		}
+		return nil
+	}
+
+	doc, err := fetchDiscovery(ctx, cfg.Spec.DiscoveryURL)
+	if err != nil {
+		return err
+	}
+
+	switch {
+	case cfg.Spec.Issuer == "":
+		cfg.Spec.Issuer = doc.Issuer
+	case doc.Issuer != "" && doc.Issuer != cfg.Spec.Issuer:
+		return fmt.Errorf("%w: spec.issuer %q, discovery %q", ErrIssuerConflict, cfg.Spec.Issuer, doc.Issuer)
+	}
+
+	if cfg.Spec.AuthorizationURL == "" || cfg.Spec.TokenURL == "" || cfg.Spec.UserInfoURL == "" {
+		return applyDiscovery(cfg, doc)
+	}
+	if !strings.Contains(cfg.Spec.AuthorizationURL, "?") {
+		cfg.Spec.AuthorizationURL = authCodeURL(cfg)
+	}
+	return nil
+}
+
+func OIDCConfigList(rc *rest.Config) (*oidcv1alpha1.OIDCConfigList, error) {
+	res, err := listOIDCConfigs(context.Background(), rc)
+	if err != nil {
+		return res, err
+	}
+
+	for i, item := range res.Items {
+		if (item.Spec.AuthorizationURL == "" || item.Spec.TokenURL == "" || item.Spec.UserInfoURL == "") && item.Spec.DiscoveryURL != "" {
+			err = doDiscovery(context.Background(), &item)
+			res.Items[i].Spec.AuthorizationURL = item.Spec.AuthorizationURL
+			res.Items[i].Spec.TokenURL = item.Spec.TokenURL
+			res.Items[i].Spec.UserInfoURL = item.Spec.UserInfoURL
+		} else if item.Spec.AuthorizationURL != "" && !strings.Contains(item.Spec.AuthorizationURL, "?") {
+			res.Items[i].Spec.AuthorizationURL = authCodeURL(&item)
+		}
 	}
 
 	return res, err
 }
 
-func OIDCConfigList(rc *rest.Config) (*oidcv1alpha1.OIDCConfigList, error) {
+// OIDCConfigsWithoutIssuer names the OIDCConfigs in the operator namespace
+// that set neither spec.issuer nor spec.discoveryURL. authn has no issuer to
+// validate their ID tokens against, so their logins are refused.
+func OIDCConfigsWithoutIssuer(ctx context.Context, rc *rest.Config) ([]string, error) {
+	all, err := listOIDCConfigs(ctx, rc)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, item := range all.Items {
+		if item.Spec.Issuer == "" && item.Spec.DiscoveryURL == "" {
+			names = append(names, item.Name)
+		}
+	}
+	return names, nil
+}
+
+// listOIDCConfigs lists the OIDCConfigs in the operator namespace as stored,
+// without discovery.
+func listOIDCConfigs(ctx context.Context, rc *rest.Config) (*oidcv1alpha1.OIDCConfigList, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
@@ -71,56 +148,57 @@ func OIDCConfigList(rc *rest.Config) (*oidcv1alpha1.OIDCConfigList, error) {
 	res := &oidcv1alpha1.OIDCConfigList{}
 	err = cli.Get().Resource("oidcconfigs").
 		Namespace(ns).
-		Do(context.Background()).
+		Do(ctx).
 		Into(res)
-
-	for i, item := range res.Items {
-		if (item.Spec.AuthorizationURL == "" || item.Spec.TokenURL == "" || item.Spec.UserInfoURL == "") && item.Spec.DiscoveryURL != "" {
-			err = doDiscovery(context.Background(), &item)
-			res.Items[i].Spec.AuthorizationURL = item.Spec.AuthorizationURL
-			res.Items[i].Spec.TokenURL = item.Spec.TokenURL
-			res.Items[i].Spec.UserInfoURL = item.Spec.UserInfoURL
-		} else if item.Spec.AuthorizationURL != "" && !strings.Contains(item.Spec.AuthorizationURL, "?") {
-			res.Items[i].Spec.AuthorizationURL = authCodeURL(&item)
-		}
-	}
-
 	return res, err
 }
 
 func doDiscovery(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) error {
 	// Use the discovery API to find the TokenURL and UserInfoURL, if present
 	if cfg.Spec.DiscoveryURL != "" {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.Spec.DiscoveryURL, nil)
+		doc, err := fetchDiscovery(ctx, cfg.Spec.DiscoveryURL)
 		if err != nil {
-			return fmt.Errorf("failed to create http request for discovery endpoint: %v", err)
+			return err
 		}
-		resp, err := telemetry.HTTPClient().Do(request)
-		if err != nil {
-			return fmt.Errorf("failed to send discovery request: %v", err)
-		}
-		endpointsDataJson, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read discovery response: %v", err)
-		}
+		return applyDiscovery(cfg, doc)
+	}
+	return applyDiscovery(cfg, DiscoveryEndpointResponse{})
+}
 
-		var endpointsData DiscoveryEndpointResponse
-		err = json.Unmarshal(endpointsDataJson, &endpointsData)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal discovery response: %v", err)
-		}
+func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpointResponse, error) {
+	var doc DiscoveryEndpointResponse
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
+	if err != nil {
+		return doc, fmt.Errorf("failed to create http request for discovery endpoint: %v", err)
+	}
+	resp, err := telemetry.HTTPClient().Do(request)
+	if err != nil {
+		return doc, fmt.Errorf("failed to send discovery request: %v", err)
+	}
+	defer resp.Body.Close()
+	endpointsDataJson, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return doc, fmt.Errorf("failed to read discovery response: %v", err)
+	}
+	if err := json.Unmarshal(endpointsDataJson, &doc); err != nil {
+		return doc, fmt.Errorf("failed to unmarshal discovery response: %v", err)
+	}
+	return doc, nil
+}
 
-		if endpointsData.Authorization_endpoint != "" {
-			cfg.Spec.AuthorizationURL = endpointsData.Authorization_endpoint
-		}
+// applyDiscovery fills cfg's endpoints from the discovery document and checks
+// that the authorize and token endpoints are known.
+func applyDiscovery(cfg *oidcv1alpha1.OIDCConfig, endpointsData DiscoveryEndpointResponse) error {
+	if endpointsData.Authorization_endpoint != "" {
+		cfg.Spec.AuthorizationURL = endpointsData.Authorization_endpoint
+	}
 
-		if endpointsData.Token_endpoint != "" {
-			cfg.Spec.TokenURL = endpointsData.Token_endpoint
-		}
+	if endpointsData.Token_endpoint != "" {
+		cfg.Spec.TokenURL = endpointsData.Token_endpoint
+	}
 
-		if endpointsData.Userinfo_endpoint != "" {
-			cfg.Spec.UserInfoURL = endpointsData.Userinfo_endpoint
-		}
+	if endpointsData.Userinfo_endpoint != "" {
+		cfg.Spec.UserInfoURL = endpointsData.Userinfo_endpoint
 	}
 
 	if (cfg.Spec.TokenURL == "" || cfg.Spec.AuthorizationURL == "") && cfg.Spec.DiscoveryURL == "" {

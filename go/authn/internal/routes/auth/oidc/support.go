@@ -4,21 +4,25 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"k8s.io/client-go/rest"
 )
 
 type oidcConfig struct {
 	DiscoveryURL     string
+	Issuer           string
 	AuthorizeURL     string
 	TokenURL         string
 	UserInfoURL      string
@@ -48,12 +52,16 @@ type idToken struct {
 
 func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, error) {
 	cfg, err := resolvers.OIDCConfigGet(ctx, rc, name)
+	if errors.Is(err, resolvers.ErrIssuerConflict) {
+		return &oidcConfig{}, status.Failed(CauseIssuerConflict, err)
+	}
 	if err != nil {
-		return &oidcConfig{}, fmt.Errorf("unable to resolve OIDC configuration")
+		return &oidcConfig{}, fmt.Errorf("unable to resolve OIDC configuration: %w", err)
 	}
 
 	res := &oidcConfig{
 		DiscoveryURL:     cfg.Spec.DiscoveryURL,
+		Issuer:           cfg.Spec.Issuer,
 		AuthorizeURL:     cfg.Spec.AuthorizationURL,
 		TokenURL:         cfg.Spec.TokenURL,
 		RedirectURI:      cfg.Spec.RedirectURI,
@@ -114,7 +122,11 @@ func doLogin(ctx context.Context, code string, cfg *oidcConfig) (idToken, error)
 
 	claims, err := decodeJWT(token.IDToken)
 	if err != nil {
-		return idToken{}, fmt.Errorf("failed to decode JWT token: %v", err)
+		return idToken{}, status.Refused(CauseIDTokenInvalid, fmt.Errorf("failed to decode JWT token: %v", err))
+	}
+
+	if err := validateIDToken(claims, cfg.Issuer, cfg.ClientID, time.Now()); err != nil {
+		return idToken{}, err
 	}
 
 	callUserInfo := false
