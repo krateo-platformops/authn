@@ -17,7 +17,7 @@ Curated history, newest first. Durable decisions live in
 ## 2026-10-29 — client certificates: authn's own is renewed, login JWTs are clamped (#28)
 
 Fixes [#28](https://github.com/krateo-platformops/authn/issues/28), ported from
-krateoplatformops/authn#76 (EdmondDantes21), which never reached this repo:
+PR #76 of the legacy pre-fork repository (by EdmondDantes21), which never reached this repo:
 - `authn-clientconfig` was written once at boot and never renewed. A pod that outlived
   its certificate failed every RESTAction call with `x509: certificate has expired`
   until restarted.

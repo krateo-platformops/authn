@@ -1,5 +1,5 @@
 ---
-type: Behavior
+type: Architecture
 title: authn — client certificate renewal
 description: How authn keeps its own client certificate alive with a background renewal loop, why per-user certificates are clamped instead of renewed, and how to verify it per distribution.
 tags: [authn, x509, csr, certificate, renewal, jwt]
