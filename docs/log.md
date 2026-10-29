@@ -22,6 +22,20 @@ request adds `code_challenge`, then sends the verifier to `/oidc/login` in
 Without the header nothing changes. CORS allows the new header. This is groundwork for
 the step-up login (#49), whose browser flow uses PKCE.
 
+## 2026-10-29 — `krateo:loa:*` groups are reserved to authn (#49)
+
+Step-up logins will mark their credential with the group `krateo:loa:2`, and admission
+policies will require it for destructive operations. To make that group unforgeable,
+every identity authn builds now drops `krateo:loa:*` groups, whatever the strategy or
+source:
+- IdP claims;
+- RESTActions;
+- basic `User`;
+- `ServiceAccount` mappings.
+
+Each drop is logged. The generator also refuses to mint any identity that still carries
+one. Groups that merely look similar, such as `krateo:loader`, are untouched.
+
 ## 2026-10-29 — OIDC login validates the ID token (#50)
 
 `/oidc/login` used to trust whatever the token endpoint returned: it base64-decoded the ID

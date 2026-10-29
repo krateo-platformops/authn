@@ -1,5 +1,32 @@
 package userinfo
 
+import "strings"
+
+// ReservedGroupPrefix marks groups that only authn grants, never an identity
+// source. krateo:loa:<n> records the assurance level of a step-up login
+// (#49), and admission policies trust it. A user must not be able to assert it
+// through an IdP groups claim, a RESTAction, a basic User or a ServiceAccount
+// mapping, so every Info built here drops it.
+const ReservedGroupPrefix = "krateo:loa:"
+
+// IsReserved reports whether group is one only authn may grant.
+func IsReserved(group string) bool {
+	return strings.HasPrefix(group, ReservedGroupPrefix)
+}
+
+// withoutReserved splits groups into those an identity source may assert and
+// the reserved ones it may not.
+func withoutReserved(groups []string) (kept, dropped []string) {
+	for _, g := range groups {
+		if IsReserved(g) {
+			dropped = append(dropped, g)
+			continue
+		}
+		kept = append(kept, g)
+	}
+	return kept, dropped
+}
+
 // Info describes a user that has been authenticated to the system.
 type Info interface {
 	// GetUserName returns the name that uniquely identifies this user among all
@@ -15,7 +42,11 @@ type Info interface {
 	// GetGroups returns the names of the groups the user is a member of
 	GetGroups() []string
 	// SetGroups set the names of the groups the user is a member of.
+	// Reserved groups (see ReservedGroupPrefix) are dropped.
 	SetGroups(groups []string)
+	// DroppedGroups returns the reserved groups an identity source asserted
+	// and that were dropped, so the issuer can report them.
+	DroppedGroups() []string
 	// Extensions can contain any additional information.
 	GetExtensions() Extensions
 	// SetExtensions to contain additional information.
@@ -28,6 +59,8 @@ type DefaultUser struct {
 	ID         string
 	Groups     []string
 	Extensions Extensions
+
+	dropped []string
 }
 
 // GetUserName returns the name that uniquely identifies this user among all
@@ -57,9 +90,16 @@ func (d *DefaultUser) GetGroups() []string {
 	return d.Groups
 }
 
-// SetGroups set the names of the groups the user is a member of.
+// SetGroups set the names of the groups the user is a member of. Reserved
+// groups are dropped and remembered (see DroppedGroups).
 func (d *DefaultUser) SetGroups(groups []string) {
-	d.Groups = groups
+	d.Groups, d.dropped = withoutReserved(groups)
+}
+
+// DroppedGroups returns the reserved groups dropped from what the identity
+// source asserted.
+func (d *DefaultUser) DroppedGroups() []string {
+	return d.dropped
 }
 
 // GetExtensions return additional information.
@@ -75,12 +115,15 @@ func (d *DefaultUser) SetExtensions(exts Extensions) {
 	d.Extensions = exts
 }
 
-// NewDefaultUser return new default user
+// NewDefaultUser return new default user. Reserved groups are dropped (see
+// ReservedGroupPrefix): groups come from identity sources, which may not
+// grant them.
 func NewDefaultUser(name, id string, groups []string, extensions Extensions) *DefaultUser {
-	return &DefaultUser{
+	d := &DefaultUser{
 		Name:       name,
 		ID:         id,
-		Groups:     groups,
 		Extensions: extensions,
 	}
+	d.SetGroups(groups)
+	return d
 }
