@@ -115,9 +115,12 @@ NOT_AFTER_EPOCH=$(date -u -j -f "%b %e %T %Y" "$(openssl x509 -in "$CERT" -noout
   || date -u -d "$(openssl x509 -in "$CERT" -noout -enddate | cut -d= -f2)" +%s)
 NOW=$(date -u +%s)
 
-GRANTED_H=$(( (NOT_AFTER_EPOCH - NOT_BEFORE_EPOCH) / 3600 ))
+# human renders seconds as hours, or as minutes below an hour, so a capped
+# signer's short grant does not print as "0h".
+human() { if (( $1 >= 3600 )); then echo "$(( $1 / 3600 ))h"; else echo "$(( $1 / 60 ))m"; fi; }
+GRANTED=$(human $(( NOT_AFTER_EPOCH - NOT_BEFORE_EPOCH )))
 REQUESTED=$(setting AUTHN_SERVICE_CRT_EXPIRES_IN 8760h)
-echo "requested: $REQUESTED   granted: ${GRANTED_H}h"
+echo "requested: $REQUESTED   granted: $GRANTED"
 
 # The annotation is what makes the granted window observable without openssl;
 # it is the headline deliverable of the change.
@@ -132,7 +135,7 @@ fi
 if (( NOT_AFTER_EPOCH <= NOW )); then
   fail "the stored certificate is ALREADY EXPIRED"
 else
-  pass "valid for $(( (NOT_AFTER_EPOCH - NOW) / 3600 ))h more"
+  pass "valid for $(human $(( NOT_AFTER_EPOCH - NOW ))) more"
 fi
 
 # --------------------------------------------------------------- 2. renewal fires
@@ -183,11 +186,26 @@ fi
 # ------------------------------------------------- 3. the apiserver accepts it
 say "3. the renewed certificate authenticates"
 # Both cert and key are stored base64-of-base64: the Secret encodes the value,
-# and the value is itself the base64-PEM a kubeconfig carries. The CA is stored
-# the same way (plumbing's kubeutil.CACrt base64-encodes the PEM before storing).
+# and the value is itself the base64-PEM a kubeconfig carries.
 kubectl -n "$NAMESPACE" get secret "$SECRET" -o jsonpath='{.data.client-key-data}' | base64 -d | base64 -d > "${CERT}.key"
-kubectl -n "$NAMESPACE" get secret "$SECRET" -o jsonpath='{.data.certificate-authority-data}' | base64 -d | base64 -d > "${CERT}.ca"
-SERVER=$(kubectl -n "$NAMESPACE" get secret "$SECRET" -o jsonpath='{.data.server-url}' | base64 -d)
+
+# What is under test is the CLIENT certificate, so connect to the apiserver of
+# the current context, trusting that context's CA. The Secret's server-url is
+# the in-cluster address its consumers use (the chart default is
+# https://kubernetes.default.svc), which does not resolve from where this
+# script usually runs.
+echo "secret server-url (in-cluster): $(kubectl -n "$NAMESPACE" get secret "$SECRET" -o jsonpath='{.data.server-url}' | base64 -d)"
+SERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+CA_DATA=$(kubectl config view --raw --minify -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')
+CA_FILE=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.certificate-authority}')
+if [[ -n "$CA_DATA" ]]; then
+  echo "$CA_DATA" | base64 -d > "${CERT}.ca"
+elif [[ -n "$CA_FILE" ]]; then
+  cp "$CA_FILE" "${CERT}.ca"
+else
+  echo "the current context has no cluster CA; cannot verify the apiserver" >&2; exit 1
+fi
+echo "checking against the current context's apiserver: $SERVER"
 
 # Build a standalone kubeconfig from the Secret rather than overriding flags on
 # the ambient one: with the admin context still in play, an ambient token could
@@ -219,7 +237,7 @@ fi
 # ------------------------------------------------------------------- verdict
 say "record this row"
 printf '| %-10s | requested %-6s | granted %-6s | renewal %-8s | apiserver %-8s |\n' \
-  "$FLAVOUR" "$REQUESTED" "${GRANTED_H}h" \
+  "$FLAVOUR" "$REQUESTED" "$GRANTED" \
   "$( ((FAILED)) && echo see-above || echo ok )" \
   "$( ((FAILED)) && echo see-above || echo ok )"
 
