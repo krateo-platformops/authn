@@ -14,7 +14,7 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
-## 2026-10-29 — intra-service auth: three open questions closed
+## 2026-10-29 — intra-service auth: four open questions closed
 
 The [decision record](./design/kubernetes-intra-service-auth.md) still listed token
 audience & naming, JWT lifetime and the endpoint shape as open, although 0.23.0 had already
@@ -26,7 +26,9 @@ settled them. The record now matches the shipped code:
   per-mapping TTL.
 
 Revocation is mapping deletion for new exchanges, plus RBAC unbinding or expiry for
-credentials already issued. Multi-cluster and bootstrap ordering remain open.
+credentials already issued. Multi-cluster is decided as **target-local authn**: a service in
+a remote target exchanges its token with an authn in that target, because TokenReview is
+cluster-local. Bootstrap ordering remains open.
 
 ## 2026-08-07 — adopted the Krateo Documentation Standard
 

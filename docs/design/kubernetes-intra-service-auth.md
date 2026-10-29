@@ -28,8 +28,8 @@ timestamp: 2026-10-29T00:00:00Z
 >   `AUTHN_SERVICEACCOUNT_AUDIENCE`, default `authn`).
 > Current behavior contract: [behavior.md](../behavior.md); pitfalls:
 > [gotchas.md](../gotchas.md). §6: token audience & naming, JWT lifetime and the
-> endpoint shape were closed on 2026-10-29 by recording what shipped; multi-cluster
-> and bootstrap ordering remain open.
+> endpoint shape were closed on 2026-10-29 by recording what shipped; multi-cluster was
+> decided (target-local authn); bootstrap ordering remains open.
 >
 > Original: Draft for discussion · Date: 2026-06-20
 >
@@ -231,15 +231,19 @@ Consequences (all inherited from the existing model):
 
   To shorten that exposure, lower the global setting. authn stays stateless: no deny list
   and no per-request mapping re-check.
-- **Multi-cluster — `TokenReview` is cluster-local** (it validates against the apiserver
-  that *issued* the token). A service in a **remote target** cannot be authenticated by
-  mgmt-authn directly. Direction (mirrors composition-status, which resolves this by making
-  resolution cluster-local): **prefer authn target-local** in the remote case — auth runs
-  where the service runs, validating the local token — paired with target-local resolution.
-  **Fallback:** extend mgmt-authn to `TokenReview` against a **registered target's
-  apiserver** using the client core-provider already holds (the `KubernetesTarget` Secret) —
-  reuses existing plumbing but couples authn to the target registry and keeps custody
-  central. Local-cluster services (the common case) are unaffected.
+- ~~Multi-cluster~~ — **decided (2026-10-29): target-local authn.** `TokenReview` is
+  cluster-local: it validates against the apiserver that *issued* the token. So a service
+  running in a remote target exchanges its token with an authn running **in that same
+  target**, never with mgmt-authn. That authn validates the local token, maps it against
+  that target's `ServiceAccount` mappings, and issues a JWT plus a kubeconfig for that
+  target's apiserver. This mirrors composition-status, which also resolves cluster-locally.
+  **Not adopted:** mgmt-authn calling `TokenReview` against a registered target's
+  apiserver through the `KubernetesTarget` Secret. That would couple authn to the target
+  registry and keep credential custody central.
+
+  The strategy's code needs no change. Local-cluster services (the common case) are
+  unaffected. Delivery work falls outside this record: deploying authn into targets, and
+  pointing callers and their JWT verifiers at the target-local authn.
 - ~~Endpoint path/verb~~ — **resolved (as shipped):** `POST /serviceaccount/login`, with
   the SA token as `Authorization: Bearer`. It follows the `/<strategy>/login` convention of
   every other strategy and returns the same response shape (JWT + kubeconfig). An RFC 8693
@@ -253,5 +257,6 @@ Consequences (all inherited from the existing model):
 
 In: the `serviceaccount` login strategy (TokenReview + mapping + issue), authn SA RBAC for
 `tokenreviews`, a shared caller client (plumbing). Out (separate): the consumers
-(core-provider/CDC wiring lives in its own design), and the multi-cluster validation path
-(tracked with the composition-status multi-cluster question).
+(core-provider/CDC wiring lives in its own design), and delivering authn into remote
+targets for the target-local multi-cluster model (§6), which ships with the
+composition-status multi-cluster work.
