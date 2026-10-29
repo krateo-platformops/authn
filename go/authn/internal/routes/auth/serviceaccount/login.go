@@ -91,7 +91,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		user, err := r.validate(req.Context(), token)
 		if err != nil {
 			log.Err(err).Msg("serviceaccount auth failed")
-			encode.Failure(wri, rejection(err))
+			encode.Failure(wri, failureStatus(err))
 			return
 		}
 		log.Debug().
@@ -109,17 +109,22 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		_, notAfter, err := r.gen.Generate(storage.StrategyServiceAccount, user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
-			encode.InternalError(wri, err)
+			encode.Failure(wri, failureStatus(authnFailure(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))))
 			return
 		}
 
-		encode.Success(wri, nil, &encode.Extras{
+		err = encode.Success(wri, nil, &encode.Extras{
 			UserInfo:      user,
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
 			CertNotAfter:  notAfter,
 		})
+		if err != nil {
+			// Success wrote nothing, so the caller still gets an answer.
+			log.Err(err).Msg("access token creation failure")
+			encode.Failure(wri, failureStatus(authnFailure(CauseIssuanceFailed, fmt.Errorf("issuing access token: %w", err))))
+		}
 	}
 }
 
@@ -129,7 +134,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, error) {
 	clientset, err := kubernetes.NewForConfig(r.rc)
 	if err != nil {
-		return nil, err
+		return nil, authnFailure(CauseTokenReviewFailed, fmt.Errorf("token review: building the client: %w", err))
 	}
 
 	tr := &authnv1.TokenReview{
@@ -140,31 +145,35 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 	}
 	tr, err = clientset.AuthenticationV1().TokenReviews().Create(ctx, tr, metav1.CreateOptions{})
 	if err != nil {
-		return nil, causeError{CauseTokenReviewFailed, fmt.Errorf("token review: %w", err)}
-	}
-	if tr.Status.Error != "" {
-		return nil, causeError{CauseTokenReviewFailed, fmt.Errorf("token review: %s", tr.Status.Error)}
+		return nil, authnFailure(CauseTokenReviewFailed, fmt.Errorf("token review: %w", err))
 	}
 	if !tr.Status.Authenticated {
-		return nil, causeError{CauseTokenNotAuthenticated, fmt.Errorf("token not authenticated")}
+		// status.error is the apiserver's verdict on the caller's token
+		// (invalid signature, expired, deleted ServiceAccount): a refusal of
+		// the caller, not a failure of authn.
+		msg := "token not authenticated"
+		if tr.Status.Error != "" {
+			msg += ": " + tr.Status.Error
+		}
+		return nil, rejected(CauseTokenNotAuthenticated, errors.New(msg))
 	}
 	if !containsAudience(tr.Status.Audiences, r.audience) {
-		return nil, causeError{CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", r.audience)}
+		return nil, rejected(CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", r.audience))
 	}
 
 	saNamespace, saName, err := parseServiceAccountUsername(tr.Status.User.Username)
 	if err != nil {
-		return nil, causeError{CauseNotAServiceAccount, err}
+		return nil, rejected(CauseNotAServiceAccount, err)
 	}
 
 	mapping, err := resolvers.ServiceAccountForSA(r.rc, saNamespace, saName)
 	switch {
 	case errors.Is(err, resolvers.ErrNoMapping):
-		return nil, causeError{CauseNoMapping, err}
+		return nil, rejected(CauseNoMapping, err)
 	case errors.Is(err, resolvers.ErrAmbiguousMapping):
-		return nil, causeError{CauseAmbiguousMapping, err}
+		return nil, rejected(CauseAmbiguousMapping, err)
 	case err != nil:
-		return nil, causeError{CauseMappingLookupFailed, err}
+		return nil, authnFailure(CauseMappingLookupFailed, err)
 	}
 
 	exts := userinfo.Extensions{}
@@ -206,26 +215,37 @@ func parseServiceAccountUsername(u string) (namespace, name string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// Causes are the machine-readable reasons a serviceaccount login is refused,
+// Causes are the machine-readable reasons a serviceaccount login fails,
 // returned in the Status body's details.causes[].reason. They are part of the
-// API contract (docs/api.md): values are added, never renamed. A client can
-// tell an authn that rejected the caller from one it could not reach without
-// parsing the message.
+// API contract (docs/api.md): values are added, never renamed.
+//
+// The status class carries the blame. A 401/403 means authn refused the
+// caller: retrying unchanged will fail again, and the fix is on the caller's
+// side (its token, audience or mapping). A 500 means authn could not finish
+// the job (its own dependency failed): nothing is known to be wrong with the
+// caller, and the same request may succeed later. A client can classify on the
+// code alone and use the cause only to name the reason.
 const (
+	// Refusals of the caller (401/403).
 	CauseMissingBearer         status.CauseType = "MissingBearer"
-	CauseTokenReviewFailed     status.CauseType = "TokenReviewFailed"
 	CauseTokenNotAuthenticated status.CauseType = "TokenNotAuthenticated"
 	CauseAudienceMismatch      status.CauseType = "AudienceMismatch"
 	CauseNotAServiceAccount    status.CauseType = "NotAServiceAccount"
 	CauseNoMapping             status.CauseType = "NoMapping"
 	CauseAmbiguousMapping      status.CauseType = "AmbiguousMapping"
-	CauseMappingLookupFailed   status.CauseType = "MappingLookupFailed"
+
+	// Failures of authn (500).
+	CauseTokenReviewFailed   status.CauseType = "TokenReviewFailed"
+	CauseMappingLookupFailed status.CauseType = "MappingLookupFailed"
+	CauseIssuanceFailed      status.CauseType = "IssuanceFailed"
 )
 
 var errMissingBearer = errors.New("missing bearer token")
 
-// causeError tags a validation failure with its machine-readable cause.
+// causeError tags a login failure with its machine-readable cause and the
+// status code that says whose failure it is.
 type causeError struct {
+	code  int
 	cause status.CauseType
 	err   error
 }
@@ -233,13 +253,22 @@ type causeError struct {
 func (e causeError) Error() string { return e.err.Error() }
 func (e causeError) Unwrap() error { return e.err }
 
-// rejection renders a validation failure as a 403 Status, with its cause when
-// it has one.
-func rejection(err error) status.Status {
-	st := status.New(http.StatusForbidden, err)
+// rejected is a refusal of the caller (403).
+func rejected(cause status.CauseType, err error) causeError {
+	return causeError{code: http.StatusForbidden, cause: cause, err: err}
+}
+
+// authnFailure is a failure on authn's side (500): the caller may retry.
+func authnFailure(cause status.CauseType, err error) causeError {
+	return causeError{code: http.StatusInternalServerError, cause: cause, err: err}
+}
+
+// failureStatus renders a login failure as a Status with its code and cause.
+// An error without a cause is authn's own failure.
+func failureStatus(err error) status.Status {
 	var ce causeError
-	if errors.As(err, &ce) {
-		st = st.WithCause(ce.cause, ce.err.Error())
+	if !errors.As(err, &ce) {
+		return status.New(http.StatusInternalServerError, err)
 	}
-	return st
+	return status.New(ce.code, err).WithCause(ce.cause, ce.err.Error())
 }

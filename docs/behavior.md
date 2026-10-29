@@ -89,10 +89,12 @@ return:
   authn operator namespace** (`resolvers.ServiceAccountForSA`). No mapping → `403`
   (the allowlist); an SA matched by more than one mapping → error (ambiguous). On
   success authn issues the standard kubeconfig + JWT with username = the mapping's
-  `metadata.name`, groups = `spec.groups`, and `displayName` from the mapping. Any
-  TokenReview/validation/mapping failure returns `403`. Every refusal, including the
+  `metadata.name`, groups = `spec.groups`, and `displayName` from the mapping. A
+  refused caller (token not authenticated, wrong audience, not an SA, no or ambiguous
+  mapping) gets `403`. A failure on authn's side (TokenReview call, mapping list,
+  clientconfig or JWT issuance) gets `500`. Every failure, including the
   missing-bearer `401`, is a JSON `Status` whose `details.causes[0].reason` names the
-  cause (`rejection`, `serviceaccount/login.go`; [api](./api.md)).
+  cause (`failureStatus`, `serviceaccount/login.go`; [api](./api.md)).
 - **ldap** — `?name=<LDAPConfig>` + JSON body `{"username","password"}`
   (`ldap/login.go:73-130`). Error mapping: not-found → `404`, multiple entries →
   `300`, other → `403` (`ldap/login.go:102-110`).
