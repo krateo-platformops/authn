@@ -1,6 +1,9 @@
 package userinfo
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // ReservedGroupPrefix marks groups that only authn grants, never an identity
 // source. krateo:loa:<n> records the assurance level of a step-up login
@@ -8,6 +11,26 @@ import "strings"
 // through an IdP groups claim, a RESTAction, a basic User or a ServiceAccount
 // mapping, so every Info built here drops it.
 const ReservedGroupPrefix = "krateo:loa:"
+
+// StepUpGroup is the reserved group recording a step-up login at level, e.g.
+// krateo:loa:2.
+func StepUpGroup(level int) string {
+	return fmt.Sprintf("%s%d", ReservedGroupPrefix, level)
+}
+
+// NewStepUpUser returns a copy of base that also carries StepUpGroup(level).
+// It is the only way an Info gets a reserved group. Call it only after the
+// login has proven that assurance level.
+func NewStepUpUser(base Info, level int) *DefaultUser {
+	groups := append(append([]string{}, base.GetGroups()...), StepUpGroup(level))
+	return &DefaultUser{
+		Name:       base.GetUserName(),
+		ID:         base.GetID(),
+		Groups:     groups,
+		Extensions: base.GetExtensions(),
+		dropped:    base.DroppedGroups(),
+	}
+}
 
 // IsReserved reports whether group is one only authn may grant.
 func IsReserved(group string) bool {

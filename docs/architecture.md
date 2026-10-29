@@ -143,8 +143,12 @@ The common back-end of every successful login.
   (`kube.NewCertificateRequest` with username as CN and groups as O), creates the
   Kubernetes `CertificateSigningRequest` (`gen.go:36-39`), **auto-approves it**
   (`gen.go:60`), waits for the signed cert (`gen.go:68`), and base64-encodes cert +
-  PKCS#1 key. If a CSR with the same name already exists it is **deleted and
-  recreated** (`gen.go:41-55`).
+  PKCS#1 key. The CSR's name is generated (`<username>-<random>`) and the CSR is
+  deleted once the certificate is read, so concurrent issuances for one user don't
+  interfere.
+- **`GenerateStepUp`** (`build.go`): the step-up path (#49). Same minting, with the
+  step-up TTL, stored as `<user>-clientconfig-stepup`. It requires a
+  `krateo:loa:` group, which `Generate` refuses.
 - **Signer/usages** (`internal/helpers/kube/certs.go:171-173`): signer
   `kubernetes.io/kube-apiserver-client`, usage `client auth`, with an explicit
   `ExpirationSeconds`. This is why authn needs broad CSR RBAC (see

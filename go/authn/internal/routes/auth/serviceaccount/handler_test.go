@@ -36,6 +36,10 @@ func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info) 
 	return []byte(`{"kind":"Config","users":[{"name":"x","user":{"client-key-data":"LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"}}]}`), time.Now().Add(time.Hour), nil
 }
 
+func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration) (time.Time, error) {
+	panic("serviceaccount login never issues a step-up credential")
+}
+
 // apiReplies configures fakeAPIServer. Status codes other than 200 make the
 // corresponding call fail at the HTTP level.
 type apiReplies struct {

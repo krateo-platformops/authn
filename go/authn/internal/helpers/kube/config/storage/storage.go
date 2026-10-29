@@ -46,6 +46,22 @@ func CertValidityAnnotations(certData string) map[string]string {
 	}
 }
 
+// ClientConfigSecretName names the Secret holding username's session
+// credential.
+func ClientConfigSecretName(username string) string {
+	return kubeutil.MakeDNS1123Compatible(username) + "-clientconfig"
+}
+
+// StepUpSecretName names the Secret holding username's short-lived step-up
+// credential (#49). It ends in "-clientconfig-stepup", which no session
+// Secret name can: those always end in "-clientconfig". So no username's
+// session Secret can collide with another username's step-up Secret, and
+// nothing that lists session credentials by the "-clientconfig" suffix picks
+// one up.
+func StepUpSecretName(username string) string {
+	return ClientConfigSecretName(username) + "-stepup"
+}
+
 type AuthInfo struct {
 	Server   string `json:"server"`
 	ProxyURL string `json:"proxy-url,omitempty"`
@@ -56,6 +72,10 @@ type AuthInfo struct {
 	// Strategy is the login strategy that issued this credential. It is
 	// recorded as an annotation on the Secret, never in the kubeconfig.
 	Strategy Strategy `json:"-"`
+
+	// StepUp stores the credential as the user's step-up credential
+	// (StepUpSecretName) instead of their session credential.
+	StepUp bool `json:"-"`
 }
 
 type AuthInfoStorage interface {
@@ -80,7 +100,11 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 	}
 
 	sec := corev1.Secret{}
-	sec.SetName(fmt.Sprintf("%s-clientconfig", kubeutil.MakeDNS1123Compatible(name)))
+	if nfo.StepUp {
+		sec.SetName(StepUpSecretName(name))
+	} else {
+		sec.SetName(ClientConfigSecretName(name))
+	}
 	sec.SetNamespace(ns)
 	identity, err := IdentityAnnotations(nfo.Strategy, nfo.CertData)
 	if err != nil {
@@ -123,7 +147,7 @@ func (st *secretStore) Get(name string) (*AuthInfo, error) {
 	sec, err := secrets.Get(context.TODO(), st.rc,
 		&core.SecretKeySelector{
 			Namespace: ns,
-			Name:      fmt.Sprintf("%s-clientconfig", kubeutil.MakeDNS1123Compatible(name)),
+			Name:      ClientConfigSecretName(name),
 		})
 	if err != nil {
 		return nil, err

@@ -28,6 +28,14 @@ type Generator interface {
 	// the Secret together with the certificate's groups (see
 	// storage.IdentityAnnotations).
 	Generate(strategy storage.Strategy, user userinfo.Info) (dat []byte, notAfter time.Time, err error)
+
+	// GenerateStepUp mints a short-lived step-up credential (#49) for user,
+	// who must have been built by userinfo.NewStepUpUser, and stores it as
+	// the `<username>-clientconfig-stepup` Secret. The user's session Secret is
+	// not touched, and no kubeconfig is returned. ttl is the requested
+	// lifetime. The returned notAfter is the granted one, which bounds the
+	// step-up JWT.
+	GenerateStepUp(strategy storage.Strategy, user userinfo.Info, ttl time.Duration) (notAfter time.Time, err error)
 }
 
 type GeneratorOption func(*kubeconfigGenerator)
@@ -106,42 +114,11 @@ type kubeconfigGenerator struct {
 func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info) ([]byte, time.Time, error) {
 	var notAfter time.Time
 
-	// Refuse before minting anything: an identity whose groups cannot be
-	// recorded faithfully on its Secret must not be issued at all.
-	if err := storage.ValidateGroups(userInfo.GetGroups()); err != nil {
+	if err := g.checkGroups(userInfo, false); err != nil {
 		return nil, notAfter, err
 	}
 
-	// Reserved groups are authn's to grant (userinfo.ReservedGroupPrefix).
-	// Report the ones an identity source tried to assert, and refuse an
-	// identity that still carries one: that means it was built without
-	// userinfo's guard, and it must fail loudly rather than be granted.
-	if dropped := userInfo.DroppedGroups(); len(dropped) > 0 {
-		g.log.Warn().
-			Str("username", userInfo.GetUserName()).
-			Strs("groups", dropped).
-			Msg("dropped reserved groups asserted by the identity source")
-	}
-	for _, grp := range userInfo.GetGroups() {
-		if userinfo.IsReserved(grp) {
-			return nil, notAfter, fmt.Errorf("group %q is reserved to authn and cannot be issued by a login", grp)
-		}
-	}
-
-	if len(g.caData) == 0 {
-		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
-		if err != nil {
-			return nil, notAfter, err
-		}
-		g.caData = caCrt
-	}
-
-	certInfo, clusterInfo, notAfter, err := g.generateCertAndClusterInfo(userInfo)
-	if err != nil {
-		return nil, notAfter, err
-	}
-
-	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo)
+	certInfo, clusterInfo, notAfter, err := g.issue(strategy, userInfo, g.certDuration, false)
 	if err != nil {
 		return nil, notAfter, err
 	}
@@ -181,8 +158,73 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 	return out, notAfter, nil
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo) error {
+func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration) (time.Time, error) {
+	if err := g.checkGroups(userInfo, true); err != nil {
+		return time.Time{}, err
+	}
+	_, _, notAfter, err := g.issue(strategy, userInfo, ttl, true)
+	return notAfter, err
+}
+
+// checkGroups refuses, before anything is minted, an identity whose groups
+// can't be issued. Reserved groups (userinfo.ReservedGroupPrefix) are authn's
+// to grant: the ones an identity source tried to assert are reported, a
+// session credential may carry none, and a step-up credential must carry one.
+// A session identity that still has one was built without userinfo's guard,
+// and must fail loudly rather than be granted.
+func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) error {
+	// An identity whose groups cannot be recorded faithfully on its Secret
+	// must not be issued at all.
+	if err := storage.ValidateGroups(userInfo.GetGroups()); err != nil {
+		return err
+	}
+
+	if dropped := userInfo.DroppedGroups(); len(dropped) > 0 {
+		g.log.Warn().
+			Str("username", userInfo.GetUserName()).
+			Strs("groups", dropped).
+			Msg("dropped reserved groups asserted by the identity source")
+	}
+
+	reserved := 0
+	for _, grp := range userInfo.GetGroups() {
+		if !userinfo.IsReserved(grp) {
+			continue
+		}
+		if !stepUp {
+			return fmt.Errorf("group %q is reserved to authn and cannot be issued by a login", grp)
+		}
+		reserved++
+	}
+	if stepUp && reserved == 0 {
+		return fmt.Errorf("a step-up credential must carry a %s group", userinfo.ReservedGroupPrefix)
+	}
+	return nil
+}
+
+// issue mints a certificate for userInfo valid for duration and stores it as
+// the user's session or step-up credential.
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool) (CertInfo, ClusterInfo, time.Time, error) {
+	if len(g.caData) == 0 {
+		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
+		if err != nil {
+			return CertInfo{}, ClusterInfo{}, time.Time{}, err
+		}
+		g.caData = caCrt
+	}
+
+	certInfo, clusterInfo, notAfter, err := g.generateCertAndClusterInfo(userInfo, duration)
+	if err != nil {
+		return certInfo, clusterInfo, notAfter, err
+	}
+
+	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp)
+	return certInfo, clusterInfo, notAfter, err
+}
+
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool) error {
 	nfo := storage.AuthInfo{
+		StepUp:   stepUp,
 		Strategy: strategy,
 		CertData: certInfo.ClientCertificateData,
 		KeyData:  certInfo.ClientKeyData,
@@ -194,7 +236,7 @@ func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy,
 	return g.store.Put(name, &nfo)
 }
 
-func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info) (certInfo CertInfo, clusterInfo ClusterInfo, notAfter time.Time, err error) {
+func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info, duration time.Duration) (certInfo CertInfo, clusterInfo ClusterInfo, notAfter time.Time, err error) {
 	if len(g.kubernetesURL) == 0 {
 		host, port := os.Getenv("KUBERNETES_SERVICE_HOST"), os.Getenv("KUBERNETES_SERVICE_PORT")
 		if len(host) == 0 || len(port) == 0 {
@@ -212,7 +254,7 @@ func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info)
 		userID:   userInfo.GetID(),
 		username: userInfo.GetUserName(),
 		groups:   userInfo.GetGroups(),
-		duration: g.certDuration,
+		duration: duration,
 	})
 	if err != nil {
 		return certInfo, clusterInfo, notAfter, err

@@ -35,3 +35,17 @@ func TestReservedGroupsAreDropped(t *testing.T) {
 		})
 	}
 }
+
+// A step-up user keeps the base identity and adds exactly the level group.
+// The base user is left unchanged.
+func TestNewStepUpUser(t *testing.T) {
+	base := NewDefaultUser("alice", "1", []string{"devs", "krateo:loa:2"}, Extensions{"name": {"Alice"}})
+	up := NewStepUpUser(base, 2)
+
+	assert.Equal(t, "alice", up.GetUserName())
+	assert.Equal(t, "1", up.GetID())
+	assert.Equal(t, "Alice", up.GetExtensions().Get("name"))
+	assert.Equal(t, []string{"devs", "krateo:loa:2"}, up.GetGroups(), "the asserted copy was dropped; only the granted one is present")
+	assert.Equal(t, []string{"devs"}, base.GetGroups(), "base untouched")
+	assert.Equal(t, "krateo:loa:2", StepUpGroup(2))
+}

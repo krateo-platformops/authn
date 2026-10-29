@@ -98,6 +98,19 @@ return:
 - **ldap** — `?name=<LDAPConfig>` + JSON body `{"username","password"}`
   (`ldap/login.go:73-130`). Error mapping: not-found → `404`, multiple entries →
   `300`, other → `403` (`ldap/login.go:102-110`).
+- **oidc step-up** — `POST /oidc/stepup?name=<OIDCConfig>`, with the same headers as
+  the OIDC login (#49). It runs the same flow as `/oidc/login` (`authenticate`,
+  `oidc/login.go`), then `checkStepUp` (`oidc/stepup.go`):
+  - `spec.stepUp` is set;
+  - the ID token's `acr` is listed;
+  - `auth_time` is within `maxAge`.
+
+  `acr` and `auth_time` come only from the validated ID token; the RESTAction can't set
+  them. The identity gains `krateo:loa:2` (`userinfo.NewStepUpUser`, the only way to
+  get a reserved group), and `GenerateStepUp` stores it as
+  `<user>-clientconfig-stepup` with `ttl`. The JWT carries the same groups and ends
+  with the certificate. The user's `<user>-clientconfig` is never written, so their
+  normal session is unchanged.
 - **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go:73-90`).
   Code is exchanged via `golang.org/x/oauth2` (`oauth/login.go:106`); token type must
   be `bearer` when a RESTAction is configured (`oauth/login.go:116-121`).
@@ -158,6 +171,10 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.discoveryURL`, `spec.authorizationURL`, `spec.tokenURL`, `spec.userInfoURL`,
   `spec.additionalScopes`. With `discoveryURL` the document is read on every login
   (it supplies the issuer); its endpoints are applied only when some endpoint is unset.
+- `spec.stepUp` (optional) — enables `POST /oidc/stepup` (#49): `acrValues` (≥1, the
+  `acr` values that prove LoA2), `maxAge` (default 5m, how recent `auth_time` must be),
+  `ttl` (default 15m, ≥10m, the step-up credential's requested lifetime, never
+  renewed).
 - `spec.issuer` (optional) — the ID token's expected `iss`. Required without
   `discoveryURL`; with it, must equal the discovered issuer or be left empty.
 - `spec.restActionRef` (optional `ObjectRef` — enrich the identity via snowplow).
@@ -177,7 +194,7 @@ Shared types (`Graphics`, `ObjectRef`, `SecretKeySelector`) — `apis/core/core.
 ## Integration contracts
 
 ### Kubernetes CSR API (the cluster)
-On every successful login the generator creates a `CertificateSigningRequest` with
+On every successful login (and step-up) the generator creates a `CertificateSigningRequest`, named `<username>-<random>` and deleted once its certificate is read, with
 signer `kubernetes.io/kube-apiserver-client` and **self-approves it**
 (`config/gen.go:36-68`, `certs.go:171-173`). This requires the broad CSR RBAC the
 chart installs (create / get / list / watch / approve / delete / update on
