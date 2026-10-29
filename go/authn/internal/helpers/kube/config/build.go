@@ -23,7 +23,11 @@ type Generator interface {
 	// than the requested duration, so callers must bound anything derived from
 	// the credential — the login JWT above all — by the returned notAfter and
 	// never by the duration they asked for.
-	Generate(user userinfo.Info) (dat []byte, notAfter time.Time, err error)
+	//
+	// strategy is the login strategy issuing the credential; it is recorded on
+	// the Secret together with the certificate's groups (see
+	// storage.IdentityAnnotations).
+	Generate(strategy storage.Strategy, user userinfo.Info) (dat []byte, notAfter time.Time, err error)
 }
 
 type GeneratorOption func(*kubeconfigGenerator)
@@ -99,8 +103,14 @@ type kubeconfigGenerator struct {
 	log           zerolog.Logger
 }
 
-func (g *kubeconfigGenerator) Generate(userInfo userinfo.Info) ([]byte, time.Time, error) {
+func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info) ([]byte, time.Time, error) {
 	var notAfter time.Time
+
+	// Refuse before minting anything: an identity whose groups cannot be
+	// recorded faithfully on its Secret must not be issued at all.
+	if err := storage.ValidateGroups(userInfo.GetGroups()); err != nil {
+		return nil, notAfter, err
+	}
 
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
@@ -115,7 +125,7 @@ func (g *kubeconfigGenerator) Generate(userInfo userinfo.Info) ([]byte, time.Tim
 		return nil, notAfter, err
 	}
 
-	err = g.storeCertAndClusterInfo(userInfo.GetUserName(), certInfo, clusterInfo)
+	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo)
 	if err != nil {
 		return nil, notAfter, err
 	}
@@ -155,8 +165,9 @@ func (g *kubeconfigGenerator) Generate(userInfo userinfo.Info) ([]byte, time.Tim
 	return out, notAfter, nil
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(name string, certInfo CertInfo, clusterInfo ClusterInfo) error {
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo) error {
 	nfo := storage.AuthInfo{
+		Strategy: strategy,
 		CertData: certInfo.ClientCertificateData,
 		KeyData:  certInfo.ClientKeyData,
 		CAData:   clusterInfo.CertificateAuthorityData,

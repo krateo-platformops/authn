@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"os"
 	"time"
@@ -113,7 +114,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		dat, notAfter, err := r.gen.Generate(nfo)
+		dat, notAfter, err := r.gen.Generate(storage.StrategyLDAP, nfo)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)

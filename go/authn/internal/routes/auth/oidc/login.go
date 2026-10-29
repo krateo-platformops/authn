@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"os"
 	"time"
@@ -140,7 +141,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		log.Debug().Str("name", name).Msg("generating secret from oidc idtoken")
-		dat, notAfter, err := r.gen.Generate(nfo)
+		dat, notAfter, err := r.gen.Generate(storage.StrategyOIDC, nfo)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)

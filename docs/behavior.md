@@ -200,6 +200,33 @@ a Secret per identity (`config/build.go:150-160`,
 `config/storage/storage.go:47-74`); `/info?name=` reads it back (`info/info.go:45-80`).
 `name` is required (`400` otherwise).
 
+### Identity annotations on `<username>-clientconfig`
+Every clientconfig Secret authn writes carries, besides the certificate's granted window
+(`authn.krateo.io/certificate-not-{before,after}`), the identity facts policy can decide
+from ([#42](https://github.com/krateo-platformops/authn/issues/42),
+`config/storage/identity.go`):
+
+| Annotation | Value |
+|---|---|
+| `authn.krateo.io/strategy` | `basic`, `ldap`, `oauth`, `oidc`, `serviceaccount`; `self` for authn's own identity (`authn-clientconfig`); `unknown` only from the backfill below |
+| `authn.krateo.io/groups` | the certificate's `O=` groups, **newline-separated**, in order; empty for none |
+
+- **Why newlines:** group names can contain commas (OIDC passes IdP names verbatim).
+- **CEL membership test:** `annotations['authn.krateo.io/groups'].split('\n').exists(g, g == 'admins')`.
+- **Newline in a group name:** the login is refused before any certificate is minted
+  (`ValidateGroups`), because that group could not be recorded faithfully.
+
+**Backfill.** At startup, `internal/identitybackfill` stamps clientconfigs that predate these
+annotations, and never overwrites existing ones:
+- groups come from the stored certificate;
+- strategy is `self`, `serviceaccount` (a mapping with that username exists) or `basic`
+  (a basic `User` exists);
+- otherwise strategy is `unknown`, including when both a mapping and a basic `User`
+  exist. Policy should fail closed on `unknown`.
+
+A Secret whose certificate can't be read, or whose lookup fails, is skipped and logged,
+never stamped with a guess. The next start retries it.
+
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response
 (`data` + `accessToken`) to authenticate the user. CORS is enabled by default with
