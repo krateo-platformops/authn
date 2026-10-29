@@ -84,11 +84,19 @@ func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, 
 	return res, nil
 }
 
-func doLogin(ctx context.Context, code string, cfg *oidcConfig) (idToken, error) {
+// doLogin exchanges the authorization code for tokens and returns the
+// validated identity. codeVerifier is the PKCE verifier (RFC 7636) the client
+// generated for this authorization request; it is forwarded when present, so
+// an IdP that requires PKCE accepts the exchange. Empty means the request used
+// no PKCE.
+func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (idToken, error) {
 	data := url.Values{}
 	data.Set("client_id", cfg.ClientID)
 	data.Set("client_secret", cfg.ClientSecret)
 	data.Set("code", code)
+	if codeVerifier != "" {
+		data.Set("code_verifier", codeVerifier)
+	}
 	data.Set("redirect_uri", cfg.RedirectURI)
 	data.Set("grant_type", "authorization_code")
 

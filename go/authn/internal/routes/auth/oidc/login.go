@@ -27,6 +27,9 @@ const (
 	Path = "/oidc/login"
 
 	authCodeKey = "X-Auth-Code"
+	// codeVerifierKey carries the PKCE code_verifier (RFC 7636) of the
+	// authorization request whose code is in X-Auth-Code. Optional.
+	codeVerifierKey = "X-Code-Verifier"
 )
 
 type LoginOptions struct {
@@ -102,7 +105,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		log.Debug().Str("name", name).Msg("starting oidc login")
-		idToken, err := doLogin(callCtx, req.Header.Get(authCodeKey), cfg)
+		idToken, err := doLogin(callCtx, req.Header.Get(authCodeKey), req.Header.Get(codeVerifierKey), cfg)
 		if err != nil {
 			// A rejected ID token is a 403 with its cause; anything else is
 			// authn's failure, a 500.
