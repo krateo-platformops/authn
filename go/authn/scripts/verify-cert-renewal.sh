@@ -22,6 +22,11 @@
 
 set -euo pipefail
 
+# openssl prints dates with English month names ("Oct 29 13:51:12 2026 GMT") and
+# date(1) parses %b in the current locale. Under any non-English locale the parse
+# fails ("ott" on it_IT), so pin the C locale for the whole run.
+export LC_ALL=C
+
 NAMESPACE="${NAMESPACE:-krateo-system}"
 DEPLOYMENT="${DEPLOYMENT:-authn}"
 SECRET="authn-clientconfig"
