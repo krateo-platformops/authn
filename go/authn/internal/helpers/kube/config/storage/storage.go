@@ -52,6 +52,10 @@ type AuthInfo struct {
 	CAData   string `json:"certificate-authority-data"`
 	CertData string `json:"client-certificate-data"`
 	KeyData  string `json:"client-key-data"`
+
+	// Strategy is the login strategy that issued this credential. It is
+	// recorded as an annotation on the Secret, never in the kubeconfig.
+	Strategy Strategy `json:"-"`
 }
 
 type AuthInfoStorage interface {
@@ -78,7 +82,18 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 	sec := corev1.Secret{}
 	sec.SetName(fmt.Sprintf("%s-clientconfig", kubeutil.MakeDNS1123Compatible(name)))
 	sec.SetNamespace(ns)
-	sec.SetAnnotations(CertValidityAnnotations(nfo.CertData))
+	identity, err := IdentityAnnotations(nfo.Strategy, nfo.CertData)
+	if err != nil {
+		return err
+	}
+	annotations := CertValidityAnnotations(nfo.CertData)
+	if annotations == nil {
+		annotations = map[string]string{}
+	}
+	for k, v := range identity {
+		annotations[k] = v
+	}
+	sec.SetAnnotations(annotations)
 	sec.StringData = map[string]string{
 		CALabel:         nfo.CAData,
 		ClientCertLabel: nfo.CertData,

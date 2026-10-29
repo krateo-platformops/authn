@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,9 +20,13 @@ import (
 // fakeGenerator stands in for the kubeconfig generator: it records that the
 // identity's clientconfig was minted and returns a kubeconfig carrying a
 // private key, as the real one does.
-type fakeGenerator struct{ calls []string }
+type fakeGenerator struct {
+	calls      []string
+	strategies []storage.Strategy
+}
 
-func (g *fakeGenerator) Generate(user userinfo.Info) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info) ([]byte, time.Time, error) {
+	g.strategies = append(g.strategies, strategy)
 	g.calls = append(g.calls, user.GetUserName())
 	return []byte(`{"kind":"Config","users":[{"name":"x","user":{"client-key-data":"LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"}}]}`), time.Now().Add(time.Hour), nil
 }
@@ -74,6 +79,7 @@ func TestHandlerOmitsKubeconfigFromResponse(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, []string{"cdc-identity"}, gen.calls, "the clientconfig Secret must still be minted")
+	assert.Equal(t, []storage.Strategy{storage.StrategyServiceAccount}, gen.strategies, "issued as the serviceaccount strategy")
 
 	var out map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))

@@ -16,6 +16,7 @@ import (
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
+	"github.com/krateo-platformops/authn/internal/identitybackfill"
 	"github.com/krateo-platformops/authn/internal/middlewares/cors"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
@@ -359,6 +360,32 @@ func main() {
 				Msg("client certificate renewal is disabled; the stored certificate will expire without a restart")
 		}
 	}
+
+	// Stamp the identity annotations (strategy, groups) onto clientconfig
+	// Secrets written before authn recorded them, so policy deciding from them
+	// also covers identities that never log in again. In the background: it
+	// is never a reason to delay serving logins.
+	go func() {
+		operatorNamespace, err := util.GetOperatorNamespace()
+		if err != nil {
+			log.Err(err).Msg("identity annotation backfill: resolving the operator namespace")
+		}
+		res, err := identitybackfill.Run(ctx, identitybackfill.Options{
+			RestConfig:   cfg,
+			Namespaces:   []string{operatorNamespace, *storageNamespace},
+			SelfUsername: *authnUsername,
+			Log:          log,
+		})
+		if err != nil {
+			log.Err(err).Msg("identity annotation backfill")
+			return
+		}
+		log.Info().
+			Int("scanned", res.Scanned).
+			Int("stamped", res.Stamped).
+			Int("skipped", res.Skipped).
+			Msg("identity annotation backfill done")
+	}()
 
 	go func() {
 		atomic.StoreInt32(&healthy, 1)

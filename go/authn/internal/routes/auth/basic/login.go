@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"os"
 	"strings"
@@ -88,7 +89,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Str("groups", strings.Join(user.GetGroups(), ",")).
 			Msg("basic auth succeded")
 
-		dat, notAfter, err := r.gen.Generate(user)
+		dat, notAfter, err := r.gen.Generate(storage.StrategyBasic, user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)
