@@ -95,14 +95,21 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Str("groups", strings.Join(user.GetGroups(), ",")).
 			Msg("serviceaccount auth succeeded")
 
-		dat, notAfter, err := r.gen.Generate(user)
+		// Generate mints the client certificate and persists the identity's
+		// <username>-clientconfig Secret, which in-cluster consumers (snowplow,
+		// plumbing endpoints, bff) read. The kubeconfig it returns is NOT put in
+		// the response: it carries client-key-data, a private key, and no
+		// service caller reads it; they all use accessToken alone. Keeping it
+		// out of the body means printing or logging a successful response can't
+		// leak the key (#36).
+		_, notAfter, err := r.gen.Generate(user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)
 			return
 		}
 
-		encode.Success(wri, dat, &encode.Extras{
+		encode.Success(wri, nil, &encode.Extras{
 			UserInfo:      user,
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
