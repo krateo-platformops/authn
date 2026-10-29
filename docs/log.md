@@ -14,6 +14,19 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — clientconfig Secrets record their strategy and groups (#42)
+
+Tenant onboarding (a Kyverno policy) fires on every `<user>-clientconfig` Secret, but nothing
+on them told a tenant from a platform admin or from authn's own identity. So every
+clientconfig authn writes now carries:
+- `authn.krateo.io/strategy` (`self` for authn's own identity);
+- `authn.krateo.io/groups`: the certificate's `O=`, newline-separated, because group names
+  can contain commas.
+
+A startup backfill stamps older Secrets. Groups come from the certificate; the strategy is
+set only where it can be proven, otherwise it's `unknown`. The policy decides from these
+facts, so there's no hand-kept list of names.
+
 ## 2026-10-29 — `/serviceaccount/login` no longer returns the kubeconfig (#36)
 
 The serviceaccount login returned the full kubeconfig in `data`, including

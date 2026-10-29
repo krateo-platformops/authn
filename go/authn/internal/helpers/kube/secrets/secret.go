@@ -27,6 +27,23 @@ func Get(ctx context.Context, rc *rest.Config, sel *core.SecretKeySelector) (*co
 	return res, err
 }
 
+// List returns the Secrets in namespace.
+func List(ctx context.Context, rc *rest.Config, namespace string) (*corev1.SecretList, error) {
+	cli, err := client.New(rc, schema.GroupVersion{Group: "", Version: "v1"})
+	if err != nil {
+		return nil, err
+	}
+
+	res := &corev1.SecretList{}
+	err = cli.Get().
+		Resource("secrets").
+		Namespace(namespace).
+		Do(ctx).
+		Into(res)
+
+	return res, err
+}
+
 func Create(ctx context.Context, rc *rest.Config, secret *corev1.Secret) error {
 	cli, err := client.New(rc, schema.GroupVersion{Group: "", Version: "v1"})
 	if err != nil {

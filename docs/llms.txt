@@ -1,4 +1,4 @@
-# authn — LLM doc index (pinned: 0.26.0)
+# authn — LLM doc index (pinned: 0.28.0)
 # One line per file; regenerate the pin on release. Read files at the tag that matches
 # the running build (chart version == image tag == the repo tag; no v prefix).
 docs/index.md: the map — what authn is + links to the bundle and the internals corpus

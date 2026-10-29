@@ -54,3 +54,26 @@ func ServiceAccountForSA(rc *rest.Config, saNamespace, saName string) (*sav1alph
 	}
 	return match, nil
 }
+
+// ServiceAccountMappingGet returns the ServiceAccount mapping named name in the
+// operator namespace. The mapping's name is the identity's username.
+func ServiceAccountMappingGet(rc *rest.Config, name string) (*sav1alpha1.ServiceAccount, error) {
+	ns, err := util.GetOperatorNamespace()
+	if err != nil {
+		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
+	}
+
+	cli, err := client.New(rc, schema.GroupVersion{
+		Group:   sav1alpha1.Group,
+		Version: sav1alpha1.Version,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	res := &sav1alpha1.ServiceAccount{}
+	err = cli.Get().Resource("serviceaccounts").
+		Namespace(ns).Name(name).
+		Do(context.Background()).Into(res)
+	return res, err
+}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"strings"
 	"time"
@@ -102,7 +103,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// service caller reads it; they all use accessToken alone. Keeping it
 		// out of the body means printing or logging a successful response can't
 		// leak the key (#36).
-		_, notAfter, err := r.gen.Generate(user)
+		_, notAfter, err := r.gen.Generate(storage.StrategyServiceAccount, user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)

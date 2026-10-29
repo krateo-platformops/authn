@@ -324,8 +324,9 @@ func (r *Renewer) annotate(ctx context.Context) {
 	r.syncAnnotations(ctx, sec)
 }
 
-// syncAnnotations brings sec's validity annotations in line with the certificate
-// it carries, writing only when they actually differ — so the steady state costs
+// syncAnnotations brings sec's validity and identity annotations (strategy
+// "self", the certificate's groups) in line with the certificate it carries,
+// writing only when they actually differ — so the steady state costs
 // no API call at all.
 //
 // It is a read-modify-write rather than a patch so that it needs only the `get`
@@ -342,9 +343,18 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 		return
 	}
 
-	want := storage.CertValidityAnnotations(string(sec.Data[storage.ClientCertLabel]))
+	cert := string(sec.Data[storage.ClientCertLabel])
+	want := storage.CertValidityAnnotations(cert)
 	if len(want) == 0 {
 		return
+	}
+	identity, err := storage.IdentityAnnotations(storage.StrategySelf, cert)
+	if err != nil {
+		r.log.Err(err).Str("secret", r.secret).Msg("deriving the identity annotations")
+	} else {
+		for k, v := range identity {
+			want[k] = v
+		}
 	}
 
 	have := sec.GetAnnotations()

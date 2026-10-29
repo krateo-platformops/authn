@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"os"
 	"time"
@@ -155,7 +156,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Strs("groups", user.GetGroups()).
 			Msg("user info successfully fetched")
 
-		dat, notAfter, err := r.gen.Generate(user)
+		dat, notAfter, err := r.gen.Generate(storage.StrategyOAuth, user)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.InternalError(wri, err)

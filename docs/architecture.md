@@ -59,6 +59,8 @@ API.
    itself. Then `go renewer.Run` (`main.go:355`) re-issues it at a fraction of the
    certificate's granted lifetime ([certificate-renewal](./certificate-renewal.md)).
    Issuing still goes through `plumbing` `signup.Do` (`certrenewal/renewal.go:238`); it used to run only once, at boot.
+   Then, in the background, `identitybackfill.Run` (`main.go:373`) stamps the identity
+   annotations onto clientconfig Secrets that predate them ([behavior](./behavior.md)).
 10. **Serve + graceful shutdown.** `http.Server` with read/write/idle timeouts
     (`main.go:272-278`), served in a goroutine that flips the `healthy` flag
     (`main.go:301-306`); SIGINT/SIGTERM trigger a 30s graceful `Shutdown` that also
