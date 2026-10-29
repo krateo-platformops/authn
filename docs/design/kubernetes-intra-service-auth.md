@@ -5,7 +5,7 @@ description: Decision record — let any in-cluster Krateo service exchange its 
 resource: serviceaccounts.serviceaccount.authn.krateo.io
 status: implemented
 tags: [decision, serviceaccount, tokenreview, intra-service-auth]
-timestamp: 2026-08-07T00:00:00Z
+timestamp: 2026-10-29T00:00:00Z
 ---
 
 # Design: Kubernetes intra-service authentication (SA token → service JWT)
@@ -27,7 +27,9 @@ timestamp: 2026-08-07T00:00:00Z
 > - the audience is configurable (`--serviceaccount-audience` /
 >   `AUTHN_SERVICEACCOUNT_AUDIENCE`, default `authn`).
 > Current behavior contract: [behavior.md](../behavior.md); pitfalls:
-> [gotchas.md](../gotchas.md). The multi-cluster question (§6) remains open.
+> [gotchas.md](../gotchas.md). §6: token audience & naming, JWT lifetime and the
+> endpoint shape were closed on 2026-10-29 by recording what shipped; multi-cluster
+> and bootstrap ordering remain open.
 >
 > Original: Draft for discussion · Date: 2026-06-20
 >
@@ -161,7 +163,8 @@ type ServiceAccountSpec struct {
     // Groups the service identity belongs to → issued clientconfig cert O= (certs.go:42)
     // → standard Kubernetes RBAC.
     Groups []string `json:"groups,omitempty"`
-    // +optional DisplayName, TokenTTL, Audiences
+    // +optional DisplayName. (Per-mapping TokenTTL / Audiences were considered and
+    // not adopted — one global lifetime and one global audience; see §6.)
 }
 // +kubebuilder:resource:scope=Namespaced,categories={krateo,authn,serviceaccount}
 // metadata.name == the issued username (exactly like basic.User).
@@ -206,11 +209,28 @@ Consequences (all inherited from the existing model):
 - ~~Mapping policy home & shape~~ — **resolved (§4):** a `ServiceAccount` CRD in
   `serviceaccount.authn.krateo.io`, the `basic.User` pattern with `serviceAccountRef`
   instead of `passwordRef`; RBAC stays standard k8s bound to `spec.groups`.
-- **Token audience & naming** — the canonical audience string and service-username scheme
-  (`svc:<name>`?). _Group convention — **resolved** by the composition-dynamic-controller
-  integration: the per-composition group is `krateo:cdc:<resource>-<apiVersion>` (core-provider
-  auto-provisions a `ServiceAccount` mapping carrying that group)._
-- **JWT lifetime & caching** — issued-token TTL vs. caller cache window; revocation story.
+- ~~Token audience & naming~~ — **resolved (as shipped):** one global audience, `authn`
+  (`serviceaccount.DefaultAudience`, `login.go`), overridable per authn install with
+  `--serviceaccount-audience` / `AUTHN_SERVICEACCOUNT_AUDIENCE` — not per caller or per
+  mapping. The issued username is the mapping's `metadata.name`, verbatim and with no
+  `svc:` prefix, exactly like `basic.User`; the mapping's author picks the name. _Group
+  convention: the composition-dynamic-controller integration made the per-composition group
+  `krateo:cdc:<resource>-<apiVersion>` (core-provider auto-provisions a `ServiceAccount`
+  mapping carrying that group)._
+- ~~JWT lifetime & caching~~ — **resolved: one global lifetime, no per-mapping TTL.** The
+  issued JWT lives as long as the minted client certificate: both use
+  `AUTHN_KUBECONFIG_CRT_EXPIRES_IN` (default 24h; `main.go` wires it into every strategy's
+  `JwtDuration`). The CRD has no `tokenTTL`. Callers cache the JWT until shortly before
+  its `exp` claim and then exchange again; snowplow's prewarm refreshes lazily at `exp − 60s`.
+  Revocation, in two parts:
+  - *Exchange:* delete the `ServiceAccount` mapping. The next login fails with "not in the
+    exchange allowlist" (`resolvers/serviceaccount.go`).
+  - *Already-issued JWT and certificate:* both stay valid until they expire. Kubernetes
+    authority is still revocable at once by removing the RBAC bindings on the mapping's
+    groups, since the certificate's `O=` carries them.
+
+  To shorten that exposure, lower the global setting. authn stays stateless: no deny list
+  and no per-request mapping re-check.
 - **Multi-cluster — `TokenReview` is cluster-local** (it validates against the apiserver
   that *issued* the token). A service in a **remote target** cannot be authenticated by
   mgmt-authn directly. Direction (mirrors composition-status, which resolves this by making
@@ -220,8 +240,10 @@ Consequences (all inherited from the existing model):
   apiserver** using the client core-provider already holds (the `KubernetesTarget` Secret) —
   reuses existing plumbing but couples authn to the target registry and keeps custody
   central. Local-cluster services (the common case) are unaffected.
-- **Endpoint path/verb** — `/serviceaccount/login` (POST) vs. a token-exchange-style
-  `/token` (RFC 8693 framing).
+- ~~Endpoint path/verb~~ — **resolved (as shipped):** `POST /serviceaccount/login`, with
+  the SA token as `Authorization: Bearer`. It follows the `/<strategy>/login` convention of
+  every other strategy and returns the same response shape (JWT + kubeconfig). An RFC 8693
+  `/token` exchange endpoint is not adopted.
 - **Bootstrap ordering** — authn must be reachable before dependent controllers can resolve
   `apiRef`; degrade gracefully (status fields stale, never a failed reconcile).
 

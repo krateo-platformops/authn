@@ -14,6 +14,20 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — intra-service auth: three open questions closed
+
+The [decision record](./design/kubernetes-intra-service-auth.md) still listed token
+audience & naming, JWT lifetime and the endpoint shape as open, although 0.23.0 had already
+settled them. The record now matches the shipped code:
+- one global audience, `authn`, configurable per install;
+- the username is the mapping's `metadata.name`;
+- `POST /serviceaccount/login`;
+- the JWT lives as long as the client certificate (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`), with no
+  per-mapping TTL.
+
+Revocation is mapping deletion for new exchanges, plus RBAC unbinding or expiry for
+credentials already issued. Multi-cluster and bootstrap ordering remain open.
+
 ## 2026-08-07 — adopted the Krateo Documentation Standard
 
 This bundle: root `docs/` core set + `examples/` + thin README. The internals corpus
