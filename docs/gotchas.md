@@ -71,6 +71,14 @@ mappings reference the same SA, the lookup is **ambiguous and errors out** rathe
 than picking one. Note `metadata.name` is the issued *username* and need not equal
 the SA name, so the mapping is matched by ref, not by name.
 
+## The login response body carries a private key — never log it
+A successful login returns the minted kubeconfig in `data`. Its `client-key-data` is
+the PEM private key of the issued client certificate (`kube/config/types.go:37`,
+`config/build.go:153`). The `accessToken` is a bearer credential as well. Callers,
+intra-service ones most of all because they log into shared pipelines, must never log
+or wrap the `200` body in an error. Error (non-`200`) bodies carry no secrets, so
+quoting them in an error is safe. Keep it that way when changing `encode.*`.
+
 ## LDAP TLS skips verification
 With `spec.tls: true`, the LDAP `StartTLS` call uses `InsecureSkipVerify: true`
 (`internal/routes/auth/ldap/support.go:70`). TLS here gives transport encryption but
