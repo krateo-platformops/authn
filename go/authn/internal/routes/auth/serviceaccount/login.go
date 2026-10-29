@@ -8,18 +8,20 @@ package serviceaccount
 import (
 	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
-	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
 	authnv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,14 +83,15 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		token, ok := bearerToken(req)
 		if !ok {
 			wri.Header().Set("WWW-Authenticate", `Bearer realm="krateo"`)
-			http.Error(wri, "Unauthorized", http.StatusUnauthorized)
+			encode.Failure(wri, status.New(http.StatusUnauthorized, errMissingBearer).
+				WithCause(CauseMissingBearer, errMissingBearer.Error()))
 			return
 		}
 
 		user, err := r.validate(req.Context(), token)
 		if err != nil {
 			log.Err(err).Msg("serviceaccount auth failed")
-			encode.Forbidden(wri, err)
+			encode.Failure(wri, rejection(err))
 			return
 		}
 		log.Debug().
@@ -137,26 +140,31 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 	}
 	tr, err = clientset.AuthenticationV1().TokenReviews().Create(ctx, tr, metav1.CreateOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("token review: %w", err)
+		return nil, causeError{CauseTokenReviewFailed, fmt.Errorf("token review: %w", err)}
 	}
 	if tr.Status.Error != "" {
-		return nil, fmt.Errorf("token review: %s", tr.Status.Error)
+		return nil, causeError{CauseTokenReviewFailed, fmt.Errorf("token review: %s", tr.Status.Error)}
 	}
 	if !tr.Status.Authenticated {
-		return nil, fmt.Errorf("token not authenticated")
+		return nil, causeError{CauseTokenNotAuthenticated, fmt.Errorf("token not authenticated")}
 	}
 	if !containsAudience(tr.Status.Audiences, r.audience) {
-		return nil, fmt.Errorf("token audience mismatch (require %q)", r.audience)
+		return nil, causeError{CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", r.audience)}
 	}
 
 	saNamespace, saName, err := parseServiceAccountUsername(tr.Status.User.Username)
 	if err != nil {
-		return nil, err
+		return nil, causeError{CauseNotAServiceAccount, err}
 	}
 
 	mapping, err := resolvers.ServiceAccountForSA(r.rc, saNamespace, saName)
-	if err != nil {
-		return nil, err
+	switch {
+	case errors.Is(err, resolvers.ErrNoMapping):
+		return nil, causeError{CauseNoMapping, err}
+	case errors.Is(err, resolvers.ErrAmbiguousMapping):
+		return nil, causeError{CauseAmbiguousMapping, err}
+	case err != nil:
+		return nil, causeError{CauseMappingLookupFailed, err}
 	}
 
 	exts := userinfo.Extensions{}
@@ -196,4 +204,42 @@ func parseServiceAccountUsername(u string) (namespace, name string, err error) {
 		return "", "", fmt.Errorf("malformed service account username %q", u)
 	}
 	return parts[0], parts[1], nil
+}
+
+// Causes are the machine-readable reasons a serviceaccount login is refused,
+// returned in the Status body's details.causes[].reason. They are part of the
+// API contract (docs/api.md): values are added, never renamed. A client can
+// tell an authn that rejected the caller from one it could not reach without
+// parsing the message.
+const (
+	CauseMissingBearer         status.CauseType = "MissingBearer"
+	CauseTokenReviewFailed     status.CauseType = "TokenReviewFailed"
+	CauseTokenNotAuthenticated status.CauseType = "TokenNotAuthenticated"
+	CauseAudienceMismatch      status.CauseType = "AudienceMismatch"
+	CauseNotAServiceAccount    status.CauseType = "NotAServiceAccount"
+	CauseNoMapping             status.CauseType = "NoMapping"
+	CauseAmbiguousMapping      status.CauseType = "AmbiguousMapping"
+	CauseMappingLookupFailed   status.CauseType = "MappingLookupFailed"
+)
+
+var errMissingBearer = errors.New("missing bearer token")
+
+// causeError tags a validation failure with its machine-readable cause.
+type causeError struct {
+	cause status.CauseType
+	err   error
+}
+
+func (e causeError) Error() string { return e.err.Error() }
+func (e causeError) Unwrap() error { return e.err }
+
+// rejection renders a validation failure as a 403 Status, with its cause when
+// it has one.
+func rejection(err error) status.Status {
+	st := status.New(http.StatusForbidden, err)
+	var ce causeError
+	if errors.As(err, &ce) {
+		st = st.WithCause(ce.cause, ce.err.Error())
+	}
+	return st
 }

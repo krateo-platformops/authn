@@ -106,6 +106,33 @@ type Status struct {
 	Reason StatusReason `json:"reason,omitempty"`
 	// Suggested HTTP return code for this status, 0 if not set.
 	Code int `json:"code,omitempty"`
+
+	// Details carries machine-readable causes, mirroring Kubernetes
+	// StatusDetails, so a client can tell why a request failed without
+	// parsing Message.
+	Details *StatusDetails `json:"details,omitempty"`
+}
+
+// StatusDetails mirrors the causes part of Kubernetes' metav1.StatusDetails.
+type StatusDetails struct {
+	Causes []StatusCause `json:"causes,omitempty"`
+}
+
+// CauseType is a stable, machine-readable token naming why a request failed.
+// Values are part of the API contract (docs/api.md): they are added, never
+// renamed.
+type CauseType string
+
+// StatusCause mirrors Kubernetes' metav1.StatusCause.
+type StatusCause struct {
+	Type    CauseType `json:"reason"`
+	Message string    `json:"message,omitempty"`
+}
+
+// WithCause returns s with one machine-readable cause attached.
+func (s Status) WithCause(t CauseType, msg string) Status {
+	s.Details = &StatusDetails{Causes: []StatusCause{{Type: t, Message: msg}}}
+	return s
 }
 
 func New(code int, err error) Status {

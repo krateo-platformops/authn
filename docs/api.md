@@ -75,5 +75,31 @@ log a success response.
 use the JWT ([#36](https://github.com/krateo-platformops/authn/issues/36)). JWT lifetime = the cert lifetime knob
 (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, default 24h).
 
+### `/serviceaccount/login` refusals
+
+Every refusal is a Kubernetes-style `Status`. The top-level `reason` stays generic
+(`Unauthorized` / `Forbidden`). The specific cause is a stable, machine-readable token in
+`details.causes[0].reason`, mirroring Kubernetes `StatusDetails`:
+
+```json
+{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403,
+ "message":"token audience mismatch (require \"authn\")",
+ "details":{"causes":[{"reason":"AudienceMismatch","message":"token audience mismatch (require \"authn\")"}]}}
+```
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `MissingBearer` | 401 | No `Authorization: Bearer` header (also sets `WWW-Authenticate`) |
+| `TokenReviewFailed` | 403 | The TokenReview call failed, or the apiserver returned `status.error` |
+| `TokenNotAuthenticated` | 403 | The apiserver did not authenticate the token |
+| `AudienceMismatch` | 403 | The token isn't bound to authn's audience (default `authn`) |
+| `NotAServiceAccount` | 403 | The token's user isn't `system:serviceaccount:<ns>:<name>` |
+| `NoMapping` | 403 | No `ServiceAccount` mapping allowlists this SA |
+| `AmbiguousMapping` | 403 | More than one mapping references this SA |
+| `MappingLookupFailed` | 403 | Listing the mappings failed |
+
+Values are added, never renamed. A client can tell "authn rejected me" (any of the
+above) from "authn was unreachable" (no response at all) without parsing `message`.
+
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).

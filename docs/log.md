@@ -14,6 +14,23 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — `/serviceaccount/login` refusals name their cause
+
+core-provider's `ApiResolved` condition (core-provider#251) needs to say why a cdc could
+not authenticate without parsing English. Every serviceaccount login refusal now carries a
+stable token in `details.causes[0].reason`, Kubernetes `StatusDetails`-style:
+- `MissingBearer`
+- `TokenReviewFailed`
+- `TokenNotAuthenticated`
+- `AudienceMismatch`
+- `NotAServiceAccount`
+- `NoMapping`
+- `AmbiguousMapping`
+- `MappingLookupFailed`
+
+The top-level `reason` and the status codes are unchanged. The missing-bearer `401` is now a
+JSON `Status` like every other refusal; it used to be plain text.
+
 ## 2026-10-29 — authn can run more than one replica (#45)
 
 0.28.0 renewed `authn-clientconfig` in a loop that assumed a single replica: its CSR is

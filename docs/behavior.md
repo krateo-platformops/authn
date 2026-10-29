@@ -90,8 +90,9 @@ return:
   (the allowlist); an SA matched by more than one mapping → error (ambiguous). On
   success authn issues the standard kubeconfig + JWT with username = the mapping's
   `metadata.name`, groups = `spec.groups`, and `displayName` from the mapping. Any
-  TokenReview/validation/mapping failure returns `403` (`encode.Forbidden`,
-  `serviceaccount/login.go:83-88`).
+  TokenReview/validation/mapping failure returns `403`. Every refusal, including the
+  missing-bearer `401`, is a JSON `Status` whose `details.causes[0].reason` names the
+  cause (`rejection`, `serviceaccount/login.go`; [api](./api.md)).
 - **ldap** — `?name=<LDAPConfig>` + JSON body `{"username","password"}`
   (`ldap/login.go:73-130`). Error mapping: not-found → `404`, multiple entries →
   `300`, other → `403` (`ldap/login.go:102-110`).
