@@ -32,6 +32,19 @@ spec:
   issuer: https://kc.example/realms/krateo   # exactly the ID token's iss
 ```
 
+Before upgrading, list the configs that need `issuer`. Use the full resource name: with a
+wrong group (e.g. `oidc.krateo.io`), kubectl reports that the *resource type* doesn't
+exist, which reads like "no OIDC here" but isn't.
+
+```sh
+kubectl get oidcconfigs.oidc.authn.krateo.io -A -o json | jq -r '.items[]
+  | select((.spec.discoveryURL // "") == "" and (.spec.issuer // "") == "")
+  | "\(.metadata.namespace)/\(.metadata.name)"'
+```
+
+An empty output means nothing to change. authn also names any such config in a warning at
+startup.
+
 A config with a `discoveryURL` keeps working unchanged, and authn now reads the discovery
 document on every login, even when all endpoints are set. Split out of the step-up work
 (#49), which builds on it.
