@@ -14,6 +14,20 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — `krateo:loa:*` groups are reserved to authn (#49)
+
+Step-up logins will mark their credential with the group `krateo:loa:2`, and admission
+policies will require it for destructive operations. To make that group unforgeable,
+every identity authn builds now drops `krateo:loa:*` groups, whatever the strategy or
+source:
+- IdP claims;
+- RESTActions;
+- basic `User`;
+- `ServiceAccount` mappings.
+
+Each drop is logged. The generator also refuses to mint any identity that still carries
+one. Groups that merely look similar, such as `krateo:loader`, are untouched.
+
 ## 2026-10-29 — OIDC login validates the ID token (#50)
 
 `/oidc/login` used to trust whatever the token endpoint returned: it base64-decoded the ID
