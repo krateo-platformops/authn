@@ -20,10 +20,11 @@ timestamp: 2026-10-29T00:00:00Z
 >   new `ServiceAccountSelector`;
 > - the handler issues the kubeconfig + JWT through the shared
 >   `KubeconfigGenerator` (which persists the `AuthInfo`) like every other strategy —
->   `signup.Do` stays boot-only for authn's own identity;
+>   authn's own identity is issued at boot and, since #28, kept renewed by
+>   `internal/certrenewal`;
 > - the issued-JWT TTL is the standard cert-duration knob
 >   (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, default 24h), not a separate short
->   service-token TTL;
+>   service-token TTL. Since #28 it is clamped to the certificate's granted `NotAfter`;
 > - the audience is configurable (`--serviceaccount-audience` /
 >   `AUTHN_SERVICEACCOUNT_AUDIENCE`, default `authn`).
 > Current behavior contract: [behavior.md](../behavior.md); pitfalls:
@@ -219,9 +220,11 @@ Consequences (all inherited from the existing model):
   `krateo:cdc:<resource>-<apiVersion>` (core-provider auto-provisions a `ServiceAccount`
   mapping carrying that group)._
 - ~~JWT lifetime & caching~~ — **resolved: one global lifetime, no per-mapping TTL.** The
-  issued JWT lives as long as the minted client certificate: both use
+  issued JWT lives as long as the minted client certificate. Both are requested at
   `AUTHN_KUBECONFIG_CRT_EXPIRES_IN` (default 24h; `main.go` wires it into every strategy's
-  `JwtDuration`). The CRD has no `tokenTTL`. Callers cache the JWT until shortly before
+  `JwtDuration`), and since #28 the JWT is **clamped to the certificate's granted
+  `NotAfter`**, so a signer that grants less (OpenShift: 720h cap) ends the session with
+  the credential ([certificate-renewal](../certificate-renewal.md)). The CRD has no `tokenTTL`. Callers cache the JWT until shortly before
   its `exp` claim and then exchange again; snowplow's prewarm refreshes lazily at `exp − 60s`.
   Revocation, in two parts:
   - *Exchange:* delete the `ServiceAccount` mapping. The next login fails with "not in the
