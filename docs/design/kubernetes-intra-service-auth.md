@@ -243,8 +243,12 @@ Consequences (all inherited from the existing model):
   registry and keep credential custody central.
 
   The strategy's code needs no change. Local-cluster services (the common case) are
-  unaffected. Delivery work falls outside this record: deploying authn into targets, and
-  pointing callers and their JWT verifiers at the target-local authn.
+  unaffected. Delivery is tracked in
+  [authn#38](https://github.com/krateo-platformops/authn/issues/38):
+  - authn is installed into a target through the installer umbrella;
+  - each target gets its own signing key and `kid`;
+  - a cdc whose target has no authn sets a condition on the composition and keeps
+    reconciling ([core-provider#251](https://github.com/krateo-platformops/core-provider/issues/251)).
 - ~~Endpoint path/verb~~ — **resolved (as shipped):** `POST /serviceaccount/login`, with
   the SA token as `Authorization: Bearer`. It follows the `/<strategy>/login` convention of
   every other strategy and returns the same response shape (JWT + kubeconfig). An RFC 8693
