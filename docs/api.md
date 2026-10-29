@@ -28,7 +28,7 @@ operator namespace** (`POD_NAMESPACE`).
 | `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`. `metadata.name` is the issued username. |
 | `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`. |
 | `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. |
-| `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus either `discoveryURL` (wins) or explicit `authorizationURL`/`tokenURL`/`userInfoURL`; optional `additionalScopes`, `restActionRef`, `graphics`. |
+| `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `additionalScopes`, `restActionRef`, `graphics`. |
 
 `graphics` (`icon`, `displayName`, `backgroundColor`, `textColor`) styles the
 frontend login button; `restActionRef` points at a snowplow RESTAction that compiles
@@ -109,6 +109,24 @@ mirroring Kubernetes `StatusDetails`:
 
 Values are added, never renamed, and a cause never changes its code. "authn was
 unreachable" is the remaining case: no response at all.
+
+### `/oidc/login` failures
+
+The ID token is validated before any claim is used. Failures are `Status` bodies with
+the same shape as above: `403` for a token authn won't accept (retrying the same login
+fails again), and `500` for an OIDCConfig authn can't validate against.
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) |
+| `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` |
+| `TokenExpired` | 403 | `exp` is more than 1 minute in the past |
+| `IDTokenInvalid` | 403 | The ID token can't be decoded, or `aud`/`exp` is missing or malformed |
+| `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` |
+| `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` |
+
+Other OIDC failures, such as a rejected code or an unreachable token endpoint, are still
+a `500` without a cause.
 
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).

@@ -3,6 +3,7 @@ package oidc
 import (
 	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/krateo-platformops/plumbing/kubeutil"
 	"github.com/rs/zerolog"
 	"k8s.io/client-go/rest"
@@ -91,15 +93,21 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		cfg, err := getConfig(callCtx, r.rc, name)
 		if err != nil {
 			log.Err(err).Str("name", name).Msg("unable to fetch oidc configuration")
-			encode.ExpectationFailed(wri, err)
+			if errors.As(err, new(status.CauseError)) {
+				encode.Failure(wri, status.FromError(err))
+			} else {
+				encode.ExpectationFailed(wri, err)
+			}
 			return
 		}
 
 		log.Debug().Str("name", name).Msg("starting oidc login")
 		idToken, err := doLogin(callCtx, req.Header.Get(authCodeKey), cfg)
 		if err != nil {
+			// A rejected ID token is a 403 with its cause; anything else is
+			// authn's failure, a 500.
 			log.Err(err).Str("name", name).Msg("unable to complete login")
-			encode.InternalError(wri, err)
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 

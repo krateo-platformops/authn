@@ -90,6 +90,13 @@ spec:
                 - icon
                 - textColor
                 type: object
+              issuer:
+                description: |-
+                  Issuer is the expected `iss` of the ID token. Required when
+                  discoveryURL is not set; otherwise it is read from the discovery
+                  document, and if set here it must equal the discovered one.
+                  An OIDCConfig with neither refuses logins.
+                type: string
               redirectURI:
                 type: string
               restActionRef:

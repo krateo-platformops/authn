@@ -9,6 +9,13 @@ type OIDCConfigSpec struct {
 	//+optional
 	DiscoveryURL string `json:"discoveryURL"`
 
+	// Issuer is the expected `iss` of the ID token. Required when
+	// discoveryURL is not set; otherwise it is read from the discovery
+	// document, and if set here it must equal the discovered one.
+	// An OIDCConfig with neither refuses logins.
+	//+optional
+	Issuer string `json:"issuer,omitempty"`
+
 	//+optional
 	AuthorizationURL string `json:"authorizationURL"`
 	//+optional

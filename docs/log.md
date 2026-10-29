@@ -14,6 +14,41 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — OIDC login validates the ID token (#50)
+
+`/oidc/login` used to trust whatever the token endpoint returned: it base64-decoded the ID
+token and read its claims without checking who issued it, for whom, or until when. It
+now checks `iss`, `aud`/`azp` and `exp` first, as OIDC Core §3.1.3.7 requires. It does
+not check the signature, which §3.1.3.7 allows for a token fetched back-channel over TLS
+with client authentication.
+
+**Breaking for hand-configured OIDCConfigs.** The expected issuer comes from
+`discoveryURL`, or from the new `spec.issuer`. A config with neither refuses every login
+(`500` `IssuerUnknown`), and authn names it in a startup warning. Fix:
+
+```yaml
+spec:
+  tokenURL: https://kc.example/realms/krateo/protocol/openid-connect/token
+  issuer: https://kc.example/realms/krateo   # exactly the ID token's iss
+```
+
+Before upgrading, list the configs that need `issuer`. Use the full resource name: with a
+wrong group (e.g. `oidc.krateo.io`), kubectl reports that the *resource type* doesn't
+exist, which reads like "no OIDC here" but isn't.
+
+```sh
+kubectl get oidcconfigs.oidc.authn.krateo.io -A -o json | jq -r '.items[]
+  | select((.spec.discoveryURL // "") == "" and (.spec.issuer // "") == "")
+  | "\(.metadata.namespace)/\(.metadata.name)"'
+```
+
+An empty output means nothing to change. authn also names any such config in a warning at
+startup.
+
+A config with a `discoveryURL` keeps working unchanged, and authn now reads the discovery
+document on every login, even when all endpoints are set. Split out of the step-up work
+(#49), which builds on it.
+
 ## 2026-10-29 — `/serviceaccount/login` failures name their cause and their side
 
 core-provider's `ApiResolved` condition (core-provider#251) needs to say why a cdc could

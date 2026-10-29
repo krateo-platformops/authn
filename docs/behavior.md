@@ -94,7 +94,7 @@ return:
   mapping) gets `403`. A failure on authn's side (TokenReview call, mapping list,
   clientconfig or JWT issuance) gets `500`. Every failure, including the
   missing-bearer `401`, is a JSON `Status` whose `details.causes[0].reason` names the
-  cause (`failureStatus`, `serviceaccount/login.go`; [api](./api.md)).
+  cause (`status.FromError`, `internal/status`; [api](./api.md)).
 - **ldap** — `?name=<LDAPConfig>` + JSON body `{"username","password"}`
   (`ldap/login.go:73-130`). Error mapping: not-found → `404`, multiple entries →
   `300`, other → `403` (`ldap/login.go:102-110`).
@@ -106,6 +106,16 @@ return:
   `groups`) are read, and the UserInfo endpoint is called only for the claims the ID
   token omits (`oidc/support.go:112-208`). `groups` is never sourced from UserInfo
   (`oidc/support.go:149-156`).
+  Before any claim is read, the ID token is validated (`validateIDToken`,
+  `oidc/idtoken.go`, #50): `iss` must equal the expected issuer, `aud` must contain
+  `clientID` (and `azp` must equal it when there are several audiences), and `exp`
+  must not be more than 1 minute past. The expected issuer is the discovery document's
+  `issuer` when `discoveryURL` is set (a different `spec.issuer` is a conflict),
+  otherwise `spec.issuer`. With neither, every login is refused with `500`
+  `IssuerUnknown`, and authn logs a warning naming the config at startup. The signature
+  is **not** checked: the token comes back-channel from the configured token endpoint,
+  authenticated with the client secret over TLS, which OIDC Core §3.1.3.7 accepts in
+  place of it.
 
 ## CRDs it reads
 
@@ -143,7 +153,10 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 ### `OIDCConfig` (`oidc.authn.krateo.io`) — `apis/authn/oidc/v1alpha1/types.go`
 - `spec.clientID`, `spec.clientSecret` (`SecretKeySelector`), `spec.redirectURI`.
 - `spec.discoveryURL`, `spec.authorizationURL`, `spec.tokenURL`, `spec.userInfoURL`,
-  `spec.additionalScopes`.
+  `spec.additionalScopes`. With `discoveryURL` the document is read on every login
+  (it supplies the issuer); its endpoints are applied only when some endpoint is unset.
+- `spec.issuer` (optional) — the ID token's expected `iss`. Required without
+  `discoveryURL`; with it, must equal the discovered issuer or be left empty.
 - `spec.restActionRef` (optional `ObjectRef` — enrich the identity via snowplow).
 - `spec.graphics` (optional).
 
