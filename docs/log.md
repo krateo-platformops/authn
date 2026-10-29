@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — authn can run more than one replica (#45)
+
+0.28.0 renewed `authn-clientconfig` in a loop that assumed a single replica: its CSR is
+named after the username and recreated on conflict, so two replicas would delete each
+other's requests.
+
+Now only the replica holding the `authn-cert-renewal` Lease does authn's own-identity
+work: issuing, renewing and the identity backfill. Every replica serves logins, so
+`replicaCount > 1` and autoscaling are safe. A crashed leader is replaced within 15s.
+The chart's Role gains `get/create/update` on `leases`.
+
 ## 2026-10-29 — clientconfig Secrets record their strategy and groups (#42)
 
 Tenant onboarding (a Kyverno policy) fires on every `<user>-clientconfig` Secret, but nothing

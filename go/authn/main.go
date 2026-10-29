@@ -17,6 +17,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
+	"github.com/krateo-platformops/authn/internal/leader"
 	"github.com/krateo-platformops/authn/internal/middlewares/cors"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
@@ -29,10 +30,12 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes/health"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/krateo-platformops/authn/internal/telemetry"
+	"github.com/krateo-platformops/authn/internal/uuid"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -322,10 +325,13 @@ func main() {
 	}...)
 	defer stop()
 
-	// authn's own clientconfig — the identity snowplow presents when it runs
-	// RESTActions on authn's behalf. Issued synchronously here, as it always
-	// was, and then kept alive: the signer may grant far less than the year we
-	// ask for, and nothing but a pod restart used to re-issue it.
+	// authn's own-identity work has a single writer: the replica holding the
+	// authn-cert-renewal Lease. That work is issuing and renewing
+	// authn-clientconfig (the identity snowplow presents for authn's
+	// RESTActions) and backfilling identity annotations. The CSR is named after
+	// the username and an existing one is deleted and recreated, so two writers
+	// would delete each other's in-flight requests. Every replica serves logins
+	// regardless, so authn can run with more than one replica.
 	renewer, err := certrenewal.New(certrenewal.Options{
 		RestConfig: cfg,
 		Namespace:  *storageNamespace,
@@ -337,40 +343,34 @@ func main() {
 		Threshold:  *certRenewalThreshold,
 		Log:        log,
 	})
-	switch {
-	case err != nil:
+	if err != nil {
 		// A clientconfig authn cannot create has never been a reason to refuse
-		// logins — only snowplow-backed identity enrichment degrades — so this
-		// stays as non-fatal as the fire-and-forget signup it replaces.
+		// logins (only snowplow-backed identity enrichment degrades), so this
+		// stays non-fatal.
 		log.Err(err).Msg("client certificate renewal unavailable")
-
-	default:
-		// This read is the only one until renewal falls due: the wait it
-		// returns is handed straight to the loop.
-		wait, err := renewer.Ensure(context.Background())
-		if err != nil {
-			log.Err(err).Msg("issuing authn clientconfig")
-		}
-
-		if *certRenewalOn {
-			go renewer.Run(ctx, wait)
-		} else {
-			log.Warn().
-				Str("secret", renewer.SecretName()).
-				Msg("client certificate renewal is disabled; the stored certificate will expire without a restart")
-		}
+		renewer = nil
 	}
 
-	// Stamp the identity annotations (strategy, groups) onto clientconfig
-	// Secrets written before authn recorded them, so policy deciding from them
-	// also covers identities that never log in again. In the background: it
-	// is never a reason to delay serving logins.
-	go func() {
+	ownIdentity := func(lctx context.Context) {
+		var wait time.Duration
+		if renewer != nil {
+			// This read is the only one until renewal falls due: the wait
+			// it returns is handed straight to the loop.
+			w, ensureErr := renewer.Ensure(lctx)
+			if ensureErr != nil {
+				log.Err(ensureErr).Msg("issuing authn clientconfig")
+			}
+			wait = w
+		}
+
+		// Stamp the identity annotations (strategy, groups) onto clientconfig
+		// Secrets written before authn recorded them, so policy deciding from
+		// them also covers identities that never log in again.
 		operatorNamespace, err := util.GetOperatorNamespace()
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill: resolving the operator namespace")
 		}
-		res, err := identitybackfill.Run(ctx, identitybackfill.Options{
+		res, err := identitybackfill.Run(lctx, identitybackfill.Options{
 			RestConfig:   cfg,
 			Namespaces:   []string{operatorNamespace, *storageNamespace},
 			SelfUsername: *authnUsername,
@@ -378,14 +378,44 @@ func main() {
 		})
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")
-			return
+		} else {
+			log.Info().
+				Int("scanned", res.Scanned).
+				Int("stamped", res.Stamped).
+				Int("skipped", res.Skipped).
+				Msg("identity annotation backfill done")
 		}
-		log.Info().
-			Int("scanned", res.Scanned).
-			Int("stamped", res.Stamped).
-			Int("skipped", res.Skipped).
-			Msg("identity annotation backfill done")
-	}()
+
+		switch {
+		case renewer != nil && *certRenewalOn:
+			renewer.Run(lctx, wait)
+		case renewer != nil:
+			log.Warn().
+				Str("secret", renewer.SecretName()).
+				Msg("client certificate renewal is disabled; the stored certificate will expire without a restart")
+			<-lctx.Done()
+		default:
+			<-lctx.Done()
+		}
+	}
+
+	leaderClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		log.Err(err).Msg("leader election unavailable; authn's own certificate is not maintained")
+	} else {
+		go func() {
+			err := leader.Run(ctx, leader.Options{
+				Client:    leaderClient,
+				Namespace: *storageNamespace,
+				Name:      leader.CertRenewalLease,
+				Identity:  leaderIdentity(),
+				Log:       log,
+			}, ownIdentity)
+			if err != nil {
+				log.Err(err).Msg("leader election unavailable; authn's own certificate is not maintained")
+			}
+		}()
+	}
 
 	go func() {
 		atomic.StoreInt32(&healthy, 1)
@@ -417,4 +447,15 @@ func main() {
 	}
 
 	log.Info().Msg("server gracefully stopped")
+}
+
+// leaderIdentity is this process's identity in the leader election: the pod
+// name plus a random suffix, unique per process so a restarted container never
+// inherits its predecessor's lease.
+func leaderIdentity() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "authn"
+	}
+	return host + "_" + uuid.NewGen().NewV4().String()
 }

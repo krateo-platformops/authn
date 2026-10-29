@@ -156,8 +156,9 @@ env:
   # authn's own client certificate (authn-clientconfig, the identity snowplow
   # presents for authn's RESTActions) is renewed in the background. The signer may
   # grant less than requested (OpenShift caps at 720h), so renewal fires at
-  # AUTHN_CRT_RENEWAL_THRESHOLD of the GRANTED lifetime. The loop assumes a single
-  # writer: keep replicaCount 1 and autoscaling off. See docs/certificate-renewal.md.
+  # AUTHN_CRT_RENEWAL_THRESHOLD of the GRANTED lifetime. Only the replica holding the
+  # authn-cert-renewal Lease renews, so any replicaCount is safe.
+  # See docs/certificate-renewal.md.
   AUTHN_SERVICE_CRT_EXPIRES_IN: "8760h"
   AUTHN_CRT_RENEWAL_THRESHOLD: "0.66"
   AUTHN_CRT_RENEWAL_ENABLED: "true"

@@ -19,6 +19,16 @@ rules:
   - create
   - update
   - delete
+# leader election for authn's own-identity work (certificate renewal, identity
+# backfill): a single writer across replicas.
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - create
+  - update
 - apiGroups:
   - templates.krateo.io
   resources:

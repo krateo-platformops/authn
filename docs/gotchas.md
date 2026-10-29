@@ -38,13 +38,20 @@ recreates** it (`config/gen.go:41-55`) rather than reusing the prior cert. Repea
 logins for the same user churn CSR objects; concurrent logins for the same user can
 race on that delete/recreate.
 
-## Certificate renewal assumes a single replica
-authn's own certificate (`authn-clientconfig`) is renewed by a background loop
-(`go/authn/internal/certrenewal`). Its CSR is named after the username (`authn`), and
-an existing CSR is deleted and recreated (above), so two replicas would race on it,
-each deleting the other's in-flight CSR. Keep `replicaCount: 1` and
-`autoscaling.enabled: false`, which are the chart defaults. Set
-`AUTHN_CRT_RENEWAL_ENABLED=false` only if you accept that the certificate expires in
+## authn's own-identity work runs on the Lease holder only
+Issuing and renewing `authn-clientconfig`, and the identity backfill, run only on the
+replica holding the `authn-cert-renewal` Lease (`coordination.k8s.io`) in authn's
+namespace (`go/authn/internal/leader`). Its CSR is named after the username (`authn`)
+and an existing CSR is deleted and recreated (above), so two writers would delete each
+other's in-flight requests. Every replica serves logins, so `replicaCount > 1` and
+autoscaling are safe.
+
+The Lease needs `get/create/update` on `leases`, which the chart's Role grants. Without
+it, no replica ever leads and authn's own certificate is never issued or renewed. Check
+which replica leads with `kubectl -n <ns> get lease authn-cert-renewal`. A crashed leader
+is replaced within 15s; a graceful shutdown releases the lease at once.
+
+Set `AUTHN_CRT_RENEWAL_ENABLED=false` only if you accept that the certificate expires in
 place until a restart ([certificate-renewal](./certificate-renewal.md)).
 
 ## The requested certificate lifetime is a wish
