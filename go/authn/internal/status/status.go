@@ -1,6 +1,9 @@
 package status
 
-import "net/http"
+import (
+	"errors"
+	"net/http"
+)
 
 // Values of Status.Status
 const (
@@ -188,4 +191,38 @@ func New(code int, err error) Status {
 	}
 
 	return res
+}
+
+// CauseError tags a failure with its machine-readable cause and the status
+// code that says whose failure it is:
+//   - 401/403: the request was refused, and retrying it unchanged fails again;
+//   - 500: authn could not finish the job, and the same request may succeed
+//     once authn's dependency or configuration is fixed.
+type CauseError struct {
+	Code  int
+	Cause CauseType
+	Err   error
+}
+
+func (e CauseError) Error() string { return e.Err.Error() }
+func (e CauseError) Unwrap() error { return e.Err }
+
+// Refused is a refusal of the request (403).
+func Refused(cause CauseType, err error) CauseError {
+	return CauseError{Code: http.StatusForbidden, Cause: cause, Err: err}
+}
+
+// Failed is a failure on authn's side (500).
+func Failed(cause CauseType, err error) CauseError {
+	return CauseError{Code: http.StatusInternalServerError, Cause: cause, Err: err}
+}
+
+// FromError renders err as a Status with its code and cause. An error that
+// carries no cause is authn's own failure: a 500 without details.
+func FromError(err error) Status {
+	var ce CauseError
+	if !errors.As(err, &ce) {
+		return New(http.StatusInternalServerError, err)
+	}
+	return New(ce.Code, err).WithCause(ce.Cause, ce.Err.Error())
 }
