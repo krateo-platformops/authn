@@ -113,10 +113,15 @@ certificate, but it takes effect immediately only after a pod restart.
 **RBAC:** none added. The annotations are written with the `get` and `update` on
 `secrets` that authn already holds.
 
-**Single writer:** the loop assumes one writer. The CSR object is named after the
-username, so two replicas would race on the CSR named `authn`. Keep `replicaCount: 1`
-and `autoscaling.enabled: false`, which are the chart defaults
-([gotchas](./gotchas.md)).
+**Single writer, any number of replicas:** the CSR object is named after the username,
+so two writers would race on the CSR named `authn`. The loop therefore runs only on the
+replica holding the `authn-cert-renewal` Lease (`go/authn/internal/leader`, client-go
+leader election). The other replicas serve logins and stand by:
+- a crashed leader is replaced within 15s;
+- a graceful shutdown releases the lease at once, and the new leader re-reads the stored
+  certificate and resumes the schedule.
+
+The chart's Role grants `get/create/update` on `leases` ([gotchas](./gotchas.md)).
 
 ## `<user>-clientconfig` is clamped, not renewed
 

@@ -54,13 +54,17 @@ API.
    is on, wrapped with a permissive `*`-origin handler that allows the custom
    `X-Auth-Code` header plus the W3C trace-context headers
    (`traceparent`/`tracestate`/`baggage`, `main.go:257-270`).
-9. **Own identity, kept renewed.** `certrenewal.New(...)` + `Ensure` (`main.go:328`)
-   issue authn's own `authn-clientconfig`, so authn can call snowplow's RESTActions as
-   itself. Then `go renewer.Run` (`main.go:355`) re-issues it at a fraction of the
-   certificate's granted lifetime ([certificate-renewal](./certificate-renewal.md)).
-   Issuing still goes through `plumbing` `signup.Do` (`certrenewal/renewal.go:238`); it used to run only once, at boot.
-   Then, in the background, `identitybackfill.Run` (`main.go:373`) stamps the identity
-   annotations onto clientconfig Secrets that predate them ([behavior](./behavior.md)).
+9. **Own identity, on the leader.** `leader.Run` (`main.go:407`) campaigns for the
+   `authn-cert-renewal` Lease. Only the replica holding it does authn's own-identity
+   work (`certrenewal.New`, `main.go:335`):
+   - `Ensure` issues `authn-clientconfig`, so authn can call snowplow's RESTActions as
+     itself. Issuing goes through `plumbing` `signup.Do` (`certrenewal/renewal.go:238`).
+   - `identitybackfill.Run` stamps the identity annotations onto clientconfig Secrets
+     that predate them ([behavior](./behavior.md)).
+   - `renewer.Run` re-issues the certificate at a fraction of its granted lifetime
+     ([certificate-renewal](./certificate-renewal.md)).
+
+   Losing the lease cancels that work, and the replica campaigns again.
 10. **Serve + graceful shutdown.** `http.Server` with read/write/idle timeouts
     (`main.go:272-278`), served in a goroutine that flips the `healthy` flag
     (`main.go:301-306`); SIGINT/SIGTERM trigger a 30s graceful `Shutdown` that also
