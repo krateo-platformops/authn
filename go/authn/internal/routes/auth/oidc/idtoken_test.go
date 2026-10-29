@@ -89,7 +89,7 @@ func TestDoLoginRejectsInvalidIDToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	tok, err := doLogin(context.Background(), "code", &oidcConfig{
+	tok, err := doLogin(context.Background(), "code", "", &oidcConfig{
 		Issuer: testIssuer, ClientID: "test-client-id", TokenURL: srv.URL,
 	})
 	var ce status.CauseError

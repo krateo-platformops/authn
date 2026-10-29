@@ -14,6 +14,14 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — OIDC login accepts a PKCE verifier (#49)
+
+An OIDC login can now use PKCE (RFC 7636). The client that starts the authorization
+request adds `code_challenge`, then sends the verifier to `/oidc/login` in
+`X-Code-Verifier`, and authn forwards it as `code_verifier` on the code exchange.
+Without the header nothing changes. CORS allows the new header. This is groundwork for
+the step-up login (#49), whose browser flow uses PKCE.
+
 ## 2026-10-29 — `krateo:loa:*` groups are reserved to authn (#49)
 
 Step-up logins will mark their credential with the group `krateo:loa:2`, and admission

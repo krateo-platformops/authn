@@ -52,7 +52,7 @@ API.
    when metrics/tracing are on the handler is wrapped with the metrics middleware and
    `otelhttp` (span per request, `/health` filtered out, `main.go:243-255`); if CORS
    is on, wrapped with a permissive `*`-origin handler that allows the custom
-   `X-Auth-Code` header plus the W3C trace-context headers
+   `X-Auth-Code` and `X-Code-Verifier` headers plus the W3C trace-context headers
    (`traceparent`/`tracestate`/`baggage`, `main.go:257-270`).
 9. **Own identity, on the leader.** `leader.Run` (`main.go:407`) campaigns for the
    `authn-cert-renewal` Lease. Only the replica holding it does authn's own-identity

@@ -46,7 +46,7 @@ default port `8082`.
 | GET | `/basic/login` | `Authorization: Basic` → login response. `?d` streams the kubeconfig as a file download instead. |
 | POST | `/ldap/login?name=<LDAPConfig>` | JSON body `{"username","password"}` → login response. |
 | GET | `/oauth/login?name=<OAuthConfig>` | `X-Auth-Code: <code>` header → code exchange → RESTAction-compiled identity → login response. |
-| GET | `/oidc/login?name=<OIDCConfig>` | `X-Auth-Code: <code>` header → code exchange → ID-token claims (UserInfo fallback) → login response. |
+| GET | `/oidc/login?name=<OIDCConfig>` | `X-Auth-Code: <code>` header, plus `X-Code-Verifier: <verifier>` when the authorization request used PKCE → code exchange → ID-token claims (UserInfo fallback) → login response. |
 | POST | `/serviceaccount/login` | `Authorization: Bearer <projected SA token, audience authn>` → TokenReview → allowlist mapping → login response. |
 | GET | `/info?name=<username>` | The stored `AuthInfo` (cert/key/CA/server) for a previously logged-in identity. |
 | GET | `/health` | `{name,version}` once serving, `503` otherwise (process lifecycle only). |

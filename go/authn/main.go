@@ -310,7 +310,7 @@ func main() {
 			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 			// traceparent/tracestate/baggage are REQUIRED so the cross-origin
 			// browser->authn hop can carry W3C trace context to authn.
-			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Auth-Code", "traceparent", "tracestate", "baggage"},
+			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Auth-Code", "X-Code-Verifier", "traceparent", "tracestate", "baggage"},
 			ExposedHeaders:   []string{"Link"},
 			AllowCredentials: true,
 			MaxAge:           300, // Maximum value not ignored by any of major browsers

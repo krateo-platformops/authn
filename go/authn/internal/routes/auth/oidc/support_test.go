@@ -156,7 +156,7 @@ func TestDoLogin(t *testing.T) {
 			}
 
 			// FuT
-			resultToken, err := doLogin(context.Background(), "test-code", cfg)
+			resultToken, err := doLogin(context.Background(), "test-code", "", cfg)
 			if err != nil {
 				t.Fatalf("doLogin failed: %v", err)
 			}
@@ -292,4 +292,41 @@ func TestConfigUpdate(t *testing.T) {
 		log.Logger.Info().Msgf("obtained expected error: %s", err)
 	}
 
+}
+
+// The PKCE verifier is forwarded on the code exchange when the client sent
+// one, and omitted otherwise, so IdPs that don't use PKCE see no change.
+func TestDoLoginForwardsCodeVerifier(t *testing.T) {
+	for _, verifier := range []string{"", "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"} {
+		t.Run("verifier="+verifier, func(t *testing.T) {
+			var got []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Fatalf("parse form: %v", err)
+				}
+				got = r.PostForm["code_verifier"]
+				claims, _ := json.Marshal(map[string]interface{}{
+					"iss": testIssuer, "aud": "c", "exp": float64(time.Now().Add(time.Hour).Unix()),
+					"preferred_username": "u", "name": "n", "picture": "p", "email": "e",
+				})
+				_ = json.NewEncoder(w).Encode(TokenResponse{
+					AccessToken: "a",
+					IDToken:     "e30." + base64.RawURLEncoding.EncodeToString(claims) + ".s",
+				})
+			}))
+			defer srv.Close()
+
+			_, err := doLogin(context.Background(), "code", verifier, &oidcConfig{Issuer: testIssuer, ClientID: "c", TokenURL: srv.URL})
+			if err != nil {
+				t.Fatalf("doLogin: %v", err)
+			}
+			if verifier == "" {
+				if got != nil {
+					t.Errorf("code_verifier sent without PKCE: %q", got)
+				}
+			} else if len(got) != 1 || got[0] != verifier {
+				t.Errorf("code_verifier = %q, want %q", got, verifier)
+			}
+		})
+	}
 }

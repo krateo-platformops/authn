@@ -101,8 +101,11 @@ return:
 - **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go:73-90`).
   Code is exchanged via `golang.org/x/oauth2` (`oauth/login.go:106`); token type must
   be `bearer` when a RESTAction is configured (`oauth/login.go:116-121`).
-- **oidc** — `?name=<OIDCConfig>` + `X-Auth-Code` header. Code is POSTed to the token
-  endpoint; ID-token claims (`preferred_username`, `name`, `picture`, `email`,
+- **oidc** — `?name=<OIDCConfig>` + `X-Auth-Code` header, and optionally
+  `X-Code-Verifier`. Code is POSTed to the token endpoint, with the PKCE
+  `code_verifier` (RFC 7636) when the header is present. authn doesn't generate PKCE
+  itself: the client that builds the authorization request adds the
+  `code_challenge`, keeps the verifier, and sends it back in `X-Code-Verifier`; ID-token claims (`preferred_username`, `name`, `picture`, `email`,
   `groups`) are read, and the UserInfo endpoint is called only for the claims the ID
   token omits (`oidc/support.go:112-208`). `groups` is never sourced from UserInfo
   (`oidc/support.go:149-156`).
@@ -246,5 +249,5 @@ never stamped with a guess. The next start retries it.
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response
 (`data` + `accessToken`) to authenticate the user. CORS is enabled by default with
-`*` origin; the allowed headers include the custom `X-Auth-Code` plus the W3C
+`*` origin; the allowed headers include the custom `X-Auth-Code` and `X-Code-Verifier` plus the W3C
 trace-context headers `traceparent`/`tracestate`/`baggage` (`main.go:257-270`).
