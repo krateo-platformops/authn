@@ -59,6 +59,13 @@ return:
 ```
 
 - `data` is the per-user kubeconfig minted by the generator (`config/build.go:115-147`).
+  Its `client-key-data` is a private key ([gotchas](./gotchas.md)).
+- **`/serviceaccount/login` omits `data`.** It still mints the identity and persists the
+  `<username>-clientconfig` Secret (which snowplow, plumbing endpoints and bff read), but
+  the response carries only `accessToken`, `user` and `groups`. No service caller reads
+  the kubeconfig, and leaving it out means a printed or logged success response can't
+  leak the key ([#36](https://github.com/krateo-platformops/authn/issues/36),
+  `serviceaccount/login.go`).
 - `accessToken` is always present, since authn fails to boot without a valid signing key. The JWT
   duration is the cert-duration knob (8h default if none is given), **clamped to the issued
   certificate's real `NotAfter`**, so a token never outlives the credential minted with it

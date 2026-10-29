@@ -65,8 +65,14 @@ Every strategy returns the same shape:
 ```
 
 `data` is a complete kubeconfig whose client certificate carries
-`CN=username, O=groups` — the caller's Kubernetes identity, scoped from then on by
-standard RBAC. JWT lifetime = the cert lifetime knob
+`CN=username, O=groups`: the caller's Kubernetes identity, scoped from then on by
+standard RBAC. It includes the certificate's private key (`client-key-data`), so never
+log a success response.
+
+**`POST /serviceaccount/login` returns no `data`**, only `accessToken`, `user` and
+`groups`. The identity's kubeconfig is still minted and stored in the
+`<username>-clientconfig` Secret, where in-cluster consumers read it. Service callers
+use the JWT ([#36](https://github.com/krateo-platformops/authn/issues/36)). JWT lifetime = the cert lifetime knob
 (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, default 24h).
 
 Full request/response semantics, per-strategy validation rules and error mapping:

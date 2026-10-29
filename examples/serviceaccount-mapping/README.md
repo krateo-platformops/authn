@@ -1,7 +1,7 @@
 ---
 type: Example
 title: serviceaccount-mapping — intra-service auth allowlist
-description: A ServiceAccount mapping CR that lets a backend service exchange its own projected, audience-bound SA token for a Krateo JWT + kubeconfig via POST /serviceaccount/login.
+description: A ServiceAccount mapping CR that lets a backend service exchange its own projected, audience-bound SA token for a Krateo JWT via POST /serviceaccount/login (the kubeconfig is stored in a Secret, not returned).
 resource: serviceaccounts.serviceaccount.authn.krateo.io
 tags: [serviceaccount, tokenreview, intra-service-auth]
 timestamp: 2026-08-07T00:00:00Z
@@ -10,8 +10,9 @@ timestamp: 2026-08-07T00:00:00Z
 # serviceaccount-mapping
 
 Kubernetes **intra-service auth**: a backend service authenticates to authn with its
-*own* ServiceAccount token — no password, no browser redirect — and receives the same
-JWT + kubeconfig human users get. The `ServiceAccount` mapping CR is the **exchange
+*own* ServiceAccount token, with no password and no browser redirect. It receives the
+same JWT human users get, and the same per-identity `clientconfig` Secret is written for
+in-cluster consumers. The `ServiceAccount` mapping CR is the **exchange
 allowlist**: no mapping, no exchange
 ([decision record](../../docs/design/kubernetes-intra-service-auth.md)).
 
@@ -65,8 +66,11 @@ curl -s -X POST "http://authn.krateo-system.svc.cluster.local:8082/serviceaccoun
 (For a quick out-of-pod smoke test, mint an equivalent audience-bound token with
 `kubectl create token my-backend-service -n krateo-system --audience=authn`.)
 
-The response is the standard login contract ([api](../../docs/api.md)) with
-username = the mapping's `metadata.name` (`my-backend-service`) and
-groups = `["krateo:services"]` — the minted cert's `O=`. Scope the identity by
+The response is the login contract ([api](../../docs/api.md)) **without `data`**:
+`accessToken`, plus username = the mapping's `metadata.name` (`my-backend-service`) and
+groups = `["krateo:services"]`, the minted cert's `O=`. Present the `accessToken` as
+`Authorization: Bearer` to snowplow and other JWT-gated services. The identity's
+kubeconfig is not returned; authn stores it in the `my-backend-service-clientconfig`
+Secret, where in-cluster consumers read it. Scope the identity by
 binding RBAC to that group with a normal `ClusterRoleBinding`; authn never authors
 RBAC.

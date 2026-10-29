@@ -14,6 +14,25 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-29 — `/serviceaccount/login` no longer returns the kubeconfig (#36)
+
+The serviceaccount login returned the full kubeconfig in `data`, including
+`client-key-data`, a private key. The natural first step when integrating, printing the
+response, wrote that key into a terminal ([#36](https://github.com/krateo-platformops/authn/issues/36)).
+
+**The fix:** the response now carries only `accessToken`, `user` and `groups`. authn still
+mints the identity and writes `<username>-clientconfig`, which plumbing endpoints,
+snowplow and bff read from the Secret.
+
+**Fleet check before the change:** across 56 repos, the four clients of this endpoint
+decode `accessToken` only:
+- core-provider
+- core-provider's cdc
+- rest-dynamic-controller
+- snowplow
+
+The human strategies are unchanged.
+
 ## 2026-10-29 — client certificates: authn's own is renewed, login JWTs are clamped (#28)
 
 Fixes [#28](https://github.com/krateo-platformops/authn/issues/28), ported from
