@@ -1,0 +1,28 @@
+# Go checks (unit tests with -race, plus the CRD-drift guard) on every push to
+# main, through the same shared reusable workflow and arguments as PR CI
+# (release-pullrequest.yaml).
+#
+# PR CI tests the PR head, but a release tags the squash commit on main, which
+# PR CI never runs on. Without this workflow, a tagged commit carries no test
+# result of its own, so a consumer's pin gate can't tell that it was tested.
+# With it, every release commit has its own `checks / test`. The multi-arch image
+# build stays PR-only, where it validates the Dockerfile; release-tag builds the
+# real image.
+name: checks-main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    uses: krateo-platformops/.github/.github/workflows/component-go-checks.yaml@main
+    with:
+      module: go/authn
+      crd_drift: true
+      test_args: -race -coverprofile=coverage.txt -covermode=atomic ./...
+    secrets: inherit

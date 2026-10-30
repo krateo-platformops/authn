@@ -18,7 +18,11 @@ One tag ships everything. This monorepo has a single version line: the app image
    ([`release-pullrequest.yaml`](../.github/workflows/release-pullrequest.yaml):
    validate-only multi-arch image build, Go tests + CRD-drift guard, docs lint;
    plus chart lint ([`lint.yaml`](../.github/workflows/lint.yaml)) and security
-   scanning).
+   scanning). The merge commit then runs the same Go tests and CRD-drift guard again on
+   `main` ([`checks-main.yaml`](../.github/workflows/checks-main.yaml)). **Tag only a
+   commit whose `checks / test` is green.** PR CI tests the PR head, not the squash
+   commit you tag, and consumers' pin gates (installer's `pin-ci`) read the check-runs
+   on the tagged commit itself.
 2. **Tag with plain semver — `X.Y.Z`, no `v` prefix.** All release workflows trigger
    on `[0-9]+.[0-9]+.[0-9]+` only; a `v`-prefixed tag ships **nothing**, silently
    (it has happened here: `v0.25.0` produced no artifacts; `0.26.0` is the release
