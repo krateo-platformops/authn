@@ -14,6 +14,15 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-30 — Go tests run on main too, so release commits carry them
+
+installer's pin gate refused 0.29.0: the tagged commit had no test check-run. The tests
+had run with `-race` on #51's PR head, whose tree is byte-identical to 0.29.0's. But PR CI
+triggers only on `pull_request`, and a release tags the squash commit on `main`.
+`checks-main.yaml` now runs the same shared go-checks job on every push to `main`, so
+every release commit has its own `checks / test`. The release runbook says to tag only
+when it is green.
+
 ## 2026-10-29 — OIDC login accepts a PKCE verifier (#49)
 
 An OIDC login can now use PKCE (RFC 7636). The client that starts the authorization
