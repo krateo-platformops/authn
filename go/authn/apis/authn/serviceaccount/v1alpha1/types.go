@@ -26,7 +26,7 @@ type ServiceAccountSpec struct {
 }
 
 // +kubebuilder:object:root=true
-// +kubebuilder:resource:scope=Namespaced,categories={krateo,authn,serviceaccount}
+// +kubebuilder:resource:scope=Namespaced,categories={krateo,authn}
 
 // ServiceAccount is an AuthN service-identity mapping for Kubernetes intra-service auth.
 // metadata.name is the issued username (exactly like basic.User).

@@ -168,7 +168,7 @@ type ServiceAccountSpec struct {
     // +optional DisplayName. (Per-mapping TokenTTL / Audiences were considered and
     // not adopted — one global lifetime and one global audience; see §6.)
 }
-// +kubebuilder:resource:scope=Namespaced,categories={krateo,authn,serviceaccount}
+// +kubebuilder:resource:scope=Namespaced,categories={krateo,authn}
 // metadata.name == the issued username (exactly like basic.User).
 ```
 
