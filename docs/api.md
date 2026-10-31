@@ -42,7 +42,7 @@ default port `8082`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/strategies` | List configured strategies for the login page: one entry per config CR (`basic` appears only if ≥1 `User` exists), with `graphics` defaults filled and `extensions.authCodeURL`/`redirectURL` for oauth/oidc. An oidc entry with a valid `spec.stepUp` adds `extensions.stepUpPath`, `stepUpAcrValues` (space-separated, for `acr_values`) and `stepUpMaxAge` (seconds, for `max_age`). The `serviceaccount` strategy is machine-to-machine and never listed. |
+| GET | `/strategies` | List configured strategies for the login page: one entry per config CR (`basic` appears only if ≥1 `User` exists), with `graphics` defaults filled and `extensions.authCodeURL`/`redirectURL` for oauth/oidc. An oidc entry with a valid `spec.stepUp` adds `extensions.stepUpAuthCodeURL` (the complete step-up authorization request: `authCodeURL` with `acr_values` and `max_age` set; redirect to it as is), `stepUpPath` (where to POST the code), and, for display, `stepUpAcrValues` (space-separated) and `stepUpMaxAge` (seconds). The `serviceaccount` strategy is machine-to-machine and never listed. |
 | GET | `/basic/login` | `Authorization: Basic` → login response. `?d` streams the kubeconfig as a file download instead. |
 | POST | `/ldap/login?name=<LDAPConfig>` | JSON body `{"username","password"}` → login response. |
 | GET | `/oauth/login?name=<OAuthConfig>` | `X-Auth-Code: <code>` header → code exchange → RESTAction-compiled identity → login response. |

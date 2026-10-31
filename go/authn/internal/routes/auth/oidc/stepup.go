@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -120,6 +121,10 @@ func checkStepUp(cfg *stepUpConfig, tok idToken, now time.Time) error {
 // The /strategies extensions that tell the portal how to ask for a step-up
 // with an OIDCConfig. They're set only when spec.stepUp is set and valid.
 const (
+	// ExtStepUpAuthCodeURL is the complete step-up authorization request:
+	// the entry's authCodeURL with acr_values and max_age set. The portal
+	// redirects to it as is.
+	ExtStepUpAuthCodeURL = "stepUpAuthCodeURL"
 	// ExtStepUpPath is where to POST the authorization code: /oidc/stepup.
 	ExtStepUpPath = "stepUpPath"
 	// ExtStepUpAcrValues is the authorization request's acr_values: the
@@ -133,9 +138,10 @@ const (
 )
 
 // StepUpExtensions returns the /strategies extensions for an OIDCConfig's
-// spec.stepUp: nil when step-up isn't enabled, an error when it's
-// misconfigured (a step-up would answer StepUpMisconfigured).
-func StepUpExtensions(spec *oidcv1alpha1.OIDCStepUp) (map[string]string, error) {
+// spec.stepUp, given the entry's login authCodeURL: nil when step-up isn't
+// enabled, an error when it's misconfigured (a step-up would answer
+// StepUpMisconfigured) or authCodeURL can't be parsed.
+func StepUpExtensions(spec *oidcv1alpha1.OIDCStepUp, authCodeURL string) (map[string]string, error) {
 	cfg := resolveStepUp(spec)
 	if cfg == nil {
 		return nil, nil
@@ -143,10 +149,23 @@ func StepUpExtensions(spec *oidcv1alpha1.OIDCStepUp) (map[string]string, error) 
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
+	acrValues := strings.Join(cfg.acrValues, " ")
+	maxAge := strconv.FormatInt(int64(cfg.maxAge/time.Second), 10)
+
+	u, err := url.Parse(authCodeURL)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return nil, fmt.Errorf("authCodeURL %q is not an absolute URL: %v", authCodeURL, err)
+	}
+	q := u.Query()
+	q.Set("acr_values", acrValues)
+	q.Set("max_age", maxAge)
+	u.RawQuery = q.Encode()
+
 	return map[string]string{
-		ExtStepUpPath:      StepUpPath,
-		ExtStepUpAcrValues: strings.Join(cfg.acrValues, " "),
-		ExtStepUpMaxAge:    strconv.FormatInt(int64(cfg.maxAge/time.Second), 10),
+		ExtStepUpAuthCodeURL: u.String(),
+		ExtStepUpPath:        StepUpPath,
+		ExtStepUpAcrValues:   acrValues,
+		ExtStepUpMaxAge:      maxAge,
 	}, nil
 }
 

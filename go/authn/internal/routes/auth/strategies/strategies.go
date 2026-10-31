@@ -125,10 +125,10 @@ func (r *strategiesRoute) forOIDC(log zerolog.Logger) ([]strategy, error) {
 			"redirectURL": x.Spec.RedirectURI,
 		}
 		// Step-up hints, so the portal can build the step-up authorization
-		// request from the OIDCConfig instead of hardcoding IdP values.
-		stepUp, err := authoidc.StepUpExtensions(x.Spec.StepUp)
+		// request without hardcoding IdP values or composing URLs itself.
+		stepUp, err := authoidc.StepUpExtensions(x.Spec.StepUp, x.Spec.AuthorizationURL)
 		if err != nil {
-			log.Warn().Err(err).Str("name", x.Name).Msg("step-up not advertised: spec.stepUp is misconfigured")
+			log.Warn().Err(err).Str("name", x.Name).Msg("step-up not advertised")
 		}
 		maps.Copy(ext, stepUp)
 

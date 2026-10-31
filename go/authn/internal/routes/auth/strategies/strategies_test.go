@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,9 +62,19 @@ func TestOIDCStrategiesAdvertiseStepUp(t *testing.T) {
 	assert.Equal(t, "/oidc/stepup", ext["kc"]["stepUpPath"])
 	assert.Equal(t, "gold urn:kc:loa2", ext["kc"]["stepUpAcrValues"])
 	assert.Equal(t, "120", ext["kc"]["stepUpMaxAge"])
+	stepUp, err := url.Parse(ext["kc"]["stepUpAuthCodeURL"])
+	require.NoError(t, err)
+	login, err := url.Parse(ext["kc"]["authCodeURL"])
+	require.NoError(t, err)
+	assert.Equal(t, login.Host+login.Path, stepUp.Host+stepUp.Path)
+	for k, v := range login.Query() {
+		assert.Equal(t, v, stepUp.Query()[k], "login parameter %s kept", k)
+	}
+	assert.Equal(t, "gold urn:kc:loa2", stepUp.Query().Get("acr_values"))
+	assert.Equal(t, "120", stepUp.Query().Get("max_age"))
 
 	for _, name := range []string{"plain", "broken"} {
-		for _, k := range []string{"stepUpPath", "stepUpAcrValues", "stepUpMaxAge"} {
+		for _, k := range []string{"stepUpAuthCodeURL", "stepUpPath", "stepUpAcrValues", "stepUpMaxAge"} {
 			assert.NotContains(t, ext[name], k, "%s advertises no step-up", name)
 		}
 	}

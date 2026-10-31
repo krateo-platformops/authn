@@ -44,13 +44,15 @@ Returns a JSON array of `{kind, name?, graphics?, path, extensions?}`
   so the frontend can start the provider redirect (`strategies.go`, `forOIDC` and
   `forOAuth`).
 - An `oidc` entry whose OIDCConfig has a valid `spec.stepUp` also carries the step-up
-  hints (`oidc.StepUpExtensions`): `stepUpPath` (`/oidc/stepup`), `stepUpAcrValues`
-  (the `acrValues`, space-separated) and `stepUpMaxAge` (`maxAge` in seconds). The
-  portal starts a step-up from `authCodeURL` plus `&acr_values=<stepUpAcrValues>&max_age=<stepUpMaxAge>`,
-  then POSTs the code to `stepUpPath`. `max_age` makes the IdP re-authenticate a user
-  whose last authentication is too old, instead of authn refusing the step-up as
-  `StaleAuthentication`. A misconfigured `spec.stepUp` is not advertised and is logged
-  as a warning.
+  hints (`oidc.StepUpExtensions`): `stepUpAuthCodeURL` (the entry's `authCodeURL`
+  parsed, with `acr_values` and `max_age` set and every other parameter kept),
+  `stepUpPath` (`/oidc/stepup`), `stepUpAcrValues` (the `acrValues`, space-separated)
+  and `stepUpMaxAge` (`maxAge` in seconds). The portal redirects to
+  `stepUpAuthCodeURL` as is, then POSTs the code to `stepUpPath`; it never composes
+  the URL itself. `max_age` makes the IdP re-authenticate a user whose last
+  authentication is too old, instead of authn refusing the step-up as
+  `StaleAuthentication`. A misconfigured `spec.stepUp`, or an `authCodeURL` that isn't
+  an absolute URL, is not advertised and is logged as a warning.
 
 ### The login response contract
 
