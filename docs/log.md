@@ -14,6 +14,12 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — The OIDC `authCodeURL` scope has no trailing space
+
+With an empty `additionalScopes`, `authCodeURL` sent `scope=openid email profile ` with a
+trailing space. Keycloak accepts it, but it isn't a well-formed space-separated scope
+list. The scope is now normalized: single spaces, nothing leading or trailing.
+
 ## 2026-10-31 — `GET /info` is removed
 
 `GET /info?name=<user>` returned the stored `AuthInfo` of an identity. No caller exists:
