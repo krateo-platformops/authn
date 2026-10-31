@@ -16,22 +16,14 @@ import (
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
-	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
 	"github.com/krateo-platformops/authn/internal/leader"
 	"github.com/krateo-platformops/authn/internal/middlewares/cors"
 	"github.com/krateo-platformops/authn/internal/routes"
-	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
-	"github.com/krateo-platformops/authn/internal/routes/auth/ldap"
-	"github.com/krateo-platformops/authn/internal/routes/auth/oauth"
-	"github.com/krateo-platformops/authn/internal/routes/auth/oidc"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
-	"github.com/krateo-platformops/authn/internal/routes/auth/strategies"
 	"github.com/krateo-platformops/authn/internal/routes/health"
-	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/authn/internal/uuid"
-	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -197,95 +189,22 @@ func main() {
 
 	healthy := int32(0)
 
-	all := []routes.Route{}
-	all = append(all, strategies.List(cfg))
-	all = append(all, health.Check(&healthy, Version, serviceName))
-	all = append(all, jwks.Endpoint(&privateKey.PublicKey, *jwtKeyID))
-
-	all = append(all, basic.Login(cfg, basic.LoginOptions{
-		KubeconfigGenerator: gen,
-		JwtDuration:         *certExpiresIn,
-		JwtPrivateKey:       privateKey,
-		JwtKeyID:            *jwtKeyID,
-	}))
-
-	// Kubernetes intra-service auth: backend services exchange their own (audience-bound)
-	// ServiceAccount token (validated via TokenReview) for an authn JWT + clientconfig.
-	all = append(all, serviceaccount.Login(cfg, serviceaccount.LoginOptions{
-		KubeconfigGenerator: gen,
-		JwtDuration:         *certExpiresIn,
-		JwtPrivateKey:       privateKey,
-		JwtKeyID:            *jwtKeyID,
-		Audience:            *serviceAccountAudience,
-	}))
-
-	all = append(all, ldap.Login(cfg, ldap.LoginOptions{
-		KubeconfigGenerator: gen,
-		JwtDuration:         *certExpiresIn,
-		JwtPrivateKey:       privateKey,
-		JwtKeyID:            *jwtKeyID,
-	}))
-
-	accessToken, err := jwtutil.CreateToken(jwtutil.CreateTokenOptions{
-		Username:   *authnUsername,
-		Groups:     []string{"authn"},
-		KeyID:      *jwtKeyID,
-		PrivateKey: privateKey,
-		Duration:   time.Hour * 8760, // 1 year,
+	all, err := buildRoutes(routeOptions{
+		RestConfig:             cfg,
+		Generator:              gen,
+		PrivateKey:             privateKey,
+		KeyID:                  *jwtKeyID,
+		JwtDuration:            *certExpiresIn,
+		ServiceAccountAudience: *serviceAccountAudience,
+		SelfUsername:           *authnUsername,
+		SnowplowURL:            *snowplowURL,
+		Healthy:                &healthy,
+		Version:                Version,
+		ServiceName:            serviceName,
 	})
 	if err != nil {
-		log.Fatal().Err(err).Msgf("cannot create jwt token for %s", *authnUsername)
+		log.Fatal().Err(err).Msg("building routes")
 	}
-
-	all = append(all, oauth.Login(
-		xcontext.BuildContext(context.Background(),
-			xcontext.WithAccessToken(accessToken),
-			func(ctx context.Context) context.Context {
-				ctx = context.WithValue(ctx,
-					restaction.RestActionContextKey("username"), *authnUsername)
-				return context.WithValue(ctx,
-					restaction.RestActionContextKey("snowplowURL"), *snowplowURL)
-			},
-		), cfg, oauth.LoginOptions{
-			KubeconfigGenerator: gen,
-			JwtDuration:         *certExpiresIn,
-			JwtPrivateKey:       privateKey,
-			JwtKeyID:            *jwtKeyID,
-		}))
-
-	all = append(all, oidc.Login(
-		xcontext.BuildContext(context.Background(),
-			xcontext.WithAccessToken(accessToken),
-			func(ctx context.Context) context.Context {
-				ctx = context.WithValue(ctx,
-					restaction.RestActionContextKey("username"), *authnUsername)
-				return context.WithValue(ctx,
-					restaction.RestActionContextKey("snowplowURL"), *snowplowURL)
-			},
-		), cfg, oidc.LoginOptions{
-			KubeconfigGenerator: gen,
-			JwtDuration:         *certExpiresIn,
-			JwtPrivateKey:       privateKey,
-			JwtKeyID:            *jwtKeyID,
-		}))
-
-	// Step-up (#49): a short-lived krateo:loa:2 credential for an OIDC login
-	// that proves a higher assurance level. Same snowplow context as the
-	// login, for the RESTAction enrichment they share.
-	all = append(all, oidc.StepUp(
-		xcontext.BuildContext(context.Background(),
-			xcontext.WithAccessToken(accessToken),
-			func(ctx context.Context) context.Context {
-				ctx = context.WithValue(ctx,
-					restaction.RestActionContextKey("username"), *authnUsername)
-				return context.WithValue(ctx,
-					restaction.RestActionContextKey("snowplowURL"), *snowplowURL)
-			},
-		), cfg, oidc.StepUpOptions{
-			KubeconfigGenerator: gen,
-			JwtPrivateKey:       privateKey,
-			JwtKeyID:            *jwtKeyID,
-		}))
 
 	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
 	// startup so the cause is visible before the first user hits it.

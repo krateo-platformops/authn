@@ -39,6 +39,10 @@ user info), optional enrichment for OIDC.
 
 All paths are **literal** (exact match, no trailing slash, wrong verb → `405`);
 default port `8082`.
+The table is the whole surface: `TestPublicSurface` (`go/authn/routes_test.go`) pins it, so
+a new route fails CI until it is reviewed and added. The same test sends every route the
+inputs a caller without valid credentials can send, and fails if any answer carries key
+material, a stored credential or a secret, or if authn mints a credential.
 
 | Method | Path | Purpose |
 |---|---|---|
