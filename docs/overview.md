@@ -41,7 +41,7 @@ contract is [behavior.md](./behavior.md). This page is the distilled platform vi
 - **Mints the identity**: every successful login creates a Kubernetes
   `CertificateSigningRequest` (signer `kubernetes.io/kube-apiserver-client`),
   self-approves it, and returns the signed cert inside a ready-to-use kubeconfig;
-  the cert/cluster info is also persisted as a Secret and readable via `GET /info`.
+  the credential is also persisted as a Secret, which in-cluster consumers read under RBAC.
 
 ## The login path
 

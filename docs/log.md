@@ -14,6 +14,13 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — `GET /info` is removed
+
+`GET /info?name=<user>` returned the stored `AuthInfo` of an identity. No caller exists:
+every team that owns a consumer of authn checked its code, charts, scripts and docs, and
+none calls it. Credentials are read in-cluster from the `<user>-clientconfig` Secrets,
+under RBAC, so the route is removed, together with the storage layer's read path that only
+it used. Requests to `/info` now get `404`.
 ## 2026-10-31 — The OIDC `authCodeURL` state is printable; Keycloak refused 1 login in 8
 
 `authCodeURL` built `state` from 32 raw random bytes. The URL therefore carried binary
