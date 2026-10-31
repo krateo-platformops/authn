@@ -122,8 +122,10 @@ spec:
                   acrValues:
                     description: |-
                       AcrValues are the ID token `acr` values that prove level of assurance
-                      2. A step-up whose acr is not listed is refused.
+                      2. A step-up whose acr is not listed is refused. Each value is
+                      non-empty and has no whitespace: acr_values is space-separated.
                     items:
+                      pattern: ^\S+$
                       type: string
                     minItems: 1
                     type: array

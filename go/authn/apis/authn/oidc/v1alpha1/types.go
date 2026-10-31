@@ -46,8 +46,10 @@ type OIDCConfigSpec struct {
 // OIDCStepUp configures step-up logins (#49).
 type OIDCStepUp struct {
 	// AcrValues are the ID token `acr` values that prove level of assurance
-	// 2. A step-up whose acr is not listed is refused.
+	// 2. A step-up whose acr is not listed is refused. Each value is
+	// non-empty and has no whitespace: acr_values is space-separated.
 	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:items:Pattern=`^\S+$`
 	AcrValues []string `json:"acrValues"`
 
 	// MaxAge is how long ago the user may have authenticated (`auth_time`)

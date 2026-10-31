@@ -2,6 +2,7 @@ package strategies
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"os"
 
@@ -63,7 +64,7 @@ func (r *strategiesRoute) Handler() http.HandlerFunc {
 			}
 		}
 
-		all, err := r.forOIDC()
+		all, err := r.forOIDC(log)
 		if err == nil {
 			list = append(list, all...)
 		} else {
@@ -104,7 +105,7 @@ func (r *strategiesRoute) countBasicAuthUsers() (int, error) {
 	return len(all), nil
 }
 
-func (r *strategiesRoute) forOIDC() ([]strategy, error) {
+func (r *strategiesRoute) forOIDC(log zerolog.Logger) ([]strategy, error) {
 	all, err := resolvers.OIDCConfigList(r.rc)
 	if err != nil {
 		return []strategy{}, err
@@ -119,15 +120,24 @@ func (r *strategiesRoute) forOIDC() ([]strategy, error) {
 		if x.Spec.Graphics == nil {
 			x.Spec.Graphics = getDefaultGraphicsObject("OIDC")
 		}
+		ext := map[string]string{
+			"authCodeURL": x.Spec.AuthorizationURL,
+			"redirectURL": x.Spec.RedirectURI,
+		}
+		// Step-up hints, so the portal can build the step-up authorization
+		// request from the OIDCConfig instead of hardcoding IdP values.
+		stepUp, err := authoidc.StepUpExtensions(x.Spec.StepUp)
+		if err != nil {
+			log.Warn().Err(err).Str("name", x.Name).Msg("step-up not advertised: spec.stepUp is misconfigured")
+		}
+		maps.Copy(ext, stepUp)
+
 		res[i] = strategy{
-			Kind:     "oidc",
-			Path:     authoidc.Path,
-			Name:     x.Name,
-			Graphics: x.Spec.Graphics,
-			Extensions: map[string]string{
-				"authCodeURL": x.Spec.AuthorizationURL,
-				"redirectURL": x.Spec.RedirectURI,
-			},
+			Kind:       "oidc",
+			Path:       authoidc.Path,
+			Name:       x.Name,
+			Graphics:   x.Spec.Graphics,
+			Extensions: ext,
 		}
 	}
 	return res, nil

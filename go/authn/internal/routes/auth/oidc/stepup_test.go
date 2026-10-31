@@ -63,6 +63,11 @@ func TestCheckStepUp(t *testing.T) {
 			cfg: &stepUpConfig{maxAge: time.Minute, ttl: 15 * time.Minute}},
 		{name: "zero maxAge", tok: fresh, code: 500, cause: CauseStepUpMisconfigured,
 			cfg: &stepUpConfig{acrValues: []string{"gold"}, ttl: 15 * time.Minute}},
+		// An empty acr value would grant a step-up to an ID token with no acr.
+		{name: "empty acr value", tok: idToken{authTime: now}, code: 500, cause: CauseStepUpMisconfigured,
+			cfg: &stepUpConfig{acrValues: []string{"gold", ""}, maxAge: time.Minute, ttl: 15 * time.Minute}},
+		{name: "acr value with a space", tok: fresh, code: 500, cause: CauseStepUpMisconfigured,
+			cfg: &stepUpConfig{acrValues: []string{"gold silver"}, maxAge: time.Minute, ttl: 15 * time.Minute}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,6 +81,36 @@ func TestCheckStepUp(t *testing.T) {
 			assert.Equal(t, tc.code, ce.Code)
 			assert.Equal(t, tc.cause, ce.Cause)
 		})
+	}
+}
+
+func TestStepUpExtensions(t *testing.T) {
+	ext, err := StepUpExtensions(nil)
+	require.NoError(t, err)
+	assert.Nil(t, ext, "no spec.stepUp, nothing advertised")
+
+	ext, err = StepUpExtensions(&oidcv1alpha1.OIDCStepUp{AcrValues: []string{"gold", "urn:kc:loa2"}})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"stepUpPath":      "/oidc/stepup",
+		"stepUpAcrValues": "gold urn:kc:loa2",
+		"stepUpMaxAge":    "300",
+	}, ext, "defaults applied: maxAge 5m")
+
+	ext, err = StepUpExtensions(&oidcv1alpha1.OIDCStepUp{AcrValues: []string{"gold"}, MaxAge: &metav1.Duration{Duration: 90 * time.Second}})
+	require.NoError(t, err)
+	assert.Equal(t, "90", ext["stepUpMaxAge"])
+
+	for name, spec := range map[string]*oidcv1alpha1.OIDCStepUp{
+		"no acr values":       {},
+		"empty acr":           {AcrValues: []string{""}},
+		"ttl too short":       {AcrValues: []string{"gold"}, TTL: &metav1.Duration{Duration: time.Minute}},
+		"non-positive maxAge": {AcrValues: []string{"gold"}, MaxAge: &metav1.Duration{}},
+	} {
+		ext, err := StepUpExtensions(spec)
+		var ce status.CauseError
+		assert.True(t, errors.As(err, &ce) && ce.Cause == CauseStepUpMisconfigured, "%s: want StepUpMisconfigured, got %v", name, err)
+		assert.Nil(t, ext, "%s: a misconfigured step-up is never advertised", name)
 	}
 }
 

@@ -8,7 +8,10 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
 
 	oidcv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oidc/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
@@ -73,6 +76,24 @@ func resolveStepUp(spec *oidcv1alpha1.OIDCStepUp) *stepUpConfig {
 	return cfg
 }
 
+// validate refuses a spec.stepUp that can never grant a step-up correctly.
+// An acr value must be non-empty (an empty one would match an ID token with
+// no acr) and contain no whitespace (acr_values is space-separated).
+func (cfg *stepUpConfig) validate() error {
+	if len(cfg.acrValues) == 0 || cfg.maxAge <= 0 || cfg.ttl < MinStepUpTTL {
+		return status.Failed(CauseStepUpMisconfigured, fmt.Errorf(
+			"spec.stepUp needs acrValues, a positive maxAge and a ttl of at least %s (got %d acrValues, maxAge %s, ttl %s)",
+			MinStepUpTTL, len(cfg.acrValues), cfg.maxAge, cfg.ttl))
+	}
+	for _, v := range cfg.acrValues {
+		if v == "" || strings.ContainsFunc(v, unicode.IsSpace) {
+			return status.Failed(CauseStepUpMisconfigured, fmt.Errorf(
+				"spec.stepUp.acrValues has %q: an acr value must be non-empty and contain no whitespace", v))
+		}
+	}
+	return nil
+}
+
 // checkStepUp decides whether a validated ID token proves a step-up:
 // - step-up is enabled for the provider;
 // - its acr is one of the configured values;
@@ -81,10 +102,8 @@ func checkStepUp(cfg *stepUpConfig, tok idToken, now time.Time) error {
 	if cfg == nil {
 		return status.Refused(CauseStepUpNotEnabled, errors.New("step-up is not enabled for this OIDCConfig (spec.stepUp)"))
 	}
-	if len(cfg.acrValues) == 0 || cfg.maxAge <= 0 || cfg.ttl < MinStepUpTTL {
-		return status.Failed(CauseStepUpMisconfigured, fmt.Errorf(
-			"spec.stepUp needs acrValues, a positive maxAge and a ttl of at least %s (got %d acrValues, maxAge %s, ttl %s)",
-			MinStepUpTTL, len(cfg.acrValues), cfg.maxAge, cfg.ttl))
+	if err := cfg.validate(); err != nil {
+		return err
 	}
 	if !slices.Contains(cfg.acrValues, tok.acr) {
 		return status.Refused(CauseInsufficientAssurance, fmt.Errorf("ID token acr %q is not one of %q", tok.acr, cfg.acrValues))
@@ -96,6 +115,39 @@ func checkStepUp(cfg *stepUpConfig, tok idToken, now time.Time) error {
 		return status.Refused(CauseStaleAuthentication, fmt.Errorf("authenticated %s ago, more than the %s step-up allows", age.Truncate(time.Second), cfg.maxAge))
 	}
 	return nil
+}
+
+// The /strategies extensions that tell the portal how to ask for a step-up
+// with an OIDCConfig. They're set only when spec.stepUp is set and valid.
+const (
+	// ExtStepUpPath is where to POST the authorization code: /oidc/stepup.
+	ExtStepUpPath = "stepUpPath"
+	// ExtStepUpAcrValues is the authorization request's acr_values: the
+	// configured acr values, space-separated.
+	ExtStepUpAcrValues = "stepUpAcrValues"
+	// ExtStepUpMaxAge is the authorization request's max_age, in seconds.
+	// It makes the IdP re-authenticate a user whose last authentication is
+	// older than authn accepts, instead of authn refusing it as
+	// StaleAuthentication.
+	ExtStepUpMaxAge = "stepUpMaxAge"
+)
+
+// StepUpExtensions returns the /strategies extensions for an OIDCConfig's
+// spec.stepUp: nil when step-up isn't enabled, an error when it's
+// misconfigured (a step-up would answer StepUpMisconfigured).
+func StepUpExtensions(spec *oidcv1alpha1.OIDCStepUp) (map[string]string, error) {
+	cfg := resolveStepUp(spec)
+	if cfg == nil {
+		return nil, nil
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		ExtStepUpPath:      StepUpPath,
+		ExtStepUpAcrValues: strings.Join(cfg.acrValues, " "),
+		ExtStepUpMaxAge:    strconv.FormatInt(int64(cfg.maxAge/time.Second), 10),
+	}, nil
 }
 
 type StepUpOptions struct {

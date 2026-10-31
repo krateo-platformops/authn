@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — `/strategies` tells the portal how to ask for a step-up
+
+The portal had no way to learn which OIDC providers support step-up, or which `acr_values`
+to request: those live in `OIDCConfig.spec.stepUp`, which only authn reads. An oidc entry
+whose `spec.stepUp` is valid now carries `extensions.stepUpPath`, `stepUpAcrValues` and
+`stepUpMaxAge`. The portal builds the step-up authorization request from them (sending
+`max_age` so the IdP re-authenticates instead of authn answering `StaleAuthentication`),
+with no IdP values hardcoded. The keys are added only when step-up is enabled, so existing
+clients see no change. `spec.stepUp.acrValues` now also refuses an empty value, which would
+have matched an ID token with no `acr` at all, and a value containing whitespace, which
+can't be sent in the space-separated `acr_values`. Both answer `StepUpMisconfigured`.
+
 ## 2026-10-31 — A login that can't sign its token answers 500, never an empty 200 (#48)
 
 When the JWT couldn't be signed (for example, an empty key ID), `encode.Success` returned

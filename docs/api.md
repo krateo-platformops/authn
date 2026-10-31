@@ -42,7 +42,7 @@ default port `8082`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/strategies` | List configured strategies for the login page: one entry per config CR (`basic` appears only if ≥1 `User` exists), with `graphics` defaults filled and `extensions.authCodeURL`/`redirectURL` for oauth/oidc. The `serviceaccount` strategy is machine-to-machine and never listed. |
+| GET | `/strategies` | List configured strategies for the login page: one entry per config CR (`basic` appears only if ≥1 `User` exists), with `graphics` defaults filled and `extensions.authCodeURL`/`redirectURL` for oauth/oidc. An oidc entry with a valid `spec.stepUp` adds `extensions.stepUpPath`, `stepUpAcrValues` (space-separated, for `acr_values`) and `stepUpMaxAge` (seconds, for `max_age`). The `serviceaccount` strategy is machine-to-machine and never listed. |
 | GET | `/basic/login` | `Authorization: Basic` → login response. `?d` streams the kubeconfig as a file download instead. |
 | POST | `/ldap/login?name=<LDAPConfig>` | JSON body `{"username","password"}` → login response. |
 | GET | `/oauth/login?name=<OAuthConfig>` | `X-Auth-Code: <code>` header → code exchange → RESTAction-compiled identity → login response. |
@@ -142,7 +142,7 @@ Every `/oidc/login` failure above applies, plus:
 | `StepUpNotEnabled` | 403 | The OIDCConfig has no `spec.stepUp` |
 | `InsufficientAssurance` | 403 | The ID token's `acr` isn't in `spec.stepUp.acrValues` |
 | `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: re-authenticate (e.g. `prompt=login` / `max_age`) |
-| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
+| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, an empty acr value or one containing whitespace, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
 | `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued |
 
 Full request/response semantics, per-strategy validation rules and error mapping:
