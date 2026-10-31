@@ -43,6 +43,11 @@ Returns a JSON array of `{kind, name?, graphics?, path, extensions?}`
 - `oidc` and `oauth` entries carry `extensions.authCodeURL` / `extensions.redirectURL`
   so the frontend can start the provider redirect (`strategies.go`, `forOIDC` and
   `forOAuth`).
+- The `state` in an oidc `authCodeURL` is random per `/strategies` call. authn never
+  stores or checks it: neither `/oidc/login` nor `/oidc/stepup` receives `state`. A
+  client that wants CSRF protection sets its own `state` (e.g.
+  `URL.searchParams.set('state', …)`, never by cutting the URL) and verifies it on the
+  redirect back.
 - An `oidc` entry whose OIDCConfig has a valid `spec.stepUp` also carries the step-up
   hints (`oidc.StepUpExtensions`): `stepUpAuthCodeURL` (the entry's `authCodeURL`
   parsed, with `acr_values` and `max_age` set and every other parameter kept),
