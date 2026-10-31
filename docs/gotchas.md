@@ -44,6 +44,12 @@ garbage-collected by the apiserver within an hour. authn's own certificate renew
 doesn't use this path: it goes through plumbing's `signup`, which names the CSR
 `authn`, and its single writer is the Lease holder.
 
+## A certificate's notBefore is 5 minutes before its issue
+The Kubernetes CSR signer backdates `notBefore` by 5 minutes to absorb clock skew, so
+`notAfter - notBefore` is the granted lifetime **plus 5m**: a 20m step-up certificate
+reads as 25m. Measure a lifetime from issue time (the login JWT's `iat`) to `notAfter`,
+not from `notBefore`.
+
 ## A step-up credential lives beside the session, never in it
 `POST /oidc/stepup` writes `<user>-clientconfig-stepup`, never `<user>-clientconfig`.
 The name ends in `-stepup`, so no username's session Secret can collide with
