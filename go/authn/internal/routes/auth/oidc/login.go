@@ -91,13 +91,16 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		encode.Success(wri, dat, &encode.Extras{
+		if err := encode.Success(wri, dat, &encode.Extras{
 			UserInfo:      nfo,
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
 			CertNotAfter:  notAfter,
-		})
+		}); err != nil {
+			// Success has already answered with IssuanceFailed.
+			log.Err(err).Msg("access token creation failure")
+		}
 	}
 }
 

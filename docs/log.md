@@ -14,6 +14,14 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — A login that can't sign its token answers 500, never an empty 200 (#48)
+
+When the JWT couldn't be signed (for example, an empty key ID), `encode.Success` returned
+before writing anything. The basic, ldap, oauth and oidc logins ignored the error, so the
+caller got an empty `200`: a "successful" login with no body and no token. `encode.Success`
+now answers the request itself in that case, with `500` and cause `IssuanceFailed`. Every
+current and future login is covered, and each handler logs the error.
+
 ## 2026-10-30 — Step-up login (#49)
 
 `POST /oidc/stepup` issues a short-lived credential carrying `krateo:loa:2` to an OIDC

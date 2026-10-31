@@ -100,21 +100,39 @@ func TestSuccessClampsTokenToCertificate(t *testing.T) {
 		"the token must expire with the certificate, not 24h later")
 }
 
-// A token that cannot be signed must leave the response untouched, so the
-// handler can still answer with a failure instead of an empty 200.
-func TestSuccessWritesNothingWhenSigningFails(t *testing.T) {
+// A token that cannot be signed must never produce an empty 200 (#48):
+// Success answers the request itself with a 500 Status whose cause is
+// IssuanceFailed, and returns the error so the caller can log it.
+func TestSuccessAnswersIssuanceFailedWhenSigningFails(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	err = Success(rec, nil, &Extras{
+	err = Success(rec, []byte(`{"kind":"Config"}`), &Extras{
 		UserInfo:      userinfo.NewDefaultUser("cdc", "1", []string{"g"}, userinfo.Extensions{}),
 		JwtDuration:   time.Hour,
 		JwtPrivateKey: key,
 		JwtKeyID:      "", // the signer refuses an empty key ID
 	})
 	require.Error(t, err)
-	assert.False(t, rec.Flushed)
-	assert.Empty(t, rec.Header())
-	assert.Zero(t, rec.Body.Len())
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+	var out struct {
+		Kind    string `json:"kind"`
+		Reason  string `json:"reason"`
+		Details struct {
+			Causes []struct {
+				Reason  string `json:"reason"`
+				Message string `json:"message"`
+			} `json:"causes"`
+		} `json:"details"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), rec.Body.String())
+	assert.Equal(t, "Status", out.Kind)
+	assert.Equal(t, "InternalError", out.Reason)
+	require.Len(t, out.Details.Causes, 1)
+	assert.Equal(t, "IssuanceFailed", out.Details.Causes[0].Reason)
+	assert.Contains(t, out.Details.Causes[0].Message, "issuing access token")
+	assert.NotContains(t, rec.Body.String(), "Config", "no kubeconfig in a failure")
 }

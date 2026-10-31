@@ -3,10 +3,12 @@ package encode
 import (
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 )
 
@@ -50,12 +52,27 @@ func tokenDuration(requested time.Duration, notAfter time.Time) time.Duration {
 	return requested
 }
 
-// Success writes the login response. It builds the whole body (signing the
-// token) before writing anything, so a non-nil error means nothing was sent
-// and the caller must still reply with a failure. Once the body is built, a
+// Success writes the login response. It builds the whole body, signing the
+// token, before writing anything. If that fails, it answers the request itself
+// with a 500 Status whose cause is IssuanceFailed, and returns the error so
+// the caller can log it. Every login therefore answers, and none can send an
+// empty 200 (#48). The caller must not write again. Once the body is built, a
 // failure to write it means the client is gone; there is no one left to tell,
 // so it is not returned.
-func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
+func Success(w http.ResponseWriter, dat []byte, extras *Extras) error {
+	body, err := successBody(dat, extras)
+	if err != nil {
+		Failure(w, status.FromError(status.Failed(status.CauseIssuanceFailed, fmt.Errorf("issuing access token: %w", err))))
+		return err
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(append(body, '\n'))
+	return nil
+}
+
+func successBody(dat []byte, extras *Extras) (_ []byte, err error) {
 	out := response{
 		Data: dat,
 	}
@@ -78,21 +95,13 @@ func Success(w http.ResponseWriter, dat []byte, extras *Extras) (err error) {
 					PrivateKey: extras.JwtPrivateKey,
 				})
 				if err != nil {
-					return err
+					return nil, err
 				}
 			}
 		}
 	}
 
-	body, err := json.Marshal(&out)
-	if err != nil {
-		return err
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(append(body, '\n'))
-	return nil
+	return json.Marshal(&out)
 }
 
 type user struct {

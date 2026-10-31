@@ -75,6 +75,8 @@ func (r *infoRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		encode.Success(wri, dat, nil)
+		if err := encode.Success(wri, dat, nil); err != nil {
+			log.Err(err).Str("name", name).Msg("unable to encode authinfo response")
+		}
 	}
 }

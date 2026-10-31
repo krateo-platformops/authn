@@ -126,6 +126,10 @@ type StatusDetails struct {
 // renamed.
 type CauseType string
 
+// CauseIssuanceFailed is shared by every login: the caller was authenticated,
+// but authn could not issue its credential or sign its token (500).
+const CauseIssuanceFailed CauseType = "IssuanceFailed"
+
 // StatusCause mirrors Kubernetes' metav1.StatusCause.
 type StatusCause struct {
 	Type    CauseType `json:"reason"`

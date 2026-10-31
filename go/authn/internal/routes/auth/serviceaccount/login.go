@@ -121,9 +121,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			CertNotAfter:  notAfter,
 		})
 		if err != nil {
-			// Success wrote nothing, so the caller still gets an answer.
+			// Success has already answered with IssuanceFailed.
 			log.Err(err).Msg("access token creation failure")
-			encode.Failure(wri, status.FromError(status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing access token: %w", err))))
 		}
 	}
 }
@@ -237,7 +236,7 @@ const (
 	// Failures of authn (500).
 	CauseTokenReviewFailed   status.CauseType = "TokenReviewFailed"
 	CauseMappingLookupFailed status.CauseType = "MappingLookupFailed"
-	CauseIssuanceFailed      status.CauseType = "IssuanceFailed"
+	CauseIssuanceFailed                       = status.CauseIssuanceFailed
 )
 
 var errMissingBearer = errors.New("missing bearer token")
