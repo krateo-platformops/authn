@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +64,11 @@ func TestCheckStepUp(t *testing.T) {
 			cfg: &stepUpConfig{maxAge: time.Minute, ttl: 15 * time.Minute}},
 		{name: "zero maxAge", tok: fresh, code: 500, cause: CauseStepUpMisconfigured,
 			cfg: &stepUpConfig{acrValues: []string{"gold"}, ttl: 15 * time.Minute}},
+		// An empty acr value would grant a step-up to an ID token with no acr.
+		{name: "empty acr value", tok: idToken{authTime: now}, code: 500, cause: CauseStepUpMisconfigured,
+			cfg: &stepUpConfig{acrValues: []string{"gold", ""}, maxAge: time.Minute, ttl: 15 * time.Minute}},
+		{name: "acr value with a space", tok: fresh, code: 500, cause: CauseStepUpMisconfigured,
+			cfg: &stepUpConfig{acrValues: []string{"gold silver"}, maxAge: time.Minute, ttl: 15 * time.Minute}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,6 +82,59 @@ func TestCheckStepUp(t *testing.T) {
 			assert.Equal(t, tc.code, ce.Code)
 			assert.Equal(t, tc.cause, ce.Cause)
 		})
+	}
+}
+
+func TestStepUpExtensions(t *testing.T) {
+	const login = "https://idp.example/auth?client_id=portal&redirect_uri=https%3A%2F%2Fportal.example%2Fauth&response_type=code&scope=openid+email&state=xyz"
+
+	ext, err := StepUpExtensions(nil, login)
+	require.NoError(t, err)
+	assert.Nil(t, ext, "no spec.stepUp, nothing advertised")
+
+	ext, err = StepUpExtensions(&oidcv1alpha1.OIDCStepUp{AcrValues: []string{"gold", "urn:kc:loa2"}}, login)
+	require.NoError(t, err)
+	assert.Equal(t, "/oidc/stepup", ext["stepUpPath"])
+	assert.Equal(t, "gold urn:kc:loa2", ext["stepUpAcrValues"])
+	assert.Equal(t, "300", ext["stepUpMaxAge"], "default maxAge 5m")
+	assert.Len(t, ext, 4)
+
+	// The step-up URL is the login URL with acr_values and max_age added:
+	// every login parameter survives, and the values are encoded.
+	got, err := url.Parse(ext["stepUpAuthCodeURL"])
+	require.NoError(t, err)
+	assert.Equal(t, "https://idp.example/auth", got.Scheme+"://"+got.Host+got.Path)
+	want, _ := url.ParseQuery("client_id=portal&redirect_uri=https%3A%2F%2Fportal.example%2Fauth&response_type=code&scope=openid+email&state=xyz")
+	want.Set("acr_values", "gold urn:kc:loa2")
+	want.Set("max_age", "300")
+	assert.Equal(t, want, got.Query())
+	assert.Contains(t, ext["stepUpAuthCodeURL"], "acr_values=gold+urn%3Akc%3Aloa2")
+
+	// A login URL that already carries max_age gets authn's.
+	ext, err = StepUpExtensions(&oidcv1alpha1.OIDCStepUp{AcrValues: []string{"gold"}, MaxAge: &metav1.Duration{Duration: 90 * time.Second}},
+		"https://idp.example/auth?client_id=portal&max_age=9999")
+	require.NoError(t, err)
+	assert.Equal(t, "90", ext["stepUpMaxAge"])
+	got, err = url.Parse(ext["stepUpAuthCodeURL"])
+	require.NoError(t, err)
+	assert.Equal(t, []string{"90"}, got.Query()["max_age"])
+
+	for name, spec := range map[string]*oidcv1alpha1.OIDCStepUp{
+		"no acr values":       {},
+		"empty acr":           {AcrValues: []string{""}},
+		"ttl too short":       {AcrValues: []string{"gold"}, TTL: &metav1.Duration{Duration: time.Minute}},
+		"non-positive maxAge": {AcrValues: []string{"gold"}, MaxAge: &metav1.Duration{}},
+	} {
+		ext, err := StepUpExtensions(spec, login)
+		var ce status.CauseError
+		assert.True(t, errors.As(err, &ce) && ce.Cause == CauseStepUpMisconfigured, "%s: want StepUpMisconfigured, got %v", name, err)
+		assert.Nil(t, ext, "%s: a misconfigured step-up is never advertised", name)
+	}
+
+	for _, bad := range []string{"", "/auth?client_id=portal", "://bad"} {
+		ext, err := StepUpExtensions(&oidcv1alpha1.OIDCStepUp{AcrValues: []string{"gold"}}, bad)
+		assert.Error(t, err, "authCodeURL %q", bad)
+		assert.Nil(t, ext, "authCodeURL %q: nothing advertised", bad)
 	}
 }
 

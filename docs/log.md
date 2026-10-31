@@ -14,6 +14,19 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — `/strategies` tells the portal how to ask for a step-up
+
+The portal had no way to learn which OIDC providers support step-up, or which `acr_values`
+to request: those live in `OIDCConfig.spec.stepUp`, which only authn reads. An oidc entry
+whose `spec.stepUp` is valid now carries `extensions.stepUpAuthCodeURL`, the complete
+step-up authorization request, plus `stepUpPath`, `stepUpAcrValues` and `stepUpMaxAge`.
+authn builds the URL (the login `authCodeURL` with `acr_values` and `max_age` set, so the
+IdP re-authenticates instead of authn answering `StaleAuthentication`), because the portal
+composing it would stack string operations on a URL whose shape it doesn't own. No IdP
+values are hardcoded in the portal. The keys are added only when step-up is enabled, so existing
+clients see no change. `spec.stepUp.acrValues` now also refuses an empty value, which would
+have matched an ID token with no `acr` at all, and a value containing whitespace, which
+can't be sent in the space-separated `acr_values`. Both answer `StepUpMisconfigured`.
 ## 2026-10-31 — The OIDC `authCodeURL` state is printable; Keycloak refused 1 login in 8
 
 `authCodeURL` built `state` from 32 raw random bytes. The URL therefore carried binary

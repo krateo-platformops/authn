@@ -57,6 +57,18 @@ another username's step-up Secret, and listings by the `-clientconfig` suffix (l
 the identity backfill) skip it. It is not renewed: when it expires, the user steps up
 again.
 
+## An IdP can answer a step-up from SSO with an old `auth_time`
+`acr_values` alone doesn't make the IdP re-authenticate. Keycloak's level-2 condition
+has its own max age: when it is longer than `spec.stepUp.maxAge`, a step-up within it
+completes silently from the SSO session and returns the earlier `auth_time`, and authn
+refuses it as `StaleAuthentication`. Send `max_age=<maxAge in seconds>` on every step-up
+request, not only after a refusal. `stepUpAuthCodeURL` in `/strategies` already carries it.
+On Keycloak, keep the level-2 condition's max age at 0 (or at most `maxAge`). Then an
+SSO step-up asks only for the second factor and returns a fresh `auth_time`. Verified on
+Keycloak 26.4: realm `acr.loa.map` `{"silver":1,"gold":2}`, a browser flow with
+conditional "Level of Authentication" subflows (level 1 password, level 2 OTP), and
+the default `acr` client scope.
+
 ## authn's own-identity work runs on the Lease holder only
 Issuing and renewing `authn-clientconfig`, and the identity backfill, run only on the
 replica holding the `authn-cert-renewal` Lease (`coordination.k8s.io`) in authn's

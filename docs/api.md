@@ -42,7 +42,7 @@ default port `8082`.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/strategies` | List configured strategies for the login page: one entry per config CR (`basic` appears only if ≥1 `User` exists), with `graphics` defaults filled and `extensions.authCodeURL`/`redirectURL` for oauth/oidc. The `serviceaccount` strategy is machine-to-machine and never listed. |
+| GET | `/strategies` | List configured strategies for the login page: one entry per config CR (`basic` appears only if ≥1 `User` exists), with `graphics` defaults filled and `extensions.authCodeURL`/`redirectURL` for oauth/oidc. An oidc entry with a valid `spec.stepUp` adds `extensions.stepUpAuthCodeURL` (the complete step-up authorization request: `authCodeURL` with `acr_values` and `max_age` set; redirect to it as is, after setting your own `state` if you check one: authn never checks `state`), `stepUpPath` (where to POST the code), and, for display, `stepUpAcrValues` (space-separated) and `stepUpMaxAge` (seconds). The `serviceaccount` strategy is machine-to-machine and never listed. |
 | GET | `/basic/login` | `Authorization: Basic` → login response. `?d` streams the kubeconfig as a file download instead. |
 | POST | `/ldap/login?name=<LDAPConfig>` | JSON body `{"username","password"}` → login response. |
 | GET | `/oauth/login?name=<OAuthConfig>` | `X-Auth-Code: <code>` header → code exchange → RESTAction-compiled identity → login response. |
@@ -141,8 +141,8 @@ Every `/oidc/login` failure above applies, plus:
 |---|---|---|
 | `StepUpNotEnabled` | 403 | The OIDCConfig has no `spec.stepUp` |
 | `InsufficientAssurance` | 403 | The ID token's `acr` isn't in `spec.stepUp.acrValues` |
-| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: re-authenticate (e.g. `prompt=login` / `max_age`) |
-| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
+| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: redo the step-up redirect. Send `max_age` on every step-up request (`stepUpAuthCodeURL` does), since an IdP may answer `acr_values` from SSO with an old `auth_time` |
+| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, an empty acr value or one containing whitespace, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
 | `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued |
 
 Full request/response semantics, per-strategy validation rules and error mapping:
