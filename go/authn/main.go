@@ -22,7 +22,6 @@ import (
 	"github.com/krateo-platformops/authn/internal/middlewares/cors"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
-	"github.com/krateo-platformops/authn/internal/routes/auth/info"
 	"github.com/krateo-platformops/authn/internal/routes/auth/ldap"
 	"github.com/krateo-platformops/authn/internal/routes/auth/oauth"
 	"github.com/krateo-platformops/authn/internal/routes/auth/oidc"
@@ -200,7 +199,6 @@ func main() {
 
 	all := []routes.Route{}
 	all = append(all, strategies.List(cfg))
-	all = append(all, info.Info(cfg))
 	all = append(all, health.Check(&healthy, Version, serviceName))
 	all = append(all, jwks.Endpoint(&privateKey.PublicKey, *jwtKeyID))
 

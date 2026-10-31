@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
@@ -78,9 +77,10 @@ type AuthInfo struct {
 	StepUp bool `json:"-"`
 }
 
+// AuthInfoStorage stores issued credentials. authn never reads one back over
+// HTTP: the Secrets are read in-cluster, under RBAC.
 type AuthInfoStorage interface {
 	Put(name string, nfo *AuthInfo) error
-	Get(name string) (*AuthInfo, error)
 }
 
 func Default(rc *rest.Config) AuthInfoStorage {
@@ -136,54 +136,4 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 	}
 
 	return secrets.Update(context.TODO(), st.rc, &sec)
-}
-
-func (st *secretStore) Get(name string) (*AuthInfo, error) {
-	ns, err := util.GetOperatorNamespace()
-	if err != nil {
-		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
-	}
-
-	sec, err := secrets.Get(context.TODO(), st.rc,
-		&core.SecretKeySelector{
-			Namespace: ns,
-			Name:      ClientConfigSecretName(name),
-		})
-	if err != nil {
-		return nil, err
-	}
-
-	nfo := &AuthInfo{}
-
-	crt, ok := sec.Data[ClientCertLabel]
-	if !ok {
-		return nfo, fmt.Errorf("%s not found (secret: %s, namespace:%s)", ClientCertLabel, name, ns)
-	}
-	nfo.CertData = string(crt)
-
-	key, ok := sec.Data[ClientKeyLabel]
-	if !ok {
-		return nfo, fmt.Errorf("%s not found (secret: %s, namespace:%s)", ClientKeyLabel, name, ns)
-	}
-	nfo.KeyData = string(key)
-
-	srv, ok := sec.Data[ServerUrlLabel]
-	if !ok {
-		return nfo, fmt.Errorf("%s not found (secret: %s, namespace:%s)", ServerUrlLabel, name, ns)
-	}
-	nfo.Server = string(srv)
-
-	prx, ok := sec.Data[ProxyUrlLabel]
-	if !ok {
-		return nfo, fmt.Errorf("%s not found (secret: %s, namespace:%s)", ProxyUrlLabel, name, ns)
-	}
-	nfo.ProxyURL = string(prx)
-
-	ca, ok := sec.Data[CALabel]
-	if !ok {
-		return nfo, fmt.Errorf("%s not found (secret: %s, namespace:%s)", CALabel, name, ns)
-	}
-	nfo.CAData = string(ca)
-
-	return nfo, nil
 }

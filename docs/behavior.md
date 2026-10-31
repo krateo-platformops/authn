@@ -21,7 +21,6 @@ Every route is registered in `main.go:169-233` and implements `routes.Route`.
 | Method | Path            | Purpose | Source |
 | ------ | --------------- | ------- | ------ |
 | GET    | `/strategies`   | List configured login strategies (for the frontend login page) | `internal/routes/auth/strategies/strategies.go` |
-| GET    | `/info`         | Fetch a stored `AuthInfo` by `?name=` | `internal/routes/auth/info/info.go` |
 | GET    | `/health`       | Liveness/readiness; returns `{name,version}` once healthy, else `503` | `internal/routes/health/health.go` |
 | GET    | `/.well-known/jwks.json` | Public key set for verifying authn's RS256 JWTs ([jwt-jwks](./jwt-jwks.md)) | `internal/routes/jwks/jwks.go` |
 | GET    | `/basic/login`  | HTTP Basic login → kubeconfig (+JWT) | `internal/routes/auth/basic/login.go` |
@@ -245,11 +244,11 @@ The snowplow base URL comes from `SNOWPLOW_SERVICE_HOST`/`SNOWPLOW_SERVICE_PORT`
 `URL_SNOWPLOW` (default `http://snowplow.krateo-system.svc.cluster.local:8081`,
 `main.go:63-72`).
 
-### Stored AuthInfo (the `/info` endpoint)
-Each `Generate` persists an `AuthInfo` (cert/key/CA/server) via the storage layer —
-a Secret per identity (`config/build.go:150-160`,
-`config/storage/storage.go:47-74`); `/info?name=` reads it back (`info/info.go:45-80`).
-`name` is required (`400` otherwise).
+### Stored AuthInfo
+Each `Generate` persists an `AuthInfo` (cert/key/CA/server) via the storage layer:
+a Secret per identity (`config/build.go`, `config/storage/storage.go`). authn only
+writes it; in-cluster consumers such as snowplow read it under RBAC. No HTTP route
+returns it (`GET /info` was removed in 0.31.0).
 
 ### Identity annotations on `<username>-clientconfig`
 Every clientconfig Secret authn writes carries, besides the certificate's granted window

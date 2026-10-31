@@ -49,7 +49,6 @@ default port `8082`.
 | GET | `/oidc/login?name=<OIDCConfig>` | `X-Auth-Code: <code>` header, plus `X-Code-Verifier: <verifier>` when the authorization request used PKCE → code exchange → ID-token claims (UserInfo fallback) → login response. |
 | POST | `/oidc/stepup?name=<OIDCConfig>` | Step-up (#49). Same input as `/oidc/login`, from an authorization request with `acr_values`. If the ID token's `acr` is in `spec.stepUp.acrValues` and its `auth_time` is within `maxAge`, authn mints a `krateo:loa:2` credential into `<user>-clientconfig-stepup` and returns `accessToken` (groups include `krateo:loa:2`, expiry ≤ the certificate's), `user` and `groups`, with no `data`. The session credential is untouched. |
 | POST | `/serviceaccount/login` | `Authorization: Bearer <projected SA token, audience authn>` → TokenReview → allowlist mapping → login response. |
-| GET | `/info?name=<username>` | The stored `AuthInfo` (cert/key/CA/server) for a previously logged-in identity. |
 | GET | `/health` | `{name,version}` once serving, `503` otherwise (process lifecycle only). |
 
 ### The login response contract
