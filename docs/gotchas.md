@@ -32,11 +32,30 @@ chart installs and binds it (`helm/authn/templates/clusterrole.yaml`); if you de
 from the dev manifests instead, note `manifests/rbac.csr.yaml` binds namespace
 `demo-system` — bind authn's real ServiceAccount/namespace, or approval silently 403s.
 
-## Existing CSR is deleted, not reused
-If a CSR with the computed name already exists, the generator **deletes and
-recreates** it (`config/gen.go:41-55`) rather than reusing the prior cert. Repeated
-logins for the same user churn CSR objects; concurrent logins for the same user can
-race on that delete/recreate.
+## Every issuance gets its own CSR, deleted once used
+The CSR is created with `generateName: <username>-`, so the apiserver adds a random
+suffix (`kube.NewCertificateSigningRequest`). authn deletes it as soon as the
+certificate is read (`config/gen.go`). Concurrent logins for one user, such as a normal
+login and a step-up, or two browser tabs, each get their own request. Before #49 the
+CSR was named after the user and an existing one was deleted and recreated, so
+concurrent logins raced. When you look for a user's CSR, match the `<username>-`
+prefix, not the bare name. A CSR left behind (e.g. authn crashed mid-login) is
+garbage-collected by the apiserver within an hour. authn's own certificate renewal
+doesn't use this path: it goes through plumbing's `signup`, which names the CSR
+`authn`, and its single writer is the Lease holder.
+
+## A certificate's notBefore is 5 minutes before its issue
+The Kubernetes CSR signer backdates `notBefore` by 5 minutes to absorb clock skew, so
+`notAfter - notBefore` is the granted lifetime **plus 5m**: a 20m step-up certificate
+reads as 25m. Measure a lifetime from issue time (the login JWT's `iat`) to `notAfter`,
+not from `notBefore`.
+
+## A step-up credential lives beside the session, never in it
+`POST /oidc/stepup` writes `<user>-clientconfig-stepup`, never `<user>-clientconfig`.
+The name ends in `-stepup`, so no username's session Secret can collide with
+another username's step-up Secret, and listings by the `-clientconfig` suffix (like
+the identity backfill) skip it. It is not renewed: when it expires, the user steps up
+again.
 
 ## authn's own-identity work runs on the Lease holder only
 Issuing and renewing `authn-clientconfig`, and the identity backfill, run only on the

@@ -271,6 +271,24 @@ func main() {
 			JwtKeyID:            *jwtKeyID,
 		}))
 
+	// Step-up (#49): a short-lived krateo:loa:2 credential for an OIDC login
+	// that proves a higher assurance level. Same snowplow context as the
+	// login, for the RESTAction enrichment they share.
+	all = append(all, oidc.StepUp(
+		xcontext.BuildContext(context.Background(),
+			xcontext.WithAccessToken(accessToken),
+			func(ctx context.Context) context.Context {
+				ctx = context.WithValue(ctx,
+					restaction.RestActionContextKey("username"), *authnUsername)
+				return context.WithValue(ctx,
+					restaction.RestActionContextKey("snowplowURL"), *snowplowURL)
+			},
+		), cfg, oidc.StepUpOptions{
+			KubeconfigGenerator: gen,
+			JwtPrivateKey:       privateKey,
+			JwtKeyID:            *jwtKeyID,
+		}))
+
 	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
 	// startup so the cause is visible before the first user hits it.
 	if names, err := resolvers.OIDCConfigsWithoutIssuer(context.Background(), cfg); err != nil {

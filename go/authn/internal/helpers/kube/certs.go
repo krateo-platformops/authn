@@ -54,35 +54,22 @@ func NewCertificateRequest(key *rsa.PrivateKey, username string, groups []string
 	return enc, nil
 }
 
+// DeleteCertificateSigningRequest deletes a used CSR. CSR names are never
+// reused (see NewCertificateSigningRequest), so there is nothing to wait for.
 func DeleteCertificateSigningRequest(client kubernetes.Interface, name string) error {
 	err := client.CertificatesV1().CertificateSigningRequests().
 		Delete(context.Background(), name, metav1.DeleteOptions{})
-	if err != nil {
-		return err
+	if errors.IsNotFound(err) {
+		return nil
 	}
-
-	condFunc := func(ctx context.Context) (bool, error) {
-		_, err := client.CertificatesV1().CertificateSigningRequests().
-			Get(ctx, name, metav1.GetOptions{})
-		if errors.IsNotFound(err) {
-			return true, nil
-		}
-
-		return false, nil
-	}
-
-	ctx := context.Background()
-	err = wait.PollUntilContextTimeout(ctx, certificateWaitPollInternval, certificateWaitTimeout, true, condFunc)
-	if err != nil {
-		return fmt.Errorf("waiting for CSR certificate to be deleted: %w", err)
-	}
-	return nil
+	return err
 }
 
-func CreateCertificateSigningRequests(client kubernetes.Interface, csr *certv1.CertificateSigningRequest) error {
-	_, err := client.CertificatesV1().CertificateSigningRequests().
+// CreateCertificateSigningRequest creates csr and returns the stored object,
+// whose Name the apiserver generated (see NewCertificateSigningRequest).
+func CreateCertificateSigningRequest(client kubernetes.Interface, csr *certv1.CertificateSigningRequest) (*certv1.CertificateSigningRequest, error) {
+	return client.CertificatesV1().CertificateSigningRequests().
 		Create(context.Background(), csr, metav1.CreateOptions{})
-	return err
 }
 
 func ApproveCertificateSigningRequest(client kubernetes.Interface, csr *certv1.CertificateSigningRequest) error {
@@ -157,11 +144,15 @@ func Certificate(client kubernetes.Interface, name string) ([]byte, error) {
 	return csr.Status.Certificate, nil
 }
 
+// NewCertificateSigningRequest builds a CSR whose name the apiserver
+// generates from the username plus a random suffix. Every issuance gets its
+// own CSR, so concurrent logins of one user (a normal login and a step-up, or
+// two browser tabs) never touch each other's request.
 func NewCertificateSigningRequest(csr []byte, dur time.Duration, userID, username string) *certv1.CertificateSigningRequest {
 	durationSeconds := int32(dur.Seconds())
 	csrObject := &certv1.CertificateSigningRequest{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: username,
+			GenerateName: username + "-",
 			Annotations: map[string]string{
 				resourceAnnotationKey: userID,
 			},

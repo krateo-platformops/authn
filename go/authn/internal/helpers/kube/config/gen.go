@@ -10,7 +10,6 @@ import (
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/rs/zerolog"
-	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -39,26 +38,21 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 	// csr object from csr bytes
 	csr := kube.NewCertificateSigningRequest(req, o.duration, o.userID, o.username)
 
-	// create kubernetes csr object
-	err = kube.CreateCertificateSigningRequests(client, csr)
+	// create kubernetes csr object; its name is generated, so it can't clash
+	// with another issuance for the same user.
+	csr, err = kube.CreateCertificateSigningRequest(client, csr)
 	if err != nil {
-		if !errors.IsAlreadyExists(err) {
-			return "", "", nil, fmt.Errorf("creating CSR kubernetes object: %w", err)
-		}
-
-		l.Debug().Str("crs.name", csr.Name).Msg("certificate signing request already exists")
-
-		if err := kube.DeleteCertificateSigningRequest(client, csr.Name); err != nil {
-			return "", "", nil, fmt.Errorf("deleting existing CSR kubernetes object: %w", err)
-		}
-		l.Debug().Str("crs.name", csr.Name).Msg("existing certificate signing request deleted")
-
-		if err := kube.CreateCertificateSigningRequests(client, csr); err != nil {
-			return "", "", nil, fmt.Errorf("creating CSR kubernetes object: %w", err)
-		}
+		return "", "", nil, fmt.Errorf("creating CSR kubernetes object: %w", err)
 	}
-
 	l.Debug().Str("crs.name", csr.Name).Msg("created certificate signing request")
+
+	// The CSR is single-use: once the certificate is read, delete it rather
+	// than leave it for the apiserver's hourly garbage collection.
+	defer func() {
+		if err := kube.DeleteCertificateSigningRequest(client, csr.Name); err != nil {
+			l.Warn().Err(err).Str("crs.name", csr.Name).Msg("deleting used certificate signing request")
+		}
+	}()
 
 	// approve the csr
 	err = kube.ApproveCertificateSigningRequest(client, csr)

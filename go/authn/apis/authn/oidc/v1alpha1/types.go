@@ -31,10 +31,36 @@ type OIDCConfigSpec struct {
 	//+optional
 	AdditionalScopes string `json:"additionalScopes"`
 
+	// StepUp enables POST /oidc/stepup for this provider: a login that proves
+	// a higher assurance level (acr) gets a short-lived credential carrying
+	// the group krateo:loa:2. Without it, step-up is refused.
+	//+optional
+	StepUp *OIDCStepUp `json:"stepUp,omitempty"`
+
 	//+optional
 	RESTActionRef *core.ObjectRef `json:"restActionRef,omitempty"`
 	//+optional
 	Graphics *core.Graphics `json:"graphics,omitempty"`
+}
+
+// OIDCStepUp configures step-up logins (#49).
+type OIDCStepUp struct {
+	// AcrValues are the ID token `acr` values that prove level of assurance
+	// 2. A step-up whose acr is not listed is refused.
+	// +kubebuilder:validation:MinItems=1
+	AcrValues []string `json:"acrValues"`
+
+	// MaxAge is how long ago the user may have authenticated (`auth_time`)
+	// for a step-up to be granted. A long-lived SSO session at that level
+	// is not enough on its own. Default 5m.
+	//+optional
+	MaxAge *metav1.Duration `json:"maxAge,omitempty"`
+
+	// TTL is the requested lifetime of the step-up credential. It is never
+	// renewed. Default 15m. The Kubernetes CSR API's minimum is 10m, and a
+	// shorter TTL is refused.
+	//+optional
+	TTL *metav1.Duration `json:"ttl,omitempty"`
 }
 
 // +kubebuilder:object:root=true

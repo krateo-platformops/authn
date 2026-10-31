@@ -28,7 +28,7 @@ operator namespace** (`POD_NAMESPACE`).
 | `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`. `metadata.name` is the issued username. |
 | `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`. |
 | `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. |
-| `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `additionalScopes`, `restActionRef`, `graphics`. |
+| `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `additionalScopes`, `restActionRef`, `graphics`. |
 
 `graphics` (`icon`, `displayName`, `backgroundColor`, `textColor`) styles the
 frontend login button; `restActionRef` points at a snowplow RESTAction that compiles
@@ -47,6 +47,7 @@ default port `8082`.
 | POST | `/ldap/login?name=<LDAPConfig>` | JSON body `{"username","password"}` → login response. |
 | GET | `/oauth/login?name=<OAuthConfig>` | `X-Auth-Code: <code>` header → code exchange → RESTAction-compiled identity → login response. |
 | GET | `/oidc/login?name=<OIDCConfig>` | `X-Auth-Code: <code>` header, plus `X-Code-Verifier: <verifier>` when the authorization request used PKCE → code exchange → ID-token claims (UserInfo fallback) → login response. |
+| POST | `/oidc/stepup?name=<OIDCConfig>` | Step-up (#49). Same input as `/oidc/login`, from an authorization request with `acr_values`. If the ID token's `acr` is in `spec.stepUp.acrValues` and its `auth_time` is within `maxAge`, authn mints a `krateo:loa:2` credential into `<user>-clientconfig-stepup` and returns `accessToken` (groups include `krateo:loa:2`, expiry ≤ the certificate's), `user` and `groups`, with no `data`. The session credential is untouched. |
 | POST | `/serviceaccount/login` | `Authorization: Bearer <projected SA token, audience authn>` → TokenReview → allowlist mapping → login response. |
 | GET | `/info?name=<username>` | The stored `AuthInfo` (cert/key/CA/server) for a previously logged-in identity. |
 | GET | `/health` | `{name,version}` once serving, `503` otherwise (process lifecycle only). |
@@ -127,6 +128,18 @@ fails again), and `500` for an OIDCConfig authn can't validate against.
 
 Other OIDC failures, such as a rejected code or an unreachable token endpoint, are still
 a `500` without a cause.
+
+### `/oidc/stepup` failures
+
+Every `/oidc/login` failure above applies, plus:
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `StepUpNotEnabled` | 403 | The OIDCConfig has no `spec.stepUp` |
+| `InsufficientAssurance` | 403 | The ID token's `acr` isn't in `spec.stepUp.acrValues` |
+| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: re-authenticate (e.g. `prompt=login` / `max_age`) |
+| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
+| `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued |
 
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).

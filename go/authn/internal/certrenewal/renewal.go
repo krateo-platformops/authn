@@ -43,7 +43,6 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
-	"github.com/krateo-platformops/plumbing/kubeutil"
 	"github.com/krateo-platformops/plumbing/signup"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
@@ -138,7 +137,7 @@ func New(o Options) (*Renewer, error) {
 // SecretName is the clientconfig Secret an identity's credential is stored in —
 // the same name the login path and plumbing's signup derive.
 func SecretName(username string) string {
-	return fmt.Sprintf("%s-clientconfig", kubeutil.MakeDNS1123Compatible(username))
+	return storage.ClientConfigSecretName(username)
 }
 
 // SecretName is the clientconfig Secret this renewer keeps current.

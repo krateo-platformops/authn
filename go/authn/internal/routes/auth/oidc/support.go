@@ -21,6 +21,8 @@ import (
 )
 
 type oidcConfig struct {
+	// StepUp is nil when the OIDCConfig doesn't enable step-up.
+	StepUp           *stepUpConfig
 	DiscoveryURL     string
 	Issuer           string
 	AuthorizeURL     string
@@ -42,6 +44,12 @@ type TokenResponse struct {
 }
 
 type idToken struct {
+	// acr and authTime come from the validated ID token only, never from the
+	// RESTAction (updateConfig can't set them): they are what a step-up login
+	// proves.
+	acr      string
+	authTime time.Time
+
 	bearerToken       string
 	name              string
 	email             string
@@ -69,6 +77,7 @@ func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, 
 		ClientID:         cfg.Spec.ClientID,
 		AdditionalScopes: cfg.Spec.AdditionalScopes,
 		RESTActionRef:    cfg.Spec.RESTActionRef,
+		StepUp:           resolveStepUp(cfg.Spec.StepUp),
 	}
 
 	if ref := cfg.Spec.ClientSecret; ref != nil {
@@ -139,6 +148,11 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 
 	callUserInfo := false
 	var res idToken
+	res.acr, _ = claims["acr"].(string)
+	if at, ok := claims["auth_time"].(float64); ok {
+		res.authTime = time.Unix(int64(at), 0)
+	}
+
 	// Check if the values are in the map, if not, call the userinfo endpoint
 	if value, ok := claims["preferred_username"]; ok {
 		res.preferredUsername = value.(string)

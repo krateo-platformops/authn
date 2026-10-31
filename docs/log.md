@@ -14,6 +14,28 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-30 — Step-up login (#49)
+
+`POST /oidc/stepup` issues a short-lived credential carrying `krateo:loa:2` to an OIDC
+login that proves a higher assurance level, so admission policies can require a fresh,
+stronger login for destructive operations (acmp; first consumer: the OpenStack
+decommission guard).
+
+- **Proof.** The validated ID token's `acr` must be in `spec.stepUp.acrValues`, and its
+  `auth_time` must be within `maxAge` (default 5m), so an old SSO session at the right
+  level is not enough.
+- **Credential.** It is stored as `<user>-clientconfig-stepup`, beside the session
+  credential and never in place of it. Its `ttl` defaults to 15m (minimum 10m) and it
+  is never renewed. The JWT's groups carry `krateo:loa:2`; snowplow keys on that group
+  to pick the step-up Secret (snowplow#994). No `loa` claim was added, because plumbing's
+  JWT signs only username and groups, and one marker everywhere is simpler.
+- **Naming.** The Secret name ends in `-stepup` because an infix name
+  (`<user>-stepup-clientconfig`) let user `bob-stepup`'s session collide with `bob`'s
+  step-up.
+- **CSRs.** Every issuance now gets its own CSR (`generateName`), deleted once used.
+  Before, the CSR was named after the user and deleted and recreated, so a normal login
+  and a step-up for one user could destroy each other's request.
+
 ## 2026-10-30 — Go tests run on main too, so release commits carry them
 
 installer's pin gate refused 0.29.0: the tagged commit had no test check-run. The tests

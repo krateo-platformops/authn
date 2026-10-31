@@ -78,80 +78,12 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Str("namespace", os.Getenv(util.NamespaceEnvVar)).
 			Logger()
 
-		name := req.URL.Query().Get("name")
-		if len(name) == 0 {
-			err := fmt.Errorf("OIDCConfig 'name' must be specified")
-			log.Err(err).Msgf("empty 'name' parameter in query string")
-			encode.BadRequest(wri, err)
+		_, _, nfo, ok := authenticate(wri, req, r.ctx, r.rc, log)
+		if !ok {
 			return
 		}
 
-		// Bridge the inbound request span (req.Context()) with the long-lived
-		// values (accessToken/username/snowplowURL) carried by r.ctx so the
-		// outbound OIDC-discovery / token / userinfo / snowplow hops are both
-		// traced and authenticated. With tracing OFF this just returns
-		// req.Context() with the same values copied — behaviourally identical.
-		callCtx := restaction.MergeRequestContext(req.Context(), r.ctx)
-
-		cfg, err := getConfig(callCtx, r.rc, name)
-		if err != nil {
-			log.Err(err).Str("name", name).Msg("unable to fetch oidc configuration")
-			if errors.As(err, new(status.CauseError)) {
-				encode.Failure(wri, status.FromError(err))
-			} else {
-				encode.ExpectationFailed(wri, err)
-			}
-			return
-		}
-
-		log.Debug().Str("name", name).Msg("starting oidc login")
-		idToken, err := doLogin(callCtx, req.Header.Get(authCodeKey), req.Header.Get(codeVerifierKey), cfg)
-		if err != nil {
-			// A rejected ID token is a 403 with its cause; anything else is
-			// authn's failure, a 500.
-			log.Err(err).Str("name", name).Msg("unable to complete login")
-			encode.Failure(wri, status.FromError(err))
-			return
-		}
-
-		log.Debug().Str("name", name).Msg("resolving restaction")
-		if cfg.RESTActionRef != nil {
-			additionalFieldstoReplace, err := restaction.Resolve(callCtx, r.rc, cfg.RESTActionRef, idToken.email, idToken.bearerToken)
-			ok, errr := checkKeys(additionalFieldstoReplace)
-			if err != nil || !ok || errr != nil {
-				if errr != nil {
-					log.Err(err).Str("name", name).Msgf("restaction parsing has found the following error: %v", errr)
-				}
-				log.Err(err).Str("name", name).Msg("unable to resolve restaction, retrying with legacy resolve (copy)")
-				additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, r.rc, cfg.RESTActionRef, idToken.email, idToken.bearerToken)
-				if err != nil {
-					log.Err(err).Str("name", name).Msg("unable to resolve restaction, stopping")
-					encode.InternalError(wri, err)
-					return
-				}
-			}
-			log.Debug().Str("name", name).Msg("updating oidc idtoken")
-			log.Debug().Str("name", name).Msgf("old idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", idToken.name, idToken.preferredUsername, idToken.email, idToken.groups, idToken.avatarURL)
-			log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
-			idToken, err = updateConfig(idToken, additionalFieldstoReplace)
-			if err != nil {
-				log.Err(err).Str("name", name).Msg("unable to parse updated idtoken from restaction")
-				encode.InternalError(wri, err)
-			}
-			log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", idToken.name, idToken.preferredUsername, idToken.email, idToken.groups, idToken.avatarURL)
-		}
-
-		log.Debug().Str("name", name).Msg("validating idtoken")
-		nfo, err := r.validate(idToken)
-		if err != nil {
-			log.Err(err).Str("name", name).
-				Str("tokenURL", cfg.TokenURL).
-				Msg("user info default user error for oidc")
-			encode.Forbidden(wri, err)
-			return
-		}
-
-		log.Debug().Str("name", name).Msg("generating secret from oidc idtoken")
+		log.Debug().Msg("generating secret from oidc idtoken")
 		dat, notAfter, err := r.gen.Generate(storage.StrategyOIDC, nfo)
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
@@ -169,7 +101,88 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 	}
 }
 
-func (r *loginRoute) validate(idToken idToken) (userinfo.Info, error) {
+// authenticate runs the part of an OIDC login that /oidc/login and
+// /oidc/stepup share: resolve the OIDCConfig, exchange the code, validate the
+// ID token, enrich it through the RESTAction, and build the identity. On
+// failure it has already written the response, and ok is false.
+func authenticate(wri http.ResponseWriter, req *http.Request, base context.Context, rc *rest.Config, log zerolog.Logger) (cfg *oidcConfig, tok idToken, nfo userinfo.Info, ok bool) {
+	name := req.URL.Query().Get("name")
+	if len(name) == 0 {
+		err := fmt.Errorf("OIDCConfig 'name' must be specified")
+		log.Err(err).Msgf("empty 'name' parameter in query string")
+		encode.BadRequest(wri, err)
+		return nil, tok, nil, false
+	}
+
+	// Bridge the inbound request span (req.Context()) with the long-lived
+	// values (accessToken/username/snowplowURL) carried by base so the
+	// outbound OIDC-discovery / token / userinfo / snowplow hops are both
+	// traced and authenticated. With tracing OFF this just returns
+	// req.Context() with the same values copied — behaviourally identical.
+	callCtx := restaction.MergeRequestContext(req.Context(), base)
+
+	cfg, err := getConfig(callCtx, rc, name)
+	if err != nil {
+		log.Err(err).Str("name", name).Msg("unable to fetch oidc configuration")
+		if errors.As(err, new(status.CauseError)) {
+			encode.Failure(wri, status.FromError(err))
+		} else {
+			encode.ExpectationFailed(wri, err)
+		}
+		return nil, tok, nil, false
+	}
+
+	log.Debug().Str("name", name).Msg("starting oidc login")
+	tok, err = doLogin(callCtx, req.Header.Get(authCodeKey), req.Header.Get(codeVerifierKey), cfg)
+	if err != nil {
+		// A rejected ID token is a 403 with its cause; anything else is
+		// authn's failure, a 500.
+		log.Err(err).Str("name", name).Msg("unable to complete login")
+		encode.Failure(wri, status.FromError(err))
+		return nil, tok, nil, false
+	}
+
+	log.Debug().Str("name", name).Msg("resolving restaction")
+	if cfg.RESTActionRef != nil {
+		additionalFieldstoReplace, err := restaction.Resolve(callCtx, rc, cfg.RESTActionRef, tok.email, tok.bearerToken)
+		keysOK, errr := checkKeys(additionalFieldstoReplace)
+		if err != nil || !keysOK || errr != nil {
+			if errr != nil {
+				log.Err(err).Str("name", name).Msgf("restaction parsing has found the following error: %v", errr)
+			}
+			log.Err(err).Str("name", name).Msg("unable to resolve restaction, retrying with legacy resolve (copy)")
+			additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, rc, cfg.RESTActionRef, tok.email, tok.bearerToken)
+			if err != nil {
+				log.Err(err).Str("name", name).Msg("unable to resolve restaction, stopping")
+				encode.InternalError(wri, err)
+				return nil, tok, nil, false
+			}
+		}
+		log.Debug().Str("name", name).Msg("updating oidc idtoken")
+		log.Debug().Str("name", name).Msgf("old idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", tok.name, tok.preferredUsername, tok.email, tok.groups, tok.avatarURL)
+		log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
+		tok, err = updateConfig(tok, additionalFieldstoReplace)
+		if err != nil {
+			log.Err(err).Str("name", name).Msg("unable to parse updated idtoken from restaction")
+			encode.InternalError(wri, err)
+			return nil, tok, nil, false
+		}
+		log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", tok.name, tok.preferredUsername, tok.email, tok.groups, tok.avatarURL)
+	}
+
+	log.Debug().Str("name", name).Msg("validating idtoken")
+	nfo, err = validate(tok)
+	if err != nil {
+		log.Err(err).Str("name", name).
+			Str("tokenURL", cfg.TokenURL).
+			Msg("user info default user error for oidc")
+		encode.Forbidden(wri, err)
+		return nil, tok, nil, false
+	}
+	return cfg, tok, nfo, true
+}
+
+func validate(idToken idToken) (userinfo.Info, error) {
 	exts := userinfo.Extensions{}
 	exts.Add("name", idToken.name)
 	exts.Add("avatarUrl", idToken.avatarURL)

@@ -113,6 +113,35 @@ spec:
                 - name
                 - namespace
                 type: object
+              stepUp:
+                description: |-
+                  StepUp enables POST /oidc/stepup for this provider: a login that proves
+                  a higher assurance level (acr) gets a short-lived credential carrying
+                  the group krateo:loa:2. Without it, step-up is refused.
+                properties:
+                  acrValues:
+                    description: |-
+                      AcrValues are the ID token `acr` values that prove level of assurance
+                      2. A step-up whose acr is not listed is refused.
+                    items:
+                      type: string
+                    minItems: 1
+                    type: array
+                  maxAge:
+                    description: |-
+                      MaxAge is how long ago the user may have authenticated (`auth_time`)
+                      for a step-up to be granted. A long-lived SSO session at that level
+                      is not enough on its own. Default 5m.
+                    type: string
+                  ttl:
+                    description: |-
+                      TTL is the requested lifetime of the step-up credential. It is never
+                      renewed. Default 15m. The Kubernetes CSR API's minimum is 10m, and a
+                      shorter TTL is refused.
+                    type: string
+                required:
+                - acrValues
+                type: object
               tokenURL:
                 type: string
               userInfoURL:

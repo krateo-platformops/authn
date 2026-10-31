@@ -265,7 +265,7 @@ func TestConfigUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	if config.name != "test" || config.email != "test@test.com" || config.preferredUsername != "test" || config.avatarURL != "http://image.avatar.com" || config.groups[0] != "groupA" || config.groups[1] != "groupB" {
-		t.Fatal(fmt.Errorf("parsing incorrect, values not matching: %s", config))
+		t.Fatal(fmt.Errorf("parsing incorrect, values not matching: %+v", config))
 	}
 
 	config = idToken{}
