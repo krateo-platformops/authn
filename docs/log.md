@@ -14,6 +14,15 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — The OIDC `authCodeURL` state is printable; Keycloak refused 1 login in 8
+
+`authCodeURL` built `state` from 32 raw random bytes. The URL therefore carried binary
+bytes, and about 1 in 8 times a NUL (`%00`), which Keycloak 26 answers with `400`. A
+real-Keycloak test of step-up found it. The portal hid it until now because it replaces
+`state` with its own; any client using `authCodeURL` as is failed about 1 login in 8. `state`
+is now 32 random bytes, base64url-encoded without padding. authn still neither stores nor
+checks `state`: a client that wants CSRF protection sets and verifies its own.
+
 ## 2026-10-31 — A login that can't sign its token answers 500, never an empty 200 (#48)
 
 When the JWT couldn't be signed (for example, an empty key ID), `encode.Success` returned

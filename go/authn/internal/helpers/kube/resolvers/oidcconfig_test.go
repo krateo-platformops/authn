@@ -2,9 +2,11 @@ package resolvers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -70,5 +72,31 @@ func TestResolveOIDCConfigIssuer(t *testing.T) {
 			assert.Equal(t, tc.wantToken, cfg.Spec.TokenURL)
 			assert.True(t, strings.Contains(cfg.Spec.AuthorizationURL, "response_type=code"), cfg.Spec.AuthorizationURL)
 		})
+	}
+}
+
+// state is printable on every call. It used to be 32 raw random bytes, so
+// about 1 URL in 8 carried a NUL and Keycloak answered 400 to the login.
+func TestAuthCodeURLState(t *testing.T) {
+	cfg := &oidcv1alpha1.OIDCConfig{Spec: oidcv1alpha1.OIDCConfigSpec{
+		AuthorizationURL: "https://idp.example/auth", ClientID: "portal", RedirectURI: "https://portal.example/auth",
+	}}
+	seen := map[string]bool{}
+	for range 500 {
+		raw := authCodeURL(cfg)
+		u, err := url.Parse(raw)
+		require.NoError(t, err)
+		assert.NotContains(t, u.RawQuery, "%00")
+
+		state := u.Query().Get("state")
+		require.Len(t, state, 43, "32 bytes, base64url without padding")
+		_, err = base64.RawURLEncoding.DecodeString(state)
+		require.NoError(t, err)
+		assert.Equal(t, state, url.QueryEscape(state), "state needs no escaping")
+		assert.False(t, seen[state], "state repeats")
+		seen[state] = true
+
+		assert.Equal(t, "portal", u.Query().Get("client_id"))
+		assert.Equal(t, "https://portal.example/auth", u.Query().Get("redirect_uri"))
 	}
 }
