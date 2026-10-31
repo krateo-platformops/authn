@@ -100,3 +100,18 @@ func TestAuthCodeURLState(t *testing.T) {
 		assert.Equal(t, "https://portal.example/auth", u.Query().Get("redirect_uri"))
 	}
 }
+
+func TestAuthCodeURLScope(t *testing.T) {
+	for additional, want := range map[string]string{
+		"":                           "openid email profile",
+		"groups":                     "openid email profile groups",
+		"  groups   offline_access ": "openid email profile groups offline_access",
+	} {
+		cfg := &oidcv1alpha1.OIDCConfig{Spec: oidcv1alpha1.OIDCConfigSpec{
+			AuthorizationURL: "https://idp.example/auth", ClientID: "portal", AdditionalScopes: additional,
+		}}
+		u, err := url.Parse(authCodeURL(cfg))
+		require.NoError(t, err)
+		assert.Equal(t, want, u.Query().Get("scope"), "additionalScopes %q", additional)
+	}
+}

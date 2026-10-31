@@ -231,7 +231,9 @@ func authCodeURL(cfg *oidcv1alpha1.OIDCConfig) string {
 	if cfg.Spec.RedirectURI != "" {
 		v.Set("redirect_uri", cfg.Spec.RedirectURI)
 	}
-	v.Set("scope", "openid email profile "+cfg.Spec.AdditionalScopes)
+	// Space-separated with no stray spaces: an empty or padded
+	// additionalScopes used to leave a trailing space in scope.
+	v.Set("scope", strings.Join(strings.Fields("openid email profile "+cfg.Spec.AdditionalScopes), " "))
 
 	// state is printable: raw random bytes put binary, sometimes a NUL, in the
 	// URL, and Keycloak answers 400 to a state containing a NUL (about 1 URL
