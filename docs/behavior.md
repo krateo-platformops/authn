@@ -40,8 +40,23 @@ Returns a JSON array of `{kind, name?, graphics?, path, extensions?}`
 - `oidc`/`ldap`/`oauth` produce one entry per CR. Missing `graphics` is filled with a
   default (`key` icon, "Login with <Kind>", white/black, `support.go:12-19`).
 - `oidc` and `oauth` entries carry `extensions.authCodeURL` / `extensions.redirectURL`
-  so the frontend can start the provider redirect (`strategies.go:122-131`,
-  `177-186`).
+  so the frontend can start the provider redirect (`strategies.go`, `forOIDC` and
+  `forOAuth`).
+- The `state` in an oidc `authCodeURL` is random per `/strategies` call. authn never
+  stores or checks it: neither `/oidc/login` nor `/oidc/stepup` receives `state`. A
+  client that wants CSRF protection sets its own `state` (e.g.
+  `URL.searchParams.set('state', …)`, never by cutting the URL) and verifies it on the
+  redirect back.
+- An `oidc` entry whose OIDCConfig has a valid `spec.stepUp` also carries the step-up
+  hints (`oidc.StepUpExtensions`): `stepUpAuthCodeURL` (the entry's `authCodeURL`
+  parsed, with `acr_values` and `max_age` set and every other parameter kept),
+  `stepUpPath` (`/oidc/stepup`), `stepUpAcrValues` (the `acrValues`, space-separated)
+  and `stepUpMaxAge` (`maxAge` in seconds). The portal redirects to
+  `stepUpAuthCodeURL` as is, then POSTs the code to `stepUpPath`; it never composes
+  the URL itself. `max_age` makes the IdP re-authenticate a user whose last
+  authentication is too old, instead of authn refusing the step-up as
+  `StaleAuthentication`. A misconfigured `spec.stepUp`, or an `authCodeURL` that isn't
+  an absolute URL, is not advertised and is logged as a warning.
 
 ### The login response contract
 
@@ -171,7 +186,7 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   `spec.additionalScopes`. With `discoveryURL` the document is read on every login
   (it supplies the issuer); its endpoints are applied only when some endpoint is unset.
 - `spec.stepUp` (optional) — enables `POST /oidc/stepup` (#49): `acrValues` (≥1, the
-  `acr` values that prove LoA2), `maxAge` (default 5m, how recent `auth_time` must be),
+  `acr` values that prove LoA2; each non-empty and without whitespace), `maxAge` (default 5m, how recent `auth_time` must be),
   `ttl` (default 15m, ≥10m, the step-up credential's requested lifetime, never
   renewed).
 - `spec.issuer` (optional) — the ID token's expected `iss`. Required without
