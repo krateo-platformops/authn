@@ -40,11 +40,12 @@ var publicSurface = []string{
 }
 
 // Canaries: every Secret the fake apiserver serves carries these in every key,
-// as stored credentials, passwords and client secrets would.
+// as stored credentials, passwords and client secrets would. They are fake
+// by design; the gitleaks:allow markers tell the secret scanner so.
 const (
-	canaryKey    = "-----BEGIN RSA PRIVATE KEY-----CANARY-KEY-7f3a-----END RSA PRIVATE KEY-----"
+	canaryKey    = "-----BEGIN RSA PRIVATE KEY-----CANARY-KEY-7f3a-----END RSA PRIVATE KEY-----" // gitleaks:allow
 	canaryCert   = "CANARY-CERT-1c9e"
-	canarySecret = "CANARY-SECRET-b52d"
+	canarySecret = "CANARY-SECRET-b52d" // gitleaks:allow
 )
 
 // mintCounter fails the test's expectations if anything is minted: no request
