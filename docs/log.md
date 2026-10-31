@@ -14,6 +14,24 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-10-31 — The HTTP surface is pinned and checked for leaks
+
+`main.go` built the routes inline, so nothing tested the surface as a whole. Route
+construction moved to `buildRoutes` (`go/authn/routes.go`), and `TestPublicSurface`:
+- pins the list of routes, so a new route fails CI until it is reviewed;
+- runs every route against a fake apiserver whose Secrets all hold canary key material,
+  passwords and client secrets, with every method and the inputs a caller without valid
+  credentials can send: no credentials, wrong or junk ones, and real identity names (792
+  requests). It fails if any response body or header carries a canary, a private key or
+  `client-key-data`, or if a credential is minted.
+
+`TestPublicSurfaceGuardCatchesALeak` adds a route that returns a stored credential and
+checks that the guard flags it, so the guard can't silently stop working.
+`TestJWKSIsPublicOnly` checks the JWKS carries only `kty`, `use`, `alg`, `kid`, `n`, `e`.
+Audit of the remaining routes: `/strategies` returns names, graphics, client IDs and
+authorization URLs only; CORS answers a literal `*`, which browsers refuse for credentialed
+requests.
+
 ## 2026-10-31 — The OIDC `authCodeURL` scope has no trailing space
 
 With an empty `additionalScopes`, `authCodeURL` sent `scope=openid email profile ` with a
