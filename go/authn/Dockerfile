@@ -21,10 +21,11 @@ RUN go mod download
 
 COPY apis/ apis/
 COPY internal/ internal/
-COPY main.go main.go
+# Every file of package main (go build ignores the _test.go files).
+COPY *.go ./
 
 # Build
-RUN CGO_ENABLED=0 GO111MODULE=on go build -a -o /bin/server ./main.go && \
+RUN CGO_ENABLED=0 GO111MODULE=on go build -a -o /bin/server . && \
     strip /bin/server
 
 # Deployment environment
