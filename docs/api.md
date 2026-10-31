@@ -70,6 +70,10 @@ Every strategy returns the same shape:
 standard RBAC. It includes the certificate's private key (`client-key-data`), so never
 log a success response.
 
+If the identity was accepted but its access token can't be signed, every login answers
+`500` with `details.causes[0].reason: IssuanceFailed`. Before #48, the basic, ldap,
+oauth and oidc logins answered an empty `200` in that case.
+
 **`POST /serviceaccount/login` returns no `data`**, only `accessToken`, `user` and
 `groups`. The identity's kubeconfig is still minted and stored in the
 `<username>-clientconfig` Secret, where in-cluster consumers read it. Service callers

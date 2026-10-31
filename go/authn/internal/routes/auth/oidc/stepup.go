@@ -48,7 +48,7 @@ const (
 
 	// Failures of authn or its configuration (500).
 	CauseStepUpMisconfigured status.CauseType = "StepUpMisconfigured"
-	CauseIssuanceFailed      status.CauseType = "IssuanceFailed"
+	CauseIssuanceFailed                       = status.CauseIssuanceFailed
 )
 
 type stepUpConfig struct {
@@ -164,8 +164,8 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 			CertNotAfter:  notAfter,
 		})
 		if err != nil {
+			// Success has already answered with IssuanceFailed.
 			log.Err(err).Msg("step-up access token creation failure")
-			encode.Failure(wri, status.FromError(status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing step-up access token: %w", err))))
 			return
 		}
 		log.Info().Str("username", up.GetUserName()).Time("notAfter", notAfter).Msg("step-up granted")

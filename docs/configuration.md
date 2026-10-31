@@ -88,3 +88,7 @@ out-of-cluster runs, …) — flags win over env ([architecture](./architecture.
 `authn-crds` ([`helm/authn-crds/`](../helm/authn-crds/)) has no configuration: it
 installs the five `*.authn.krateo.io` CRDs ([api](./api.md)). It is deliberately
 **not** a dependency of the app chart, so CRD ownership stays with its own release.
+The CRDs are chart **templates**, not files in the chart's `crds/` directory, so
+`helm show crds` prints nothing and Helm upgrades them like any other resource. To
+inspect a version's schema, render it:
+`helm template x oci://ghcr.io/krateo-platformops/charts/authn-crds --version X.Y.Z`.
