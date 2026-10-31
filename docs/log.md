@@ -27,6 +27,14 @@ values are hardcoded in the portal. The keys are added only when step-up is enab
 clients see no change. `spec.stepUp.acrValues` now also refuses an empty value, which would
 have matched an ID token with no `acr` at all, and a value containing whitespace, which
 can't be sent in the space-separated `acr_values`. Both answer `StepUpMisconfigured`.
+## 2026-10-31 — The OIDC `authCodeURL` state is printable; Keycloak refused 1 login in 8
+
+`authCodeURL` built `state` from 32 raw random bytes. The URL therefore carried binary
+bytes, and about 1 in 8 times a NUL (`%00`), which Keycloak 26 answers with `400`. A
+real-Keycloak test of step-up found it. The portal hid it until now because it replaces
+`state` with its own; any client using `authCodeURL` as is failed about 1 login in 8. `state`
+is now 32 random bytes, base64url-encoded without padding. authn still neither stores nor
+checks `state`: a client that wants CSRF protection sets and verifies its own.
 
 ## 2026-10-31 — A login that can't sign its token answers 500, never an empty 200 (#48)
 

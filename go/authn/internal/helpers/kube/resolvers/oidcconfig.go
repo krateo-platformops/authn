@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -212,6 +213,13 @@ func applyDiscovery(cfg *oidcv1alpha1.OIDCConfig, endpointsData DiscoveryEndpoin
 	return nil
 }
 
+// newState returns 32 random bytes, base64url-encoded without padding.
+func newState() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b) // crypto/rand.Read never fails (Go 1.24+); it panics instead
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func authCodeURL(cfg *oidcv1alpha1.OIDCConfig) string {
 	var buf bytes.Buffer
 	buf.WriteString(cfg.Spec.AuthorizationURL)
@@ -225,12 +233,10 @@ func authCodeURL(cfg *oidcv1alpha1.OIDCConfig) string {
 	}
 	v.Set("scope", "openid email profile "+cfg.Spec.AdditionalScopes)
 
-	b := make([]byte, 32)
-	rand.Read(b)
-	state := string(b)
-	if state != "" {
-		v.Set("state", state)
-	}
+	// state is printable: raw random bytes put binary, sometimes a NUL, in the
+	// URL, and Keycloak answers 400 to a state containing a NUL (about 1 URL
+	// in 8).
+	v.Set("state", newState())
 
 	if strings.Contains(cfg.Spec.AuthorizationURL, "?") {
 		buf.WriteByte('&')
