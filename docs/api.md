@@ -141,7 +141,7 @@ Every `/oidc/login` failure above applies, plus:
 |---|---|---|
 | `StepUpNotEnabled` | 403 | The OIDCConfig has no `spec.stepUp` |
 | `InsufficientAssurance` | 403 | The ID token's `acr` isn't in `spec.stepUp.acrValues` |
-| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: re-authenticate (e.g. `prompt=login` / `max_age`) |
+| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: redo the step-up redirect. Send `max_age` on every step-up request (`stepUpAuthCodeURL` does), since an IdP may answer `acr_values` from SSO with an old `auth_time` |
 | `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, an empty acr value or one containing whitespace, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
 | `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued |
 
