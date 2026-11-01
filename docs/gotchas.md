@@ -55,7 +55,9 @@ not from `notBefore`.
 The name ends in `-stepup`, so no username's session Secret can collide with
 another username's step-up Secret, and listings by the `-clientconfig` suffix (like
 the identity backfill) skip it. It is not renewed: when it expires, the user steps up
-again.
+again. The replica holding the `authn-cert-renewal` Lease deletes expired step-up Secrets
+every 5 minutes, once the certificate has been expired for 5 minutes
+(`internal/stepupsweep`). Session Secrets are never swept.
 
 ## An IdP can answer a step-up from SSO with an old `auth_time`
 `acr_values` alone doesn't make the IdP re-authenticate. Keycloak's level-2 condition

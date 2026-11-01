@@ -22,6 +22,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/routes/health"
+	"github.com/krateo-platformops/authn/internal/stepupsweep"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/authn/internal/uuid"
 	"github.com/krateo-platformops/plumbing/jwtutil"
@@ -298,6 +299,10 @@ func main() {
 		renewer = nil
 	}
 
+	// One clientset for the leader-only work: the election itself and the
+	// step-up sweep.
+	leaderClient, leaderErr := kubernetes.NewForConfig(cfg)
+
 	ownIdentity := func(lctx context.Context) {
 		var wait time.Duration
 		if renewer != nil {
@@ -333,6 +338,14 @@ func main() {
 				Msg("identity annotation backfill done")
 		}
 
+		// Delete expired step-up credentials (#49): they are never renewed,
+		// and nothing else removes them.
+		go stepupsweep.Run(lctx, stepupsweep.Options{
+			Client:     leaderClient,
+			Namespaces: []string{operatorNamespace, *storageNamespace},
+			Log:        log,
+		})
+
 		switch {
 		case renewer != nil && *certRenewalOn:
 			renewer.Run(lctx, wait)
@@ -346,9 +359,8 @@ func main() {
 		}
 	}
 
-	leaderClient, err := kubernetes.NewForConfig(cfg)
-	if err != nil {
-		log.Err(err).Msg("leader election unavailable; authn's own certificate is not maintained")
+	if leaderErr != nil {
+		log.Err(leaderErr).Msg("leader election unavailable; authn's own certificate is not maintained")
 	} else {
 		go func() {
 			err := leader.Run(ctx, leader.Options{
