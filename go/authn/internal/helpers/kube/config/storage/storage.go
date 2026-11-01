@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
@@ -59,6 +60,14 @@ func ClientConfigSecretName(username string) string {
 // one up.
 func StepUpSecretName(username string) string {
 	return ClientConfigSecretName(username) + "-stepup"
+}
+
+// stepUpSuffix ends every StepUpSecretName and no session Secret name.
+const stepUpSuffix = "-clientconfig-stepup"
+
+// IsStepUpSecretName reports whether a Secret name is a step-up credential's.
+func IsStepUpSecretName(name string) bool {
+	return strings.HasSuffix(name, stepUpSuffix) && len(name) > len(stepUpSuffix)
 }
 
 type AuthInfo struct {

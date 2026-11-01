@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-01 — Expired step-up credentials are deleted
+
+`<user>-clientconfig-stepup` lives about 15 minutes and is never renewed, but nothing removed
+it, so expired keys and certificates stayed at rest, one per user who ever stepped up (found
+by acmp's end-to-end run). The replica holding the `authn-cert-renewal` Lease now sweeps
+them every 5 minutes. It deletes only Secrets named like a step-up credential, whose
+certificate (read from the Secret, not an annotation) has been expired for 5 minutes, and
+only if they are still the object it read. A step-up that rewrote the Secret in the
+meantime keeps its credential. Unreadable certificates are left in place and logged.
+Session Secrets are never touched. Verified on kind: an expired step-up Secret is deleted
+at the first pass; a valid one and an expired session Secret stay.
+
 ## 2026-10-31 — The HTTP surface is pinned and checked for leaks
 
 `main.go` built the routes inline, so nothing tested the surface as a whole. Route

@@ -124,7 +124,10 @@ return:
   get a reserved group), and `GenerateStepUp` stores it as
   `<user>-clientconfig-stepup` with `ttl`. The JWT carries the same groups and ends
   with the certificate. The user's `<user>-clientconfig` is never written, so their
-  normal session is unchanged.
+  normal session is unchanged. Expired step-up Secrets are deleted by the leader-only
+  sweep (`internal/stepupsweep`): every 5 minutes, 5 minutes after the certificate's
+  `notAfter`, read from the certificate itself, with UID and resourceVersion
+  preconditions so a step-up that rewrote the Secret keeps it.
 - **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go:73-90`).
   Code is exchanged via `golang.org/x/oauth2` (`oauth/login.go:106`); token type must
   be `bearer` when a RESTAction is configured (`oauth/login.go:116-121`).
