@@ -120,7 +120,7 @@ read the code from the `Location` header.
 | f | the sweep (authn#66), about 20 minutes: a step-up with `ttl: 10m`; at the cert's notAfter+4m the step-up Secret is still there (5m grace); by notAfter+11m it is gone and authn logged `step-up sweep: expired credential deleted` for it, at or after notAfter+5m; the session Secret's resourceVersion and data are unchanged. With `SWEEP_REWRITE_USER`, that user steps up again 1m after the first cert expired: the rewritten Secret is still there at the first notAfter+11m, after a sweep pass that saw the first cert past the grace |
 
 d and e drop `max_age` from `stepUpAuthCodeURL` on purpose, to show what it prevents. f reads
-notAfter from the certificate: the kube signer backdates notBefore by 5m.
+notAfter from the certificate: signers backdate notBefore (GKE's by 2m), so it is not notBefore+ttl.
 
 ## The Keycloak configuration
 

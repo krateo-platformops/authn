@@ -162,7 +162,7 @@ secret_cert() { kubectl -n "$AUTHN_NAMESPACE" get secret "$1" -o jsonpath='{.dat
 # secret_id <name>: "<uid> <resourceVersion>", empty if the Secret is gone; non-zero only on an API error.
 secret_id() { kubectl -n "$AUTHN_NAMESPACE" get secret "$1" --ignore-not-found -o jsonpath='{.metadata.uid} {.metadata.resourceVersion}'; }
 secret_data_hash() { kubectl -n "$AUTHN_NAMESPACE" get secret "$1" -o json | jq -S .data | openssl dgst -sha256 | awk '{print $NF}'; }
-# not_after <secret>: its certificate's notAfter in epoch seconds (the kube signer backdates notBefore, so not issue+ttl).
+# not_after <secret>: its certificate's notAfter in epoch seconds, as the signer set it (signers backdate notBefore, so not notBefore+ttl).
 not_after() { secret_cert "$1" | openssl x509 -noout -enddate | sed 's/^notAfter=//' | jq -Rr 'gsub(" +"; " ") | strptime("%b %d %H:%M:%S %Y GMT") | mktime'; }
 utc() { date -u -d "@$1" +%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%H:%M:%SZ; }
 sleep_until() { local d=$(( $1 - $(date +%s) )); echo "waiting ${d}s, until $(utc "$1"): $2"; (( d > 0 )) && sleep "$d"; return 0; }
@@ -273,9 +273,11 @@ if (( KUBECTL_CHECKS )); then
   SUBJ=$(secret_cert "$STEPUP_SECRET" | openssl x509 -noout -subject -nameopt RFC2253)
   echo "b: step-up cert $SUBJ"
   [[ "$SUBJ" == *O=krateo:loa:2* ]] && pass "b: Secret $STEPUP_SECRET cert has O=krateo:loa:2" || fail "b: $STEPUP_SECRET cert $SUBJ"
-  # exp <= notAfter, without parsing dates: the cert must still be valid at exp-1.
-  secret_cert "$STEPUP_SECRET" | openssl x509 -noout -checkend $(( EXP - $(date +%s) - 1 )) >/dev/null \
-    && pass "b: JWT exp <= cert notAfter" || fail "b: JWT exp $EXP outlives the step-up cert ($(secret_cert "$STEPUP_SECRET" | openssl x509 -noout -enddate))"
+  # exp <= notAfter, compared as dates: authn caps exp at notAfter, so they are
+  # often equal, and an "openssl -checkend <exp-now>" races the kubectl call.
+  NA=$(not_after "$STEPUP_SECRET")
+  [[ "$NA" =~ ^[0-9]+$ ]] && (( EXP <= NA )) && pass "b: JWT exp $(utc "$EXP") <= cert notAfter $(utc "$NA")" \
+    || fail "b: JWT exp $EXP ($(utc "$EXP")) outlives the step-up cert (notAfter '$NA')"
   if ! skip a; then
     RV1=$(secret_rv "$SESSION_SECRET")
     [[ "$RV0" == "$RV1" ]] && pass "b: $SESSION_SECRET untouched (resourceVersion $RV0)" || fail "b: $SESSION_SECRET resourceVersion $RV0 -> $RV1"
