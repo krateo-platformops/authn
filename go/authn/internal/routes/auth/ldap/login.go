@@ -78,7 +78,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		name := req.URL.Query().Get("name")
 		if len(name) == 0 {
 			err := fmt.Errorf("LDAPConfig 'name' must be specified")
-			log.Err(err).Msgf("empty 'name' parameter in query string")
+			log.Warn().Err(err).Msg("empty 'name' parameter in query string")
 			encode.BadRequest(wri, err)
 			return
 		}
@@ -86,7 +86,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		var lo loginInfo
 		err := decode.JSONBody(wri, req, &lo)
 		if err != nil && !decode.IsEmptyBodyError(err) {
-			log.Error().Msg(err.Error())
+			log.Warn().Err(err).Msg("invalid request body")
 			encode.BadRequest(wri, err)
 			return
 		}
@@ -100,7 +100,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		nfo, err := doLogin(lo.Username, lo.Password, cfg)
 		if err != nil {
-			log.Err(err).Str("name", name).
+			// Answered 4xx/300, so logged as a refusal (warn). An unreachable
+			// LDAP server or a failed admin bind is answered 403 too.
+			log.Warn().Err(err).Str("name", name).
 				Str("dialURL", cfg.dialURL).
 				Str("user", lo.Username).
 				Msg("login with ldap server failed")

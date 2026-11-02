@@ -112,7 +112,7 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 	name := req.URL.Query().Get("name")
 	if len(name) == 0 {
 		err := fmt.Errorf("OIDCConfig 'name' must be specified")
-		log.Err(err).Msgf("empty 'name' parameter in query string")
+		log.Warn().Err(err).Msg("empty 'name' parameter in query string")
 		encode.BadRequest(wri, err)
 		return nil, tok, nil, false
 	}
@@ -140,7 +140,7 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 	if err != nil {
 		// A rejected ID token is a 403 with its cause; anything else is
 		// authn's failure, a 500.
-		log.Err(err).Str("name", name).Msg("unable to complete login")
+		status.LogFailure(log, err).Str("name", name).Msg("unable to complete login")
 		encode.Failure(wri, status.FromError(err))
 		return nil, tok, nil, false
 	}
@@ -176,7 +176,7 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 	log.Debug().Str("name", name).Msg("validating idtoken")
 	nfo, err = validate(tok)
 	if err != nil {
-		log.Err(err).Str("name", name).
+		log.Warn().Err(err).Str("name", name).
 			Str("tokenURL", cfg.TokenURL).
 			Msg("user info default user error for oidc")
 		encode.Forbidden(wri, err)

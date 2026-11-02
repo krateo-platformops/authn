@@ -1,6 +1,7 @@
 package serviceaccount
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/rest"
@@ -254,6 +256,57 @@ func TestHandlerFailureCauses(t *testing.T) {
 			} else {
 				assert.Empty(t, gen.calls, "nothing is minted for a refused caller")
 			}
+		})
+	}
+}
+
+// A refused caller is logged at warn, authn's own failure at error, each with
+// its cause (status.LogFailure).
+func TestHandlerLogLevels(t *testing.T) {
+	noMapping := defaultReplies()
+	noMapping.mappings = mappingList()
+	lookupFails := defaultReplies()
+	lookupFails.mappingsCode = http.StatusInternalServerError
+
+	cases := []struct {
+		name    string
+		replies apiReplies
+		level   string
+		cause   string
+	}{
+		{name: "no mapping", replies: noMapping, level: "warn", cause: "NoMapping"},
+		{name: "mapping lookup fails", replies: lookupFails, level: "error", cause: "MappingLookupFailed"},
+	}
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("POD_NAMESPACE", "krateo-system")
+			srv := fakeAPIServer(t, tc.replies)
+			defer srv.Close()
+			route := Login(&rest.Config{Host: srv.URL}, LoginOptions{
+				KubeconfigGenerator: &fakeGenerator{}, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k",
+			})
+
+			var buf bytes.Buffer
+			req := httptest.NewRequest(http.MethodPost, Path, nil)
+			req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
+			req.Header.Set("Authorization", "Bearer projected-sa-token")
+			route.Handler().ServeHTTP(httptest.NewRecorder(), req)
+
+			var line map[string]any
+			for _, l := range bytes.Split(buf.Bytes(), []byte("\n")) {
+				var m map[string]any
+				if json.Unmarshal(l, &m) == nil && m["message"] == "serviceaccount auth failed" {
+					line = m
+				}
+			}
+			require.NotNil(t, line, buf.String())
+			assert.Equal(t, tc.level, line["level"])
+			assert.Equal(t, tc.cause, line["cause"])
+			assert.NotEmpty(t, line["error"])
 		})
 	}
 }

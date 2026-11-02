@@ -1,6 +1,7 @@
 package oidc
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -279,4 +281,57 @@ func TestStepUpRefusals(t *testing.T) {
 			assert.False(t, strings.Contains(rec.Body.String(), "accessToken"))
 		})
 	}
+}
+
+// A refused step-up or login is logged at warn, a step-up authn can't grant
+// at error, each with its cause (status.LogFailure).
+func TestStepUpLogLevels(t *testing.T) {
+	fresh := float64(time.Now().Add(-time.Minute).Unix())
+	cases := []struct {
+		name   string
+		stepUp string
+		claims map[string]any
+		msg    string
+		level  string
+		cause  string
+	}{
+		{name: "acr too low", stepUp: stepUpGold, claims: map[string]any{"acr": "silver", "auth_time": fresh},
+			msg: "step-up refused", level: "warn", cause: "InsufficientAssurance"},
+		{name: "expired ID token", stepUp: stepUpGold, claims: map[string]any{"acr": "gold", "auth_time": fresh, "exp": float64(time.Now().Add(-time.Hour).Unix())},
+			msg: "unable to complete login", level: "warn", cause: "TokenExpired"},
+		{name: "ttl below the CSR minimum", stepUp: `{"acrValues":["gold"],"ttl":"5m"}`, claims: map[string]any{"acr": "gold", "auth_time": fresh},
+			msg: "step-up refused", level: "error", cause: "StepUpMisconfigured"},
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gen := &stepUpGenerator{notAfter: time.Now().Add(15 * time.Minute)}
+			route := StepUp(t.Context(), stepUpEnv(t, tc.stepUp, tc.claims), StepUpOptions{KubeconfigGenerator: gen, JwtPrivateKey: key, JwtKeyID: "k"})
+
+			var buf bytes.Buffer
+			req := httptest.NewRequest(http.MethodPost, StepUpPath+"?name=kc", nil)
+			req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
+			req.Header.Set("X-Auth-Code", "code")
+			route.Handler().ServeHTTP(httptest.NewRecorder(), req)
+
+			line := logLine(t, &buf, tc.msg)
+			assert.Equal(t, tc.level, line["level"])
+			assert.Equal(t, tc.cause, line["cause"])
+			assert.NotEmpty(t, line["error"])
+		})
+	}
+}
+
+// logLine returns the JSON log line whose message is msg.
+func logLine(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
+	t.Helper()
+	for _, l := range bytes.Split(buf.Bytes(), []byte("\n")) {
+		var m map[string]any
+		if json.Unmarshal(l, &m) == nil && m["message"] == msg {
+			return m
+		}
+	}
+	t.Fatalf("no %q log line in:\n%s", msg, buf.String())
+	return nil
 }

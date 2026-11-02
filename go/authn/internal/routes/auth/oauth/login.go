@@ -78,7 +78,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		name := req.URL.Query().Get("name")
 		if len(name) == 0 {
 			err := fmt.Errorf("OAuthConfig 'name' must be specified")
-			log.Err(err).Msgf("empty 'name' parameter in query string")
+			log.Warn().Err(err).Msg("empty 'name' parameter in query string")
 			encode.BadRequest(wri, err)
 			return
 		}
@@ -86,7 +86,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		code := req.Header.Get(authCodeKey)
 		log.Debug().Str("name", name).Str("code", code).Msg("received authorization code")
 		if len(code) == 0 {
-			log.Error().Msgf("empty oauth code")
+			log.Warn().Msg("empty oauth code")
 			encode.BadRequest(wri, fmt.Errorf("empty oauth code"))
 			return
 		}

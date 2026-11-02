@@ -90,7 +90,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		user, err := r.validate(req.Context(), token)
 		if err != nil {
-			log.Err(err).Msg("serviceaccount auth failed")
+			status.LogFailure(*log, err).Msg("serviceaccount auth failed")
 			encode.Failure(wri, status.FromError(err))
 			return
 		}
