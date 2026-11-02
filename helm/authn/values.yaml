@@ -179,3 +179,15 @@ jwt:
   # Key ID advertised in every token header and in the JWKS "kid". Must be
   # stable for the lifetime of the key so validators can match it.
   kid: krateo-authn-key-1
+  # Keys retired by a rotation, published in the JWKS for verification only, so
+  # tokens they signed stay valid until they expire. authn never signs with
+  # them. Each entry names its kid and a Secret holding the PEM key (the
+  # retired private key, or just its public half) under secretKey (default
+  # private.pem). Rotation: add the current key here, point signKeySecretName
+  # and kid at the new key, and remove the entry once every token it signed has
+  # expired (AUTHN_KUBECONFIG_CRT_EXPIRES_IN, 24h by default). See
+  # docs/jwt-jwks.md.
+  previousKeys: []
+  #  - kid: krateo-authn-key-1
+  #    secretName: authn-jwt-signing-key-1
+  #    secretKey: private.pem
