@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-02 — The signing key can be rotated without signing everyone out
+
+The JWT docs described rotation as publishing the old and new keys together, but authn's
+JWKS served exactly one key. Rotating was a hard cutover: every outstanding token failed
+at once. In permissive validation nobody noticed. Once agentgateway enforces (roadmap A3),
+every signed-in user would be cut off. `jwt.previousKeys` (`JWT_PREVIOUS_KEYS`) now
+publishes retired keys next to the current one, for verification only. The current key
+comes first in the JWKS. A retired key is mounted from its Secret, as the private key or
+just its public half. Misconfiguration fails at boot rather than silently dropping a key.
+Tests sign tokens with the old and new keys and verify both through plumbing's
+`JWKSKeySource`, the client snowplow uses. A key no longer published verifies nothing.
+
 ## 2026-11-01 — Expired step-up credentials are deleted
 
 `<user>-clientconfig-stepup` lives about 15 minutes and is never renewed, but nothing removed

@@ -24,10 +24,12 @@ import (
 
 // routeOptions is what the HTTP surface needs from main.
 type routeOptions struct {
-	RestConfig             *rest.Config
-	Generator              kubeconfig.Generator
-	PrivateKey             *rsa.PrivateKey
-	KeyID                  string
+	RestConfig *rest.Config
+	Generator  kubeconfig.Generator
+	PrivateKey *rsa.PrivateKey
+	KeyID      string
+	// PreviousKeys are published in the JWKS for verification only.
+	PreviousKeys           []jwks.Key
 	JwtDuration            time.Duration
 	ServiceAccountAudience string
 	SelfUsername           string
@@ -44,7 +46,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 	all := []routes.Route{}
 	all = append(all, strategies.List(o.RestConfig))
 	all = append(all, health.Check(o.Healthy, o.Version, o.ServiceName))
-	all = append(all, jwks.Endpoint(&o.PrivateKey.PublicKey, o.KeyID))
+	all = append(all, jwks.Endpoint(&o.PrivateKey.PublicKey, o.KeyID, o.PreviousKeys...))
 
 	all = append(all, basic.Login(o.RestConfig, basic.LoginOptions{
 		KubeconfigGenerator: o.Generator,
