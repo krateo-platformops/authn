@@ -46,6 +46,7 @@ changes. Every flag of the binary has an env fallback (`go/authn/main.go:49-80`)
 | `ingress` | `enabled: false` | Standard chart ingress if you need it. |
 | `jwt.signKeySecretName` / `jwt.signKeySecretKey` | `authn-jwt-signing-key` / `private.pem` | Secret holding the PEM-encoded RSA private key, mounted as a file. |
 | `jwt.kid` | `krateo-authn-key-1` | Key ID (`kid`) stamped into every token header and the JWKS ([jwt-jwks](./jwt-jwks.md)). |
+| `jwt.previousKeys` | `[]` | Keys retired by a rotation: `{kid, secretName, secretKey}` (default `private.pem`). Published in the JWKS for verification only, never used to sign ([jwt-jwks](./jwt-jwks.md#rotating-the-signing-key)). |
 | `serviceAccount.create` | `true` | The SA the CSR/TokenReview ClusterRoles bind to. |
 | `env.*` | see below | Rendered into the ConfigMap. |
 
@@ -72,6 +73,7 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `AUTHN_SERVICEACCOUNT_AUDIENCE` | `authn` | Audience the projected SA token must carry for `/serviceaccount/login`. |
 | `JWT_SIGN_KEY_FILE` | (mounted from the Secret) | Path to the PEM-encoded RSA private key; without a valid one authn exits at boot ([gotchas](./gotchas.md)). |
 | `JWT_KID` | (from `jwt.kid`) | Key ID stamped into every token header and the JWKS; required, non-empty. |
+| `JWT_PREVIOUS_KEYS` | (from `jwt.previousKeys`) | Verification-only keys: comma-separated `kid=path`, each a PEM RSA private or public key. An unusable entry makes authn exit at boot. |
 | `SNOWPLOW_SERVICE_HOST` / `SNOWPLOW_SERVICE_PORT` | unset / `8081` | Preferred snowplow endpoint source; beware the resolution quirk ([gotchas](./gotchas.md)). |
 | `URL_SNOWPLOW` | `http://snowplow.krateo-system.svc.cluster.local:8081` | Fallback snowplow URL when the SERVICE_HOST pair is unset. |
 | `OTEL_ENABLED` | `false` | Master OpenTelemetry gate; tracing and metrics each default to it. |
@@ -79,7 +81,7 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (SDK standard) | OTLP/HTTP collector endpoint when telemetry is on. |
 
 Flags mirror all of the above (`--port`, `--cert-expires`, `--jwt-sign-key-file`,
-`--jwt-kid`, `--serviceaccount-audience`, `--service-cert-expires`,
+`--jwt-kid`, `--jwt-previous-keys`, `--serviceaccount-audience`, `--service-cert-expires`,
 `--cert-renewal`, `--cert-renewal-threshold`, `--otel-tracing`, `--kubeconfig` for
 out-of-cluster runs, …) — flags win over env ([architecture](./architecture.md)).
 

@@ -170,8 +170,36 @@ rotation follows automatically. The mechanics, implemented once in
   never `401` — a `401` would tell a browser to discard a good session because authn
   happened to be restarting.
 
+#### Rotating the signing key
+
 Publish both keys in the JWKS across a rotation (old + new `kid`) so tokens signed
-before the switch stay verifiable until they expire.
+before the switch stay verifiable until they expire. authn signs only with the current
+key (`jwt.signKeySecretName`, `jwt.kid`) and publishes every `jwt.previousKeys` entry
+for verification only (`JWT_PREVIOUS_KEYS`):
+
+1. Create a Secret with the new private key.
+2. In one upgrade, move the current key into `jwt.previousKeys` and point
+   `jwt.signKeySecretName` / `jwt.kid` at the new key:
+   ```yaml
+   jwt:
+     signKeySecretName: authn-jwt-signing-key-2
+     kid: krateo-authn-key-2
+     previousKeys:
+       - kid: krateo-authn-key-1
+         secretName: authn-jwt-signing-key   # the old key; a public-only PEM also works
+         secretKey: private.pem              # default
+   ```
+   New tokens carry `krateo-authn-key-2`. Validators refetch the JWKS on that unknown
+   `kid` and accept them immediately. Tokens signed with `krateo-authn-key-1` keep
+   verifying, because that key is still published.
+3. After the longest token lifetime has passed (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, 24h
+   by default), remove the entry, then delete the old Secret.
+
+authn refuses to start when a previous key is unusable: an empty or duplicate `kid`,
+the current `kid`, an unreadable or non-RSA file, or the current key under another
+`kid`. A retired key that will never verify anything is a misconfiguration, not
+something to skip silently. authn's own JWT, used for RESTAction calls, is minted at
+startup with the current key, so the upgrade's restart moves it to the new key too.
 
 ### The `serviceaccount` strategy
 

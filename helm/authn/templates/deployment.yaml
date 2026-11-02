@@ -41,6 +41,10 @@ spec:
               value: "{{ .Values.jwt.mountPath }}/{{ .Values.jwt.signKeySecretKey }}"
             - name: JWT_KID
               value: {{ .Values.jwt.kid | quote }}
+            {{- with include "authn.jwtPreviousKeys" . }}
+            - name: JWT_PREVIOUS_KEYS
+              value: {{ . | quote }}
+            {{- end }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           image: {{ include "krateo.image" (dict "img" .Values.image "global" .Values.global "defaultTag" .Chart.AppVersion) | quote }}
@@ -59,6 +63,11 @@ spec:
             - name: jwt-signing-key
               mountPath: {{ .Values.jwt.mountPath }}
               readOnly: true
+            {{- range $i, $k := (.Values.jwt.previousKeys | default list) }}
+            - name: jwt-previous-key-{{ $i }}
+              mountPath: /etc/authn/jwt-previous/{{ $i }}
+              readOnly: true
+            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -69,6 +78,15 @@ spec:
             items:
               - key: {{ .Values.jwt.signKeySecretKey }}
                 path: {{ .Values.jwt.signKeySecretKey }}
+        {{- range $i, $k := (.Values.jwt.previousKeys | default list) }}
+        {{- $key := $k.secretKey | default "private.pem" }}
+        - name: jwt-previous-key-{{ $i }}
+          secret:
+            secretName: {{ required "jwt.previousKeys[].secretName is required" $k.secretName }}
+            items:
+              - key: {{ $key }}
+                path: {{ $key }}
+        {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

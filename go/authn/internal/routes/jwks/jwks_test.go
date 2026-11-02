@@ -112,3 +112,54 @@ func TestEndpointIsConsumableByJWKSKeySource(t *testing.T) {
 	assert.Equal(t, Path, jwtutil.DefaultJWKSPath,
 		"authn's JWKS path must match the path consumers derive from authn's base URL")
 }
+
+// A key rotation keeps tokens signed with the retired key valid: the JWKS
+// publishes it next to the current key, and a consumer using plumbing's
+// JWKSKeySource verifies tokens signed with either. A key that isn't published
+// verifies nothing.
+func TestRotationKeepsTokensSignedWithThePreviousKeyValid(t *testing.T) {
+	newKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	oldKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	retiredLongAgo, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+
+	route := Endpoint(&newKey.PublicKey, "key-2", Key{KID: "key-1", Pub: &oldKey.PublicKey})
+	mux := http.NewServeMux()
+	mux.HandleFunc(route.Pattern(), route.Handler())
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	keys := jwtutil.NewJWKSKeySource(jwtutil.JWKSURL(srv.URL))
+
+	sign := func(k *rsa.PrivateKey, kid, user string) string {
+		tok, err := jwtutil.CreateToken(jwtutil.CreateTokenOptions{
+			Username: user, Groups: []string{"devs"}, Duration: time.Minute, KeyID: kid, PrivateKey: k,
+		})
+		require.NoError(t, err)
+		return tok
+	}
+
+	info, err := jwtutil.ValidateWithKeySource(keys, sign(newKey, "key-2", "after"))
+	require.NoError(t, err, "a token signed with the current key verifies")
+	assert.Equal(t, "after", info.Username)
+
+	info, err = jwtutil.ValidateWithKeySource(keys, sign(oldKey, "key-1", "before"))
+	require.NoError(t, err, "a token signed before the rotation still verifies")
+	assert.Equal(t, "before", info.Username)
+
+	_, err = jwtutil.ValidateWithKeySource(keys, sign(retiredLongAgo, "key-0", "gone"))
+	assert.Error(t, err, "a key no longer published verifies nothing")
+
+	_, err = jwtutil.ValidateWithKeySource(keys, sign(oldKey, "key-2", "forged"))
+	assert.Error(t, err, "the old key can't sign under the current kid")
+
+	// The current key comes first.
+	rec := httptest.NewRecorder()
+	route.Handler()(rec, httptest.NewRequest(http.MethodGet, Path, nil))
+	var set jwkSet
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &set))
+	require.Len(t, set.Keys, 2)
+	assert.Equal(t, "key-2", set.Keys[0].Kid)
+	assert.Equal(t, "key-1", set.Keys[1].Kid)
+}

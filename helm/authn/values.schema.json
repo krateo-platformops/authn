@@ -338,6 +338,40 @@
           "type": "string",
           "title": "JWT key ID",
           "description": "Key ID advertised in every token header and in the JWKS \"kid\". Must be stable for the lifetime of the key so validators can match it."
+        },
+        "previousKeys": {
+          "type": "array",
+          "title": "Previous JWT keys",
+          "description": "Keys retired by a rotation, published in the JWKS for verification only so tokens they signed stay valid until they expire. authn never signs with them.",
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kid",
+              "secretName"
+            ],
+            "properties": {
+              "kid": {
+                "type": "string",
+                "minLength": 1,
+                "title": "Key ID",
+                "description": "The kid the retired key signed with."
+              },
+              "secretName": {
+                "type": "string",
+                "minLength": 1,
+                "title": "Secret name",
+                "description": "Secret holding the PEM key: the retired private key or its public half."
+              },
+              "secretKey": {
+                "type": "string",
+                "title": "Secret key",
+                "description": "Key inside that Secret; default private.pem.",
+                "default": "private.pem"
+              }
+            }
+          }
         }
       }
     },
