@@ -29,22 +29,35 @@ type jwkSet struct {
 	Keys []jwk `json:"keys"`
 }
 
-// Endpoint serves the JWKS derived from the given RSA public key and key ID at
-// GET /.well-known/jwks.json. Validators such as agentgateway select the key
-// whose "kid" matches the token header, so kid must equal the KeyID authn signs
-// with. The document is computed once at construction time and served verbatim.
-func Endpoint(pub *rsa.PublicKey, kid string) routes.Route {
-	set := jwkSet{
-		Keys: []jwk{
-			{
-				Kty: "RSA",
-				Use: "sig",
-				Alg: "RS256",
-				Kid: kid,
-				N:   base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
-				E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
-			},
-		},
+// Key is a verification key published in the JWKS: the public half of a
+// signing key, under its key ID.
+type Key struct {
+	KID string
+	Pub *rsa.PublicKey
+}
+
+func (k Key) jwk() jwk {
+	return jwk{
+		Kty: "RSA",
+		Use: "sig",
+		Alg: "RS256",
+		Kid: k.KID,
+		N:   base64.RawURLEncoding.EncodeToString(k.Pub.N.Bytes()),
+		E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(k.Pub.E)).Bytes()),
+	}
+}
+
+// Endpoint serves the JWKS at GET /.well-known/jwks.json: the current signing
+// key under kid, then any previous keys. Validators such as agentgateway
+// select the key whose "kid" matches the token header, so kid must equal the
+// KeyID authn signs with. Previous keys are published for verification only,
+// so tokens signed before a key rotation stay valid until they expire. authn
+// never signs with them. The document is computed once at construction time
+// and served verbatim.
+func Endpoint(pub *rsa.PublicKey, kid string, previous ...Key) routes.Route {
+	set := jwkSet{Keys: []jwk{Key{KID: kid, Pub: pub}.jwk()}}
+	for _, k := range previous {
+		set.Keys = append(set.Keys, k.jwk())
 	}
 
 	body, err := json.Marshal(set)

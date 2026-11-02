@@ -78,3 +78,18 @@ across all Krateo charts (shipped from the shared chart scaffold).
 {{- printf "%s:%s" .img.repository $tag -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Verification-only JWT keys of a key rotation (jwt.previousKeys), as the
+JWT_PREVIOUS_KEYS value: comma-separated kid=path. Entry i is mounted under
+/etc/authn/jwt-previous/<i>/. The default list applies in the template because
+the installer builds values without this chart's values.yaml.
+*/}}
+{{- define "authn.jwtPreviousKeys" -}}
+{{- $out := list -}}
+{{- range $i, $k := (.Values.jwt.previousKeys | default list) -}}
+{{- $key := $k.secretKey | default "private.pem" -}}
+{{- $out = append $out (printf "%s=/etc/authn/jwt-previous/%d/%s" $k.kid $i $key) -}}
+{{- end -}}
+{{- join "," $out -}}
+{{- end -}}

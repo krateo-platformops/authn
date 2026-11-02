@@ -22,6 +22,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/routes/health"
+	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/krateo-platformops/authn/internal/stepupsweep"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/authn/internal/uuid"
@@ -83,6 +84,8 @@ func main() {
 		env.String("AUTHN_USERNAME", "authn"), "authn username for clientconfig for restaction api calls")
 	signKeyFile := flag.String("jwt-sign-key-file", env.String("JWT_SIGN_KEY_FILE", ""), "path to the PEM-encoded RSA private key used to sign JWT tokens (mounted from a Secret)")
 	jwtKeyID := flag.String("jwt-kid", env.String("JWT_KID", ""), "key ID (kid) set in the JWT header; must match the kid published in the JWKS")
+	jwtPreviousKeys := flag.String("jwt-previous-keys", env.String("JWT_PREVIOUS_KEYS", ""),
+		"verification-only keys of a key rotation, published in the JWKS next to the current key: comma-separated kid=path, each a PEM RSA private or public key")
 	serviceAccountAudience := flag.String("serviceaccount-audience",
 		env.String("AUTHN_SERVICEACCOUNT_AUDIENCE", serviceaccount.DefaultAudience),
 		"audience the projected ServiceAccount token must carry for the /serviceaccount/login strategy")
@@ -187,6 +190,15 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("parsing JWT signing key")
 	}
+	// Keys retired by a rotation: published for verification until the tokens
+	// they signed expire, never used to sign.
+	previousKeys, err := jwks.ParsePreviousKeys(*jwtPreviousKeys, *jwtKeyID, &privateKey.PublicKey)
+	if err != nil {
+		log.Fatal().Err(err).Msg("JWT previous keys (--jwt-previous-keys / JWT_PREVIOUS_KEYS)")
+	}
+	for _, k := range previousKeys {
+		log.Info().Str("kid", k.KID).Msg("publishing a previous JWT key for verification only")
+	}
 
 	healthy := int32(0)
 
@@ -195,6 +207,7 @@ func main() {
 		Generator:              gen,
 		PrivateKey:             privateKey,
 		KeyID:                  *jwtKeyID,
+		PreviousKeys:           previousKeys,
 		JwtDuration:            *certExpiresIn,
 		ServiceAccountAudience: *serviceAccountAudience,
 		SelfUsername:           *authnUsername,
