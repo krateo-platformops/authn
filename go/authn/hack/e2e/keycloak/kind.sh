@@ -11,7 +11,8 @@
 #   KEEP=0                    1: keep the cluster afterwards
 #   KC_IMAGE=quay.io/keycloak/keycloak:26.4
 #   WORKDIR=${TMPDIR:-/tmp}/authn-e2e-keycloak
-#   SKIP=                     passed to stepup.sh, e.g. "d e" for a quick run
+#   SKIP=                     passed to stepup.sh, e.g. "d e f" for a quick run (f, the
+#                             step-up sweep, waits for a real expiry: about 20 minutes)
 #
 # Needs git, docker, kind, kubectl, helm, curl, jq, openssl.
 #
@@ -39,6 +40,8 @@ die() { echo "kind.sh: $*" >&2; exit 1; }
 export KC_URL=http://$KC_HOST KC_ADMIN_USER=admin KC_ADMIN_PASSWORD=admin-e2e REALM=krateo
 export CLIENT_ID=portal CLIENT_SECRET=portal-e2e-secret REDIRECT_URI='http://localhost/auth?kind=oidc'
 export TEST_USER=alice TEST_PASSWORD=alice-e2e-pw TOTP_SEED=authn-e2e-totp-seed-0001 TEST_GROUP=devs
+# f's rewrite check: a second user, same password and TOTP seed.
+REWRITE_USER=bob
 
 PIDS=()
 # shellcheck disable=SC2329 # run by the EXIT trap
@@ -125,26 +128,29 @@ for _ in $(seq 1 60); do curl -sf -o /dev/null $KC_CURL_ARGS "$KC_URL/realms/mas
 
 step "realm.sh"
 "$HERE/realm.sh" || die "realm.sh"
+TEST_USER=$REWRITE_USER "$HERE/realm.sh" >/dev/null || die "realm.sh ($REWRITE_USER)"
 
-step "OIDCConfigs keycloak (stepUp maxAge 5m) and keycloak-stale (maxAge 60s, for d and e)"
+step "OIDCConfigs keycloak (stepUp maxAge 5m), keycloak-stale (maxAge 60s, for d and e), keycloak-sweep (ttl 10m, for f)"
 kubectl -n $NS create secret generic keycloak-portal --from-literal=clientSecret="$CLIENT_SECRET" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-for c in keycloak:5m keycloak-stale:60s; do
+for c in keycloak:5m keycloak-stale:60s keycloak-sweep:5m:10m; do
+IFS=: read -r name max_age ttl <<<"$c"
 cat <<EOF | kubectl apply -f - >/dev/null
 apiVersion: oidc.authn.krateo.io/v1alpha1
 kind: OIDCConfig
-metadata: { name: ${c%%:*}, namespace: $NS }
+metadata: { name: $name, namespace: $NS }
 spec:
   discoveryURL: $KC_URL/realms/$REALM/.well-known/openid-configuration
   redirectURI: "$REDIRECT_URI"
   clientID: $CLIENT_ID
   clientSecret: { name: keycloak-portal, namespace: $NS, key: clientSecret }
-  stepUp: { acrValues: ["gold"], maxAge: ${c##*:} }
+  stepUp: { acrValues: ["gold"], maxAge: $max_age${ttl:+, ttl: $ttl} }
 EOF
 done
 
 step "stepup.sh"
-OIDC_NAME=keycloak OIDC_NAME_STALE=keycloak-stale KUBECTL_CHECKS=1 AUTHN_NAMESPACE=$NS WORKDIR=$WORKDIR/run \
+OIDC_NAME=keycloak OIDC_NAME_STALE=keycloak-stale OIDC_NAME_SWEEP=keycloak-sweep SWEEP_REWRITE_USER=$REWRITE_USER \
+  KUBECTL_CHECKS=1 AUTHN_NAMESPACE=$NS AUTHN_SELECTOR=app.kubernetes.io/name=authn WORKDIR=$WORKDIR/run \
   "$HERE/stepup.sh"
 RC=$?
 
