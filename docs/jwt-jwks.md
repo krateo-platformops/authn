@@ -195,6 +195,16 @@ for verification only (`JWT_PREVIOUS_KEYS`):
 3. After the longest token lifetime has passed (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, 24h
    by default), remove the entry, then delete the old Secret.
 
+Run each step's upgrade with `--wait` (or follow it with `kubectl rollout status`). A bad
+previous-key setting makes the new pod exit at boot while the old pod keeps serving, so
+without waiting `helm upgrade` reports success and the rotation silently stalls.
+
+Remove a previous key only after every token it signed has expired. Validators built on
+`JWKSKeySource` look the key up before checking expiry. A token whose `kid` is no longer
+published fails as "key unavailable" (a `503` at snowplow), not as an invalid or expired
+token (`401`), even once it has expired. So a client still holding one is told to retry,
+not to sign in again.
+
 authn refuses to start when a previous key is unusable: an empty or duplicate `kid`,
 the current `kid`, an unreadable or non-RSA file, or the current key under another
 `kid`. A retired key that will never verify anything is a misconfiguration, not
