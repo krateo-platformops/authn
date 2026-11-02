@@ -14,6 +14,20 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-02 — Basic and ldap tell refusals from their own failures
+
+Basic and ldap answered `403` for anything that went wrong, so an unreachable LDAP server
+or an apiserver error reading a `User` looked like a wrong password, and logged at warn.
+Both now follow the failure contract of `/serviceaccount/login` and `/oidc/login`: each
+failure is a `Status` with a cause, `401`/`403` when the caller is refused, `500` when
+authn failed. The causes are listed in [api](./api.md). Refusals keep their codes (`403`,
+and ldap's `404`/`300` for an unknown or ambiguous user), and an unknown user and a wrong
+password are one cause, `InvalidCredentials`. Besides the new `500`s, two answers changed: a missing
+basic `Authorization` header is now a JSON `Status` (`MissingCredentials`) instead of a
+plain-text `401`, and an unknown LDAPConfig is `404` `LDAPConfigNotFound` instead of
+`417`. The oauth login no longer writes a second response after a RESTAction answer it
+can't parse.
+
 ## 2026-11-02 — Refused logins are logged at warn
 
 Every failed login was logged at error, so a caller with an expired token or a wrong

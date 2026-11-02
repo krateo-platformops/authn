@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"strings"
 	"text/template"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/shortid"
+	"github.com/krateo-platformops/authn/internal/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 	"k8s.io/utils/ptr"
 )
@@ -30,10 +33,22 @@ type ldapConfig struct {
 	tls        bool
 }
 
+// getConfig reads the LDAPConfig name and its bind Secret. An LDAPConfig that
+// doesn't exist is the caller's mistake (404); one authn can't read, or whose
+// bind Secret it can't read, is authn's failure (500).
 func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error) {
+	if len(rest.IsValidPathSegmentName(name)) > 0 {
+		// No LDAPConfig can have this name; looking it up would fail client-side.
+		return ldapConfig{}, status.CauseError{Code: http.StatusNotFound, Cause: CauseLDAPConfigNotFound,
+			Err: fmt.Errorf("LDAPConfig %q not found", name)}
+	}
 	cfg, err := resolvers.LDAPConfigGet(rc, name)
-	if err != nil {
-		return ldapConfig{}, fmt.Errorf("unable to resolve LDAP configuration")
+	switch {
+	case apierrors.IsNotFound(err):
+		return ldapConfig{}, status.CauseError{Code: http.StatusNotFound, Cause: CauseLDAPConfigNotFound,
+			Err: fmt.Errorf("LDAPConfig %q not found", name)}
+	case err != nil:
+		return ldapConfig{}, status.Failed(CauseLDAPConfigLookupFailed, fmt.Errorf("unable to resolve LDAP configuration: %w", err))
 	}
 
 	res := ldapConfig{
@@ -47,7 +62,7 @@ func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error
 	if ref := cfg.Spec.BindSecret; ref != nil {
 		sec, err := secrets.Get(context.Background(), rc, ref)
 		if err != nil {
-			return res, err
+			return res, status.Failed(CauseLDAPConfigLookupFailed, fmt.Errorf("reading the bind secret: %w", err))
 		}
 		if val, ok := sec.Data[ref.Key]; ok {
 			res.bindSecret = string(val)
@@ -57,26 +72,32 @@ func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error
 	return res, nil
 }
 
+// dial connects to the LDAP server; tests replace it with a fake.
+var dial = func(url string) (ldap.Client, error) { return ldap.DialURL(url) }
+
+// doLogin authenticates username against the LDAP server. Every error it
+// returns is a status.CauseError: the caller's refusal (the user is unknown,
+// ambiguous, or its bind is refused) or authn's failure (the server can't be
+// reached, or refuses authn's own bind or search).
 func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
-	l, err := ldap.DialURL(cfg.dialURL)
+	l, err := dial(cfg.dialURL)
 	if err != nil {
-		return nil, err
+		return nil, status.Failed(CauseLDAPUnavailable, err)
 	}
 	defer l.Close()
-	//l.Debug = true
 
 	if cfg.tls {
 		// Reconnect with TLS
 		err = l.StartTLS(&tls.Config{InsecureSkipVerify: true})
 		if err != nil {
-			return nil, err
+			return nil, status.Failed(CauseLDAPUnavailable, err)
 		}
 	}
 
 	// First bind with the admin user
 	err = l.Bind(cfg.bindDN, cfg.bindSecret)
 	if err != nil {
-		return nil, err
+		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
 
 	// Search for the given username
@@ -91,22 +112,25 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 
 	sr, err := l.Search(searchRequest)
 	if err != nil {
-		return nil, err
+		return nil, serverFailure(CauseLDAPSearchFailed, err)
 	}
 
 	if len(sr.Entries) == 0 {
-		return nil, errNotFound
+		return nil, status.CauseError{Code: http.StatusNotFound, Cause: CauseUserNotFound, Err: errNotFound}
 	}
 
 	if len(sr.Entries) > 1 {
-		return nil, errTooManyEntries
+		return nil, status.CauseError{Code: http.StatusMultipleChoices, Cause: CauseAmbiguousUser, Err: errTooManyEntries}
 	}
 
 	user := sr.Entries[0]
 	// Bind as the user to verify their password
 	err = l.Bind(user.DN, password)
 	if err != nil {
-		return nil, err
+		if refusesUser(err) {
+			return nil, status.Refused(CauseInvalidCredentials, err)
+		}
+		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
 
 	// Now perform a search for groups that the user belongs to
@@ -121,7 +145,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 
 	groupSR, err := l.Search(groupSearchRequest)
 	if err != nil {
-		return nil, err
+		return nil, serverFailure(CauseLDAPSearchFailed, err)
 	}
 
 	groups := []string{}
@@ -135,6 +159,32 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	}
 
 	return nfo, nil
+}
+
+// refusesUser reports whether err is the server's (or the client's) verdict on
+// the user's own credentials: wrong password, an authentication the server won't
+// accept for this user (e.g. a disabled account), or an empty password.
+func refusesUser(err error) bool {
+	for _, code := range []uint16{
+		ldap.LDAPResultInvalidCredentials,
+		ldap.LDAPResultInappropriateAuthentication,
+		ldap.LDAPResultUnwillingToPerform,
+		ldap.ErrorEmptyPassword,
+	} {
+		if ldap.IsErrorWithCode(err, code) {
+			return true
+		}
+	}
+	return false
+}
+
+// serverFailure is authn's failure talking to the LDAP server: a lost
+// connection is LDAPUnavailable, any other error is cause.
+func serverFailure(cause status.CauseType, err error) error {
+	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
+		return status.Failed(CauseLDAPUnavailable, err)
+	}
+	return status.Failed(cause, err)
 }
 
 func ldapEntryToUserInfo(entry *ldap.Entry) userinfo.Info {
