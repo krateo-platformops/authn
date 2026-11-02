@@ -7,7 +7,8 @@ the `acr` and `auth_time` claims Keycloak actually issues, which a mock IdP can'
 |---|---|---|
 | `realm.sh` | Sets up the realm through the admin API. It is idempotent and works on an existing Keycloak. `realm.sh loa2-max-age <s>` changes only the LoA-2 condition. | bash, curl, jq |
 | `stepup.sh` | Drives Keycloak's login pages with curl, starting from the URLs authn's `/strategies` advertises. It posts the codes to authn and checks the answers. | bash ≥ 4.4, curl, jq, openssl, od/sed/awk/base64 (kubectl only with `KUBECTL_CHECKS=1`) |
-| `kind.sh` | The kind harness: cluster, authn built from `REF`, Keycloak, OIDCConfigs, then the two scripts above. | git, docker, kind, kubectl, helm, plus the above |
+| `cluster.sh` | The harness on an existing cluster (`KUBECONFIG`): authn from its helm chart (a published release, or a local chart), Keycloak, OIDCConfigs in `NS`, then the two scripts above. | kubectl, helm, plus the above |
+| `kind.sh` | A kind cluster and authn built from `REF`, then `cluster.sh` on it. | git, docker, kind, plus the above |
 
 The TOTP codes are computed with `openssl dgst -mac HMAC`, so python isn't needed.
 
@@ -24,10 +25,26 @@ Scenario f waits for a real step-up certificate to expire and for authn's sweep 
 so a full run takes about 15–20 minutes longer. Skip it with `SKIP=f` unless you are working on
 the sweep or on step-up credentials.
 
-Keycloak gets `KC_HOSTNAME=http://keycloak.krateo-system.svc:8080`, so its issuer is the
+Keycloak gets `KC_HOSTNAME=http://keycloak.<NS>.svc:8080`, so its issuer is the
 in-cluster URL. The script reaches that same URL through a port-forward with
 `curl --connect-to` (`KC_CURL_ARGS`). The Host header, cookies and issuer are therefore the
 ones authn sees, and issuer validation stays on.
+
+## On an existing cluster (GKE, ...), against a published release
+
+```sh
+KUBECONFIG=<file> NS=authn-e2e AUTHN_VERSION=0.31.1 go/authn/hack/e2e/keycloak/cluster.sh
+KUBECONFIG=<file> NS=authn-e2e AUTHN_VERSION=0.31.1 UNINSTALL=1 SKIP=f go/authn/hack/e2e/keycloak/cluster.sh
+```
+
+`cluster.sh` installs everything in `NS`: the published `authn` chart, Keycloak (pulled
+from quay.io), the OIDCConfigs and the user Secrets. It applies the CRDs of the
+`authn-crds` chart at the same version and never deletes them. Besides `NS`, the chart
+creates ClusterRoles and ClusterRoleBindings suffixed with `NS`, and authn creates CSRs, so
+several runs can share a cluster in different namespaces. `AUTHN_IMAGE_DIGEST=sha256:…`
+makes it fail unless the running pod has that image. `UNINSTALL=1` runs `helm uninstall`
+and deletes `NS` at the end. `KUBECONFIG` is required, so the script never installs into
+your default context by accident.
 
 ## In a cluster (a pod with curl)
 
