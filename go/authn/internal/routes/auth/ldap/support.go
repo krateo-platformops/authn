@@ -78,7 +78,9 @@ var dial = func(url string) (ldap.Client, error) { return ldap.DialURL(url) }
 // doLogin authenticates username against the LDAP server. Every error it
 // returns is a status.CauseError: the caller's refusal (the user is unknown,
 // ambiguous, or its bind is refused) or authn's failure (the server can't be
-// reached, or refuses authn's own bind or search).
+// reached, or refuses authn's own bind or search). An unknown user and a
+// refused bind are the same InvalidCredentials body, so a caller can't probe
+// which users exist; the real reason only reaches the log.
 func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	l, err := dial(cfg.dialURL)
 	if err != nil {
@@ -116,7 +118,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	}
 
 	if len(sr.Entries) == 0 {
-		return nil, status.CauseError{Code: http.StatusNotFound, Cause: CauseUserNotFound, Err: errNotFound}
+		return nil, invalidCredentials(errNotFound)
 	}
 
 	if len(sr.Entries) > 1 {
@@ -128,7 +130,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	err = l.Bind(user.DN, password)
 	if err != nil {
 		if refusesUser(err) {
-			return nil, status.Refused(CauseInvalidCredentials, err)
+			return nil, invalidCredentials(err)
 		}
 		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
@@ -159,6 +161,12 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	}
 
 	return nfo, nil
+}
+
+// invalidCredentials refuses the caller with the one InvalidCredentials body;
+// reason goes to the log only.
+func invalidCredentials(reason error) error {
+	return status.RefusedPrivately(CauseInvalidCredentials, errInvalidCredentials, reason)
 }
 
 // refusesUser reports whether err is the server's (or the client's) verdict on

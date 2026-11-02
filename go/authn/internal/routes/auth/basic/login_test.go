@@ -194,6 +194,50 @@ func TestLoginFailureCauses(t *testing.T) {
 	}
 }
 
+// An unknown user, an unusable user name and a wrong password get the very
+// same response, so a caller can't probe which users exist. Only the log tells
+// them apart.
+func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "krateo-system")
+	srv := fakeAPIServer(t, reply{code: 200, body: userAdmin}, reply{code: 200, body: secretWith("password", "s3cret")})
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: &fakeGenerator{}, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+
+	attempt := func(username, password string) (*httptest.ResponseRecorder, string) {
+		var buf bytes.Buffer
+		req := httptest.NewRequest(http.MethodGet, Path, nil)
+		req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
+		req.SetBasicAuth(username, password)
+		rec := httptest.NewRecorder()
+		route.Handler().ServeHTTP(rec, req)
+		var line struct {
+			Level  string `json:"level"`
+			Reason string `json:"reason"`
+		}
+		require.NoError(t, json.Unmarshal(lastLine(buf.Bytes()), &line), buf.String())
+		assert.Equal(t, "warn", line.Level)
+		return rec, line.Reason
+	}
+
+	wrong, wrongWhy := attempt("admin", "guess")
+	unknown, unknownWhy := attempt("bob", "s3cret")
+	unusable, unusableWhy := attempt("../admin", "s3cret")
+
+	require.Equal(t, http.StatusForbidden, wrong.Code)
+	assert.Equal(t, wrong.Code, unknown.Code)
+	assert.Equal(t, wrong.Code, unusable.Code)
+	assert.Equal(t, wrong.Header(), unknown.Header())
+	assert.Equal(t, wrong.Header(), unusable.Header())
+	assert.Equal(t, wrong.Body.String(), unknown.Body.String(), "byte-identical bodies")
+	assert.Equal(t, wrong.Body.String(), unusable.Body.String(), "byte-identical bodies")
+	assert.NotContains(t, unknown.Body.String(), "bob")
+
+	assert.Contains(t, wrongWhy, "wrong password")
+	assert.Contains(t, unknownWhy, "bob", "the apiserver's not-found error, in the log only")
+	assert.Contains(t, unusableWhy, "not a valid User name")
+}
+
 func TestLoginSucceeds(t *testing.T) {
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 	srv := fakeAPIServer(t, reply{code: 200, body: userAdmin}, reply{code: 200, body: secretWith("password", "s3cret")})

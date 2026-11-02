@@ -218,7 +218,7 @@ func TestLoginFailureCauses(t *testing.T) {
 		// Refusals of the caller, and the not-found answers.
 		{name: "unknown LDAPConfig", configCode: 404, code: 404, cause: "LDAPConfigNotFound", level: "warn"},
 		{name: "unusable LDAPConfig name", config: "..", code: 404, cause: "LDAPConfigNotFound", level: "warn"},
-		{name: "no such user", ldap: &fakeLDAP{entries: 0}, code: 404, cause: "UserNotFound", level: "warn"},
+		{name: "no such user", ldap: &fakeLDAP{entries: 0}, code: 403, cause: "InvalidCredentials", level: "warn"},
 		{name: "ambiguous user", ldap: &fakeLDAP{entries: 2}, code: 300, cause: "AmbiguousUser", level: "warn"},
 		{name: "wrong password", ldap: &fakeLDAP{entries: 1, userBind: ldapErr(ldap.LDAPResultInvalidCredentials)},
 			code: 403, cause: "InvalidCredentials", level: "warn"},
@@ -264,6 +264,51 @@ func TestLoginFailureCauses(t *testing.T) {
 			}
 		})
 	}
+}
+
+// An unknown user, a wrong password and an empty password get the very same
+// response, so a caller can't probe which users exist. Only the log tells
+// them apart.
+func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
+	attempt := func(srvLDAP *fakeLDAP) (*httptest.ResponseRecorder, string) {
+		t.Setenv("POD_NAMESPACE", "krateo-system")
+		orig := dial
+		dial = func(string) (ldap.Client, error) { return srvLDAP, nil }
+		defer func() { dial = orig }()
+		srv := fakeAPIServer(t, 200, 200, fakeDialURL)
+		route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: &fakeGenerator{}, JwtDuration: time.Hour, JwtPrivateKey: testKey(t), JwtKeyID: "k"})
+
+		var buf bytes.Buffer
+		req := httptest.NewRequest(http.MethodPost, Path+"?name=corp", strings.NewReader(`{"username":"alice","password":"pw"}`))
+		req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
+		rec := httptest.NewRecorder()
+		route.Handler().ServeHTTP(rec, req)
+
+		lines := bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n"))
+		var line struct {
+			Level  string `json:"level"`
+			Reason string `json:"reason"`
+		}
+		require.NoError(t, json.Unmarshal(lines[len(lines)-1], &line), buf.String())
+		assert.Equal(t, "warn", line.Level)
+		return rec, line.Reason
+	}
+
+	unknown, unknownWhy := attempt(&fakeLDAP{entries: 0})
+	wrong, wrongWhy := attempt(&fakeLDAP{entries: 1, userBind: ldapErr(ldap.LDAPResultInvalidCredentials)})
+	empty, emptyWhy := attempt(&fakeLDAP{entries: 1, userBind: ldapErr(ldap.ErrorEmptyPassword)})
+
+	require.Equal(t, http.StatusForbidden, wrong.Code)
+	assert.Equal(t, wrong.Code, unknown.Code)
+	assert.Equal(t, wrong.Code, empty.Code)
+	assert.Equal(t, wrong.Header(), unknown.Header())
+	assert.Equal(t, wrong.Body.String(), unknown.Body.String(), "byte-identical bodies")
+	assert.Equal(t, wrong.Body.String(), empty.Body.String(), "byte-identical bodies")
+	assert.NotContains(t, wrong.Body.String(), "LDAP Result Code")
+
+	assert.Contains(t, unknownWhy, "no users found")
+	assert.Contains(t, wrongWhy, "Invalid Credentials")
+	assert.Contains(t, emptyWhy, "Empty password")
 }
 
 func TestLoginSucceeds(t *testing.T) {

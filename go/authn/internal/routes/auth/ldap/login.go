@@ -41,9 +41,10 @@ const (
 )
 
 var (
-	_                 routes.Route = (*loginRoute)(nil)
-	errNotFound                    = errors.New("no users found")
-	errTooManyEntries              = errors.New("too many entries found")
+	_                     routes.Route = (*loginRoute)(nil)
+	errNotFound                        = errors.New("no users found")
+	errTooManyEntries                  = errors.New("too many entries found")
+	errInvalidCredentials              = errors.New("invalid credentials")
 )
 
 // Causes of a failed LDAP login: the values of details.causes[0].reason
@@ -51,9 +52,8 @@ var (
 const (
 	// Refusals of the caller.
 	CauseLDAPConfigNotFound status.CauseType = "LDAPConfigNotFound" // 404
-	CauseUserNotFound       status.CauseType = "UserNotFound"       // 404
 	CauseAmbiguousUser      status.CauseType = "AmbiguousUser"      // 300
-	CauseInvalidCredentials status.CauseType = "InvalidCredentials" // 403
+	CauseInvalidCredentials status.CauseType = "InvalidCredentials" // 403: unknown user or refused bind, answered alike
 
 	// Failures of authn (500).
 	CauseLDAPConfigLookupFailed status.CauseType = "LDAPConfigLookupFailed"

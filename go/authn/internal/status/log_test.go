@@ -51,6 +51,25 @@ func TestLogFailure(t *testing.T) {
 			}
 			assert.Equal(t, "alice", got["username"], "the caller can add its own fields")
 			assert.Equal(t, "login refused", got["message"])
+			assert.NotContains(t, got, "reason", "no private reason was given")
 		})
 	}
+}
+
+// A private reason is logged, never answered.
+func TestRefusedPrivately(t *testing.T) {
+	err := RefusedPrivately("InvalidCredentials", errors.New("invalid credentials"), errors.New(`users "bob" not found`))
+
+	body, jerr := json.Marshal(FromError(err))
+	require.NoError(t, jerr)
+	assert.NotContains(t, string(body), "bob", "the response doesn't carry the private reason")
+	assert.Equal(t, 403, FromError(err).Code)
+
+	var buf bytes.Buffer
+	LogFailure(zerolog.New(&buf), err).Msg("login refused")
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(buf.Bytes(), &got), buf.String())
+	assert.Equal(t, "warn", got["level"])
+	assert.Equal(t, "invalid credentials", got["error"])
+	assert.Equal(t, `users "bob" not found`, got["reason"])
 }

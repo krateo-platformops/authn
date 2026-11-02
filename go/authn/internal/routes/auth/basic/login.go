@@ -34,7 +34,7 @@ const (
 const (
 	// Refusals of the caller.
 	CauseMissingCredentials status.CauseType = "MissingCredentials" // 401
-	CauseInvalidCredentials status.CauseType = "InvalidCredentials" // 403: unknown user or wrong password
+	CauseInvalidCredentials status.CauseType = "InvalidCredentials" // 403: unknown user or wrong password, answered alike
 
 	// Failures of authn (500).
 	CauseUserLookupFailed      status.CauseType = "UserLookupFailed"
@@ -47,6 +47,12 @@ var (
 	errMissingCredentials = errors.New("missing basic credentials")
 	errInvalidCredentials = errors.New("invalid credentials")
 )
+
+// invalidCredentials refuses the caller with the one InvalidCredentials body;
+// reason goes to the log only.
+func invalidCredentials(reason error) error {
+	return status.RefusedPrivately(CauseInvalidCredentials, errInvalidCredentials, reason)
+}
 
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
@@ -140,18 +146,19 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 // validate checks the caller's credentials against its User and the Secret
 // holding its password. An unknown user and a wrong password are the same
-// refusal, InvalidCredentials (403); a User or Secret authn can't read is
-// authn's failure (500).
+// refusal, InvalidCredentials (403), with the same body, so a caller can't
+// probe which users exist; the real reason only reaches the log. A User or
+// Secret authn can't read is authn's failure (500).
 func (r *loginRoute) validate(username, password string) (userinfo.Info, error) {
 	if len(rest.IsValidPathSegmentName(username)) > 0 || username == "" {
 		// No User can have this name; looking it up would fail client-side.
-		return nil, status.Refused(CauseInvalidCredentials, errInvalidCredentials)
+		return nil, invalidCredentials(fmt.Errorf("%q is not a valid User name", username))
 	}
 
 	usr, err := resolvers.UserGet(r.rc, username)
 	switch {
 	case apierrors.IsNotFound(err):
-		return nil, status.Refused(CauseInvalidCredentials, err)
+		return nil, invalidCredentials(err)
 	case err != nil:
 		return nil, status.Failed(CauseUserLookupFailed, fmt.Errorf("reading User %q: %w", username, err))
 	}
@@ -173,7 +180,7 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 	}
 
 	if password != string(pwd) {
-		return nil, status.Refused(CauseInvalidCredentials, errInvalidCredentials)
+		return nil, invalidCredentials(fmt.Errorf("wrong password for user %q", username))
 	}
 
 	exts := userinfo.Extensions{}

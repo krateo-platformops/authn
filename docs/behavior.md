@@ -104,8 +104,10 @@ though the code is a `4xx`.
 - **basic** — HTTP `Authorization: Basic` header; `401` `MissingCredentials` with
   `WWW-Authenticate` if absent. Password compared in plaintext against the Secret
   keyed by `User.spec.passwordRef` (`validate`, `basic/login.go`). An unknown user and
-  a wrong password are the same refusal, `403` `InvalidCredentials`. A User or Secret
-  authn can't read, or a Secret that is missing or lacks the key, is a `500` with its
+  a wrong password are the same refusal, `403` `InvalidCredentials`, with a
+  byte-identical body; the real reason is logged only (`status.RefusedPrivately`). A
+  User or Secret authn can't read, or a Secret that is missing or lacks the key, is a
+  `500` with its
   cause (`UserLookupFailed`, `PasswordLookupFailed`, `PasswordSecretMissing`). Every
   failure is a `Status` with `details.causes[0].reason` ([api](./api.md)).
 - **serviceaccount** — HTTP `Authorization: Bearer <projected SA token>`; `401` with
@@ -128,9 +130,10 @@ though the code is a `4xx`.
 - **ldap** — `?name=<LDAPConfig>` + JSON body `{"username","password"}`
   (`ldap/login.go`). Past the `400`s for a missing `name` or a bad body, every failure
   is a `Status` with `details.causes[0].reason` ([api](./api.md)), classified in `getConfig` and `doLogin` (`ldap/support.go`):
-  an unknown LDAPConfig → `404` `LDAPConfigNotFound` (was `417`); no matching entry →
-  `404` `UserNotFound`; several → `300` `AmbiguousUser`; the user's own bind refused
-  (LDAP result 49, 48 or 53, or an empty password) → `403` `InvalidCredentials`.
+  an unknown LDAPConfig → `404` `LDAPConfigNotFound` (was `417`); several matching
+  entries → `300` `AmbiguousUser`; no matching entry, or the user's own bind refused
+  (LDAP result 49, 48 or 53, or an empty password) → `403` `InvalidCredentials`, one
+  byte-identical body with the real reason logged only.
   authn's side is a `500`: the LDAPConfig or its bind Secret unreadable
   (`LDAPConfigLookupFailed`), dial, StartTLS or a dropped connection
   (`LDAPUnavailable`), the `bindDN` bind refused or a user bind failing for another

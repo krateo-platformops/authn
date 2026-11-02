@@ -20,12 +20,15 @@ Basic and ldap answered `403` for anything that went wrong, so an unreachable LD
 or an apiserver error reading a `User` looked like a wrong password, and logged at warn.
 Both now follow the failure contract of `/serviceaccount/login` and `/oidc/login`: each
 failure is a `Status` with a cause, `401`/`403` when the caller is refused, `500` when
-authn failed. The causes are listed in [api](./api.md). Refusals keep their codes (`403`,
-and ldap's `404`/`300` for an unknown or ambiguous user), and an unknown user and a wrong
-password are one cause, `InvalidCredentials`. Besides the new `500`s, two answers changed: a missing
-basic `Authorization` header is now a JSON `Status` (`MissingCredentials`) instead of a
-plain-text `401`, and an unknown LDAPConfig is `404` `LDAPConfigNotFound` instead of
-`417`. The oauth login no longer writes a second response after a RESTAction answer it
+authn failed. The causes are listed in [api](./api.md). An unknown user, an unusable
+user name and a wrong password are one response, `403` `InvalidCredentials`, byte for byte:
+before, an unknown basic user's `403` carried the apiserver's not-found text and an
+unknown LDAP user got `404`, so a caller could probe which usernames exist. The real
+reason is now only in the warn log line. Besides the new `500`s, three answers changed: a
+missing basic `Authorization` header is a JSON `Status` (`MissingCredentials`) instead of a
+plain-text `401`, an unknown LDAPConfig is `404` `LDAPConfigNotFound` instead of `417`,
+and an unknown LDAP user is `403` instead of `404`. An ambiguous LDAP user keeps its
+`300`. The oauth login no longer writes a second response after a RESTAction answer it
 can't parse.
 
 ## 2026-11-02 — Refused logins are logged at warn
