@@ -87,6 +87,20 @@ return:
 - `/basic/login?d` instead returns the kubeconfig as a file download
   (`Content-Disposition`, `basic/login.go:94-96` → `encode/attach.go`).
 
+### Log level of a failed login
+
+A failed login is logged at the level its status code implies: a refusal of the caller
+(`401`/`403`, and any other `4xx`) at **warn**, authn's own failure (`5xx`) at
+**error**. Routes that answer with `status.FromError(err)` log with
+`status.LogFailure(log, err)` (`internal/status/log.go`), which picks the level from
+the same code and adds `code` and `cause` (`details.causes[0].reason`) to the line.
+So an alert on error-level logs fires for authn's failures, not for callers with a bad
+or expired credential. Exceptions:
+- basic and ldap answer `403` also when the apiserver or the LDAP server can't be
+  reached, so those failures log at warn too;
+- the `417` answers (config lookup, OAuth code exchange) stay at error: they are
+  mostly authn's dependencies failing, though the code is a `4xx`.
+
 ### Login inputs per strategy
 
 - **basic** — HTTP `Authorization: Basic` header; `401` with `WWW-Authenticate` if

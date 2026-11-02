@@ -80,7 +80,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		user, err := r.validate(username, password)
 		if err != nil {
-			log.Err(err).Msg("basic auth failed")
+			// Answered 403, so logged as a refusal (warn). An apiserver error
+			// reading the User or its Secret is answered 403 too.
+			log.Warn().Err(err).Msg("basic auth failed")
 			encode.Forbidden(wri, err)
 			return
 		}

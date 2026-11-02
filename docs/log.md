@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-02 — Refused logins are logged at warn
+
+Every failed login was logged at error, so a caller with an expired token or a wrong
+password looked like an authn failure, and error-level alerts fired on it. The level now
+follows the status code: a refusal of the caller (`401`/`403`, other `4xx`) is logged at
+warn, authn's own failure (`5xx`) stays at error. `status.LogFailure` picks the level from
+the code `status.FromError` answers with, and adds `code` and `cause` to the line; the
+step-up, serviceaccount and OIDC login refusals use it. Basic, ldap and the `400`s for a
+missing `name` or code log at warn directly. No response changed. Basic and ldap still
+answer `403` when the apiserver or LDAP server is unreachable, so those log at warn until
+they get a `5xx`.
+
 ## 2026-11-01 — Expired step-up credentials are deleted
 
 `<user>-clientconfig-stepup` lives about 15 minutes and is never renewed, but nothing removed

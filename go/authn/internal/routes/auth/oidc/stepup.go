@@ -210,7 +210,7 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 		}
 
 		if err := checkStepUp(cfg.StepUp, tok, time.Now()); err != nil {
-			log.Err(err).Str("username", nfo.GetUserName()).Msg("step-up refused")
+			status.LogFailure(log, err).Str("username", nfo.GetUserName()).Msg("step-up refused")
 			encode.Failure(wri, status.FromError(err))
 			return
 		}
