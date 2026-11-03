@@ -67,7 +67,7 @@ answers, all `application/json`:
 
 | Request | Expect | Cause |
 |---|---|---|
-| `GET /health` | `200` | |
+| `GET /health` | `200` | Liveness only: never use it as proof of version. Verify the version by the running image's **digest** |
 | `GET /strategies` | `200` | |
 | `GET /.well-known/jwks.json` | `200` | |
 | `GET /basic/login` | `401` | `MissingCredentials` |
@@ -78,7 +78,10 @@ answers, all `application/json`:
 | `POST /oidc/stepup` (no `name`) | `400` | |
 
 None of these depends on an IdP, a directory or a config CR, so any other answer, a
-`500` above all, means authn itself is broken. `TestSmokeAnswers`
+`500` above all, means authn itself is broken. Between two releases with no change to
+these routes, every line must be identical before and after the roll. Any difference is
+a finding. `/health`'s `version` field is informational; a tag can be repointed, so the
+image digest is what identifies a build. `TestSmokeAnswers`
 (`go/authn/routes_test.go`) pins this table. Change both together.
 
 ## CRD changes
