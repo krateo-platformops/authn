@@ -57,6 +57,30 @@ One tag ships everything. This monorepo has a single version line: the app image
    standalone install ([usage](./usage.md)). Never mutate the running Deployment out
    of band.
 
+## Smoke check after a roll
+
+`GET /health` is process liveness only. A single request failing (e.g. a `User` whose
+password Secret is missing answers `500 PasswordSecretMissing`) is per-request and must
+never fail readiness, or one bad config would take authn down for everyone. To check a
+roll, send each route a request **with no credentials** and expect exactly these
+answers, all `application/json`:
+
+| Request | Expect | Cause |
+|---|---|---|
+| `GET /health` | `200` | |
+| `GET /strategies` | `200` | |
+| `GET /.well-known/jwks.json` | `200` | |
+| `GET /basic/login` | `401` | `MissingCredentials` |
+| `POST /serviceaccount/login` | `401` | `MissingBearer` |
+| `POST /ldap/login` (no `name`) | `400` | |
+| `GET /oauth/login` (no `name`) | `400` | |
+| `GET /oidc/login` (no `name`) | `400` | |
+| `POST /oidc/stepup` (no `name`) | `400` | |
+
+None of these depends on an IdP, a directory or a config CR, so any other answer, a
+`500` above all, means authn itself is broken. `TestSmokeAnswers`
+(`go/authn/routes_test.go`) pins this table. Change both together.
+
 ## CRD changes
 
 CRDs are generated from the Go types (`make generate` in `go/authn/`), drift-gated in
