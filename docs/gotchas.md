@@ -137,7 +137,7 @@ quoting them in an error is safe. Keep it that way when changing `encode.*`.
 
 ## LDAP TLS skips verification
 With `spec.tls: true`, the LDAP `StartTLS` call uses `InsecureSkipVerify: true`
-(`internal/routes/auth/ldap/support.go:161`). TLS here gives transport encryption but
+(`internal/routes/auth/ldap/support.go:159`). TLS here gives transport encryption but
 **no certificate validation** — it does not protect against a MITM with a forged
 cert.
 

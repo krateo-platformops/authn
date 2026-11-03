@@ -27,10 +27,16 @@ failed later as a "permission denied" nobody could trace. The new optional
 and groupOfUniqueNames), and the `nameAttribute` naming each group (default `cn`; an
 entry without it is skipped instead of becoming an empty group). A filter that isn't a
 usable template is a `500` `LDAPConfigInvalid`, found before authn connects to the
-server. A directory laid out as the old filter assumed (users at
-`uid=<name>,dc=example,dc=com`, groups listing them in `uniqueMember`) gets the same
-groups as before. The default also matches `member`, so there a group that lists the
-user only in `member` now counts too.
+server. The user's groups are now exactly what the search finds, each once; the user
+entry's `ou` values, which used to be its groups whenever it had any, are no longer
+read.
+
+**Behaviour change:** deployments that relied on a user's `ou` values as groups must
+bind RBAC to real directory groups, or set a `groupSearch.filter` that returns them.
+A directory laid out as the old filter assumed (users at
+`uid=<name>,dc=example,dc=com`, groups listing them in `uniqueMember`, users without
+`ou`) gets the same groups as before. The default also matches `member`, so there a
+group that lists the user only in `member` now counts too.
 
 ## 2026-11-02 — Basic and ldap tell refusals from their own failures
 

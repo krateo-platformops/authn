@@ -60,6 +60,7 @@ type fakeLDAP struct {
 	search    error
 	entries   int
 	userDN    string        // the DN of the user's entry; default aliceDN
+	userOU    []string      // the user entry's ou values
 	groups    []*ldap.Entry // the group search's answer; default one group, cn=devs
 	searches  int
 	requests  []*ldap.SearchRequest // every search, in order
@@ -100,7 +101,11 @@ func (f *fakeLDAP) Search(req *ldap.SearchRequest) (*ldap.SearchResult, error) {
 	}
 	res := &ldap.SearchResult{}
 	for i := 0; i < f.entries; i++ {
-		res.Entries = append(res.Entries, ldap.NewEntry(f.user(), map[string][]string{"uid": {"alice"}, "cn": {"Alice"}}))
+		attrs := map[string][]string{"uid": {"alice"}, "cn": {"Alice"}}
+		if f.userOU != nil {
+			attrs["ou"] = f.userOU
+		}
+		res.Entries = append(res.Entries, ldap.NewEntry(f.user(), attrs))
 	}
 	return res, nil
 }

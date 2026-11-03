@@ -149,10 +149,12 @@ though the code is a `4xx`.
   `groupSearch.nameAttribute` (default `cn`, matched case-insensitively; an entry
   without it is skipped). `getConfig` parses the template and checks a sample
   rendering with `ldap.CompileFilter`, so a bad one fails before authn dials the server.
-  Before #72 the filter was hardcoded to `(uniquemember=uid=<username>,dc=example,dc=com)`,
-  so outside that one directory layout every login got no groups. The user's own `ou`
-  values, when it has any, still win over the group search's result
-  (`ldapEntryToUserInfo`).
+  The user's groups are exactly the names found, in order, each once (`groupNames`),
+  through `userinfo.NewDefaultUser`, which drops reserved `krateo:loa:` names; the user
+  entry's `ou` is no longer read. Before #72 the filter was hardcoded to
+  `(uniquemember=uid=<username>,dc=example,dc=com)`, so outside that one directory
+  layout every login got no groups, and a user entry's `ou` values, when it had any,
+  were its groups instead.
 - **oidc step-up** — `POST /oidc/stepup?name=<OIDCConfig>`, with the same headers as
   the OIDC login (#49). It runs the same flow as `/oidc/login` (`authenticate`,
   `oidc/login.go`), then `checkStepUp` (`oidc/stepup.go`):

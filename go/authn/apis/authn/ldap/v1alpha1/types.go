@@ -29,7 +29,9 @@ type LDAPConfigSpec struct {
 	TLS *bool `json:"tls,omitempty"`
 
 	// GroupSearch configures how a user's groups are found after their bind
-	// succeeds. Omitted, every field takes its default.
+	// succeeds. A user's groups are exactly what this search finds; attributes
+	// of the user's own entry, such as ou, are not groups. Omitted, every field
+	// takes its default.
 	//+optional
 	GroupSearch *LDAPGroupSearch `json:"groupSearch,omitempty"`
 

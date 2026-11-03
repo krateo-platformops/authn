@@ -109,7 +109,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		cfg, err := getConfig(r.rc, name, lo.Username)
+		cfg, err := getConfig(r.rc, name)
 		if err != nil {
 			status.LogFailure(log, err).Str("name", name).Msg("unable to fetch ldap configuration")
 			encode.Failure(wri, status.FromError(err))

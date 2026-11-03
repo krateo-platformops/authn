@@ -33,7 +33,6 @@ type ldapConfig struct {
 	bindDN     string
 	bindSecret string
 	baseDN     string
-	filter     string
 	tls        bool
 
 	groupBaseDN   string
@@ -82,7 +81,7 @@ func renderGroupFilter(tmpl *template.Template, dn, username string) (string, er
 // bind Secret it can't read, is authn's failure (500), and so is one whose
 // spec.groupSearch.filter is unusable (LDAPConfigInvalid), found here, before
 // any connection to the server.
-func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error) {
+func getConfig(rc *rest.Config, name string) (ldapConfig, error) {
 	if len(rest.IsValidPathSegmentName(name)) > 0 {
 		// No LDAPConfig can have this name; looking it up would fail client-side.
 		return ldapConfig{}, status.CauseError{Code: http.StatusNotFound, Cause: CauseLDAPConfigNotFound,
@@ -101,7 +100,6 @@ func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error
 		dialURL: cfg.Spec.DialURL,
 		baseDN:  cfg.Spec.BaseDN,
 		bindDN:  ptr.Deref(cfg.Spec.BindDN, ""),
-		filter:  strings.ReplaceAll(filterTemplate, "$USERNAME", username),
 		tls:     ptr.Deref(cfg.Spec.TLS, false),
 
 		groupBaseDN:   cfg.Spec.BaseDN,
@@ -176,7 +174,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		strings.ReplaceAll(filterTemplate, "$USERNAME", ldap.EscapeFilter(username)),
 		//fmt.Sprintf("(&(objectClass=person)(uid=%s))", ldap.EscapeFilter(username)),
-		[]string{"uid", "cn", "mail", "memberof", "userPassword", "ou", "o"},
+		[]string{"uid", "cn", "mail", "memberof", "userPassword", "o"},
 		nil,
 	)
 
@@ -221,21 +219,26 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		return nil, serverFailure(CauseLDAPSearchFailed, err)
 	}
 
+	// The user's groups are exactly what the group search found (#72): the
+	// user entry's own attributes (e.g. ou) are not groups.
+	return ldapEntryToUserInfo(user, groupNames(groupSR.Entries, cfg.groupNameAttr)), nil
+}
+
+// groupNames names each group entry by its nameAttr value, in order and
+// without duplicates. Attribute names are case-insensitive. An entry without
+// the attribute is skipped, not named "".
+func groupNames(entries []*ldap.Entry, nameAttr string) []string {
 	groups := []string{}
-	for _, entry := range groupSR.Entries {
-		// Attribute names are case-insensitive. A group entry without the
-		// name attribute is skipped, not named "".
-		if name := entry.GetEqualFoldAttributeValue(cfg.groupNameAttr); name != "" {
-			groups = append(groups, name)
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.GetEqualFoldAttributeValue(nameAttr)
+		if name == "" || seen[name] {
+			continue
 		}
+		seen[name] = true
+		groups = append(groups, name)
 	}
-
-	nfo := ldapEntryToUserInfo(user)
-	if len(nfo.GetGroups()) == 0 {
-		nfo.SetGroups(groups)
-	}
-
-	return nfo, nil
+	return groups
 }
 
 // invalidCredentials refuses the caller with the one InvalidCredentials body;
@@ -270,7 +273,9 @@ func serverFailure(cause status.CauseType, err error) error {
 	return status.Failed(cause, err)
 }
 
-func ldapEntryToUserInfo(entry *ldap.Entry) userinfo.Info {
+// ldapEntryToUserInfo is the identity of the user entry, with groups (from the
+// group search). NewDefaultUser drops reserved groups (krateo:loa:).
+func ldapEntryToUserInfo(entry *ldap.Entry, groups []string) userinfo.Info {
 	exts := userinfo.Extensions{}
 	exts.Add("name", entry.GetAttributeValue("cn"))
 	exts.Add("email", entry.GetAttributeValue("mail"))
@@ -280,18 +285,7 @@ func ldapEntryToUserInfo(entry *ldap.Entry) userinfo.Info {
 	uid, _ := shortid.Generate()
 	nfo := userinfo.NewDefaultUser(
 		entry.GetAttributeValue("uid"), uid,
-		entry.GetAttributeValues("ou"), exts)
+		groups, exts)
 
 	return nfo
-}
-
-func execUserDnTemplate(text string, vals map[string]string) (string, error) {
-	tmpl, err := template.New("userDN").Parse(text)
-	if err != nil {
-		return "", err
-	}
-
-	buf := bytes.Buffer{}
-	err = tmpl.Execute(&buf, vals)
-	return buf.String(), err
 }

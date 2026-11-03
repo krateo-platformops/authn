@@ -28,6 +28,7 @@ func TestGroupSearch(t *testing.T) {
 		name        string
 		username    string
 		userDN      string
+		userOU      []string
 		groupSearch string
 		groups      []*ldap.Entry
 
@@ -103,6 +104,38 @@ func TestGroupSearch(t *testing.T) {
 			attrs: []string{"cn"}, want: []string{"devs"},
 		},
 		{
+			name: "duplicate names are kept once, in order",
+			groups: []*ldap.Entry{
+				group("cn=devs,ou=eu,dc=example", map[string][]string{"cn": {"devs"}}),
+				group("cn=ops,dc=example", map[string][]string{"cn": {"ops"}}),
+				group("cn=devs,ou=us,dc=example", map[string][]string{"cn": {"devs"}}),
+			},
+			baseDN: "dc=example", filter: "(|(member=uid=alice,dc=example)(uniqueMember=uid=alice,dc=example))",
+			attrs: []string{"cn"}, want: []string{"devs", "ops"},
+		},
+		{
+			name: "a reserved group name is dropped",
+			groups: []*ldap.Entry{
+				group("cn=devs,dc=example", map[string][]string{"cn": {"devs"}}),
+				group("cn=loa,dc=example", map[string][]string{"cn": {"krateo:loa:2"}}),
+			},
+			baseDN: "dc=example", filter: "(|(member=uid=alice,dc=example)(uniqueMember=uid=alice,dc=example))",
+			attrs: []string{"cn"}, want: []string{"devs"},
+		},
+		{
+			name:   "the user's ou values are not groups",
+			userOU: []string{"Engineering", "Staff"},
+			baseDN: "dc=example", filter: "(|(member=uid=alice,dc=example)(uniqueMember=uid=alice,dc=example))",
+			attrs: []string{"cn"}, want: []string{"devs"},
+		},
+		{
+			name:   "no group matches: no groups, even with ou values",
+			userOU: []string{"Engineering"},
+			groups: []*ldap.Entry{},
+			baseDN: "dc=example", filter: "(|(member=uid=alice,dc=example)(uniqueMember=uid=alice,dc=example))",
+			attrs: []string{"cn"}, want: nil,
+		},
+		{
 			name:   "no groups",
 			groups: []*ldap.Entry{},
 			baseDN: "dc=example", filter: "(|(member=uid=alice,dc=example)(uniqueMember=uid=alice,dc=example))",
@@ -114,7 +147,7 @@ func TestGroupSearch(t *testing.T) {
 			if tc.username == "" {
 				tc.username = "alice"
 			}
-			srvLDAP := &fakeLDAP{entries: 1, userDN: tc.userDN, groups: tc.groups}
+			srvLDAP := &fakeLDAP{entries: 1, userDN: tc.userDN, userOU: tc.userOU, groups: tc.groups}
 			gen := &fakeGenerator{}
 			got := loginAs(t, "corp", 200, 200, srvLDAP, gen, false, tc.username, tc.groupSearch)
 			require.Equal(t, http.StatusOK, got.code)
@@ -123,6 +156,7 @@ func TestGroupSearch(t *testing.T) {
 			if tc.userFilter != "" {
 				assert.Equal(t, tc.userFilter, srvLDAP.requests[0].Filter)
 			}
+			assert.NotContains(t, srvLDAP.requests[0].Attributes, "ou", "ou isn't read")
 			gs := srvLDAP.requests[1]
 			assert.Equal(t, tc.baseDN, gs.BaseDN)
 			assert.Equal(t, tc.filter, gs.Filter)

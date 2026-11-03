@@ -191,7 +191,9 @@ A missing `name` or an unreadable body is still a `400` without a cause.
 ### LDAP group search
 
 After the user's bind succeeds, authn searches for the user's groups, and each entry
-found is one group (the certificate's `O=` and the JWT's `groups`). `spec.groupSearch`
+found is one group (the certificate's `O=` and the JWT's `groups`). The groups are
+exactly what this search finds, each name once, without reserved `krateo:loa:` names;
+the user entry's own attributes, such as `ou`, are not groups. `spec.groupSearch`
 configures the search (#72); every field is optional, and an empty one takes its default:
 
 | Field | Default | Meaning |
@@ -221,9 +223,11 @@ spec:
 ```
 
 The filter is not recursive: Active Directory's nested groups need the matching rule
-in the filter, e.g. `(member:1.2.840.113556.1.4.1941:={{.DN}})`. A user entry that has
-`ou` values gets those as its groups instead, and the group search's result is
-dropped (unchanged by #72).
+in the filter, e.g. `(member:1.2.840.113556.1.4.1941:={{.DN}})`.
+
+Before #72 a user entry's `ou` values were its groups, and the group search counted only
+for a user without any. A deployment whose RBAC binds those `ou` values must bind real
+directory groups instead, or set a `groupSearch.filter` that returns them.
 
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).
