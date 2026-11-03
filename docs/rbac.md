@@ -48,7 +48,7 @@ source, they land in the cert's CN and O the same way:
 | `ldap` | the entry's `uid` attribute | the groups `spec.groupSearch` finds ([api](./api.md#ldap-group-search)); not the entry's `ou` (before #72 it was) |
 
 (`basic/login.go:131`, `oidc/login.go:161`, `oauth/login.go:176`,
-`ldap/support.go:224`, and the serviceaccount mapping; see [behavior](./behavior.md)
+`ldap/support.go:226`, and the serviceaccount mapping; see [behavior](./behavior.md)
 for the per-strategy detail.) The RBAC below is identical regardless of strategy — it
 binds to the resulting **username** and **groups**.
 

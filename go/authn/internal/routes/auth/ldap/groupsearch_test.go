@@ -156,7 +156,8 @@ func TestGroupSearch(t *testing.T) {
 			if tc.userFilter != "" {
 				assert.Equal(t, tc.userFilter, srvLDAP.requests[0].Filter)
 			}
-			assert.NotContains(t, srvLDAP.requests[0].Attributes, "ou", "ou isn't read")
+			assert.Equal(t, []string{"uid", "cn", "mail"}, srvLDAP.requests[0].Attributes,
+				"the user search asks only for what authn reads: no ou, no userPassword")
 			gs := srvLDAP.requests[1]
 			assert.Equal(t, tc.baseDN, gs.BaseDN)
 			assert.Equal(t, tc.filter, gs.Filter)

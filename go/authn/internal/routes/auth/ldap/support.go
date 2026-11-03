@@ -168,13 +168,15 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
 
-	// Search for the given username
+	// Search for the given username. Ask only for the attributes
+	// ldapEntryToUserInfo reads: never userPassword, whose hash authn has no
+	// use for.
 	searchRequest := ldap.NewSearchRequest(
 		cfg.baseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		strings.ReplaceAll(filterTemplate, "$USERNAME", ldap.EscapeFilter(username)),
 		//fmt.Sprintf("(&(objectClass=person)(uid=%s))", ldap.EscapeFilter(username)),
-		[]string{"uid", "cn", "mail", "memberof", "userPassword", "o"},
+		[]string{"uid", "cn", "mail"},
 		nil,
 	)
 

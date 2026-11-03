@@ -348,6 +348,23 @@ func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	assert.Contains(t, emptyWhy, "Empty password")
 }
 
+// The user search asks the directory only for the attributes authn reads
+// (uid, cn, mail), and no search ever asks for userPassword: authn has no use
+// for a password hash, so it doesn't fetch one.
+func TestSearchesNeverRequestPasswords(t *testing.T) {
+	srvLDAP := &fakeLDAP{entries: 1}
+	got := login(t, "corp", 200, 200, srvLDAP, &fakeGenerator{}, false)
+	require.Equal(t, http.StatusOK, got.code)
+
+	require.Len(t, srvLDAP.requests, 2, "the user search, then the group search")
+	assert.Equal(t, []string{"uid", "cn", "mail"}, srvLDAP.requests[0].Attributes)
+	for _, req := range srvLDAP.requests {
+		for _, attr := range req.Attributes {
+			assert.NotEqual(t, "userpassword", strings.ToLower(attr), "requested by the search under %q", req.BaseDN)
+		}
+	}
+}
+
 func TestLoginSucceeds(t *testing.T) {
 	gen := &fakeGenerator{}
 	got := login(t, "corp", 200, 200, &fakeLDAP{entries: 1}, gen, false)

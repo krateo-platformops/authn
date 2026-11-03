@@ -29,7 +29,10 @@ entry without it is skipped instead of becoming an empty group). A filter that i
 usable template is a `500` `LDAPConfigInvalid`, found before authn connects to the
 server. The user's groups are now exactly what the search finds, each once; the user
 entry's `ou` values, which used to be its groups whenever it had any, are no longer
-read.
+read. authn no longer asks the directory for password hashes: the user search requested
+`userPassword` (and `memberof`, `ou`, `o`) though nothing read them, so a bind DN allowed
+to read hashes received the user's on every login. It now asks only for `uid`, `cn` and
+`mail`.
 
 **Behaviour change:** deployments that relied on a user's `ou` values as groups must
 bind RBAC to real directory groups, or set a `groupSearch.filter` that returns them.

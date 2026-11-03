@@ -151,7 +151,10 @@ though the code is a `4xx`.
   rendering with `ldap.CompileFilter`, so a bad one fails before authn dials the server.
   The user's groups are exactly the names found, in order, each once (`groupNames`),
   through `userinfo.NewDefaultUser`, which drops reserved `krateo:loa:` names; the user
-  entry's `ou` is no longer read. Before #72 the filter was hardcoded to
+  entry's `ou` is no longer read. The user search asks only for `uid`, `cn` and `mail`,
+  the attributes `ldapEntryToUserInfo` reads; it used to ask for `userPassword`,
+  `memberof`, `ou` and `o` too, so a bind DN allowed to read password hashes received
+  them on every login. Before #72 the filter was hardcoded to
   `(uniquemember=uid=<username>,dc=example,dc=com)`, so outside that one directory
   layout every login got no groups, and a user entry's `ou` values, when it had any,
   were its groups instead.
