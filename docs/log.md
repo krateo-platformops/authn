@@ -14,6 +14,33 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-03 — LDAP users get their groups
+
+The LDAP login looked up a user's groups with a hardcoded filter,
+`(uniquemember=uid=<username>,dc=example,dc=com)`, so in any directory not laid out
+exactly like that the search matched nothing (#72). The login still succeeded, with no
+groups: the certificate's `O=` and the JWT's `groups` were empty, and group-based RBAC
+failed later as a "permission denied" nobody could trace. The new optional
+`LDAPConfig` `spec.groupSearch` sets the search's `baseDN` (default `spec.baseDN`), its
+`filter`, a Go template over the user's escaped `.DN` and `.Username` (default
+`(|(member={{.DN}})(uniqueMember={{.DN}}))`, which covers groupOfNames, Active Directory
+and groupOfUniqueNames), and the `nameAttribute` naming each group (default `cn`; an
+entry without it is skipped instead of becoming an empty group). A filter that isn't a
+usable template is a `500` `LDAPConfigInvalid`, found before authn connects to the
+server. The user's groups are now exactly what the search finds, each once; the user
+entry's `ou` values, which used to be its groups whenever it had any, are no longer
+read. authn no longer asks the directory for password hashes: the user search requested
+`userPassword` (and `memberof`, `ou`, `o`) though nothing read them, so a bind DN allowed
+to read hashes received the user's on every login. It now asks only for `uid`, `cn` and
+`mail`.
+
+**Behaviour change:** deployments that relied on a user's `ou` values as groups must
+bind RBAC to real directory groups, or set a `groupSearch.filter` that returns them.
+A directory laid out as the old filter assumed (users at
+`uid=<name>,dc=example,dc=com`, groups listing them in `uniqueMember`, users without
+`ou`) gets the same groups as before. The default also matches `member`, so there a
+group that lists the user only in `member` now counts too.
+
 ## 2026-11-02 — Basic and ldap tell refusals from their own failures
 
 Basic and ldap answered `403` for anything that went wrong, so an unreachable LDAP server

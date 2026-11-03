@@ -45,10 +45,10 @@ source, they land in the cert's CN and O the same way:
 | `serviceaccount` | the mapping CR's `metadata.name` | the mapping's `spec.groups[]` |
 | `oidc` | the `preferred_username` claim (DNS-1123-normalized) | the `groups` claim |
 | `oauth` | the `preferred_username` field (DNS-1123-normalized) | the `groups` field |
-| `ldap` | the entry's `uid` attribute | the entry's `ou` attribute values |
+| `ldap` | the entry's `uid` attribute | the groups `spec.groupSearch` finds ([api](./api.md#ldap-group-search)); not the entry's `ou` (before #72 it was) |
 
 (`basic/login.go:131`, `oidc/login.go:161`, `oauth/login.go:176`,
-`ldap/support.go:148-150`, and the serviceaccount mapping; see [behavior](./behavior.md)
+`ldap/support.go:226`, and the serviceaccount mapping; see [behavior](./behavior.md)
 for the per-strategy detail.) The RBAC below is identical regardless of strategy — it
 binds to the resulting **username** and **groups**.
 

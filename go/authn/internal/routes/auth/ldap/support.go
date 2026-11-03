@@ -22,6 +22,10 @@ import (
 
 const (
 	filterTemplate = "(|(cn=$USERNAME)(uid=$USERNAME)(userPrincipalName=$USERNAME)(mail=$USERNAME))"
+
+	// The group search defaults (spec.groupSearch).
+	defaultGroupFilter        = "(|(member={{.DN}})(uniqueMember={{.DN}}))"
+	defaultGroupNameAttribute = "cn"
 )
 
 type ldapConfig struct {
@@ -29,14 +33,55 @@ type ldapConfig struct {
 	bindDN     string
 	bindSecret string
 	baseDN     string
-	filter     string
 	tls        bool
+
+	groupBaseDN   string
+	groupFilter   *template.Template
+	groupNameAttr string
+}
+
+// groupFilterVars are the values spec.groupSearch.filter is rendered with.
+// Each is escaped for an LDAP filter (ldap.EscapeFilter) before it is
+// substituted, so neither the username nor the DN can inject filter syntax.
+type groupFilterVars struct {
+	DN       string // the DN the user bound as
+	Username string // the login name
+}
+
+// parseGroupFilter parses a spec.groupSearch.filter template and checks it
+// renders a valid LDAP filter, so a bad one fails before any bind.
+func parseGroupFilter(text string) (*template.Template, error) {
+	tmpl, err := template.New("groupSearch.filter").Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	sample, err := renderGroupFilter(tmpl, "uid=sample,dc=example", "sample")
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ldap.CompileFilter(sample); err != nil {
+		return nil, fmt.Errorf("it renders %q, not an LDAP filter: %w", sample, err)
+	}
+	return tmpl, nil
+}
+
+// renderGroupFilter renders the group filter for the user who bound as dn
+// with the login name username, escaping both.
+func renderGroupFilter(tmpl *template.Template, dn, username string) (string, error) {
+	var buf bytes.Buffer
+	err := tmpl.Execute(&buf, groupFilterVars{
+		DN:       ldap.EscapeFilter(dn),
+		Username: ldap.EscapeFilter(username),
+	})
+	return buf.String(), err
 }
 
 // getConfig reads the LDAPConfig name and its bind Secret. An LDAPConfig that
 // doesn't exist is the caller's mistake (404); one authn can't read, or whose
-// bind Secret it can't read, is authn's failure (500).
-func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error) {
+// bind Secret it can't read, is authn's failure (500), and so is one whose
+// spec.groupSearch.filter is unusable (LDAPConfigInvalid), found here, before
+// any connection to the server.
+func getConfig(rc *rest.Config, name string) (ldapConfig, error) {
 	if len(rest.IsValidPathSegmentName(name)) > 0 {
 		// No LDAPConfig can have this name; looking it up would fail client-side.
 		return ldapConfig{}, status.CauseError{Code: http.StatusNotFound, Cause: CauseLDAPConfigNotFound,
@@ -55,9 +100,30 @@ func getConfig(rc *rest.Config, name string, username string) (ldapConfig, error
 		dialURL: cfg.Spec.DialURL,
 		baseDN:  cfg.Spec.BaseDN,
 		bindDN:  ptr.Deref(cfg.Spec.BindDN, ""),
-		filter:  strings.ReplaceAll(filterTemplate, "$USERNAME", username),
 		tls:     ptr.Deref(cfg.Spec.TLS, false),
+
+		groupBaseDN:   cfg.Spec.BaseDN,
+		groupNameAttr: defaultGroupNameAttribute,
 	}
+
+	groupFilter := defaultGroupFilter
+	if gs := cfg.Spec.GroupSearch; gs != nil {
+		if gs.BaseDN != "" {
+			res.groupBaseDN = gs.BaseDN
+		}
+		if gs.Filter != "" {
+			groupFilter = gs.Filter
+		}
+		if gs.NameAttribute != "" {
+			res.groupNameAttr = gs.NameAttribute
+		}
+	}
+	tmpl, err := parseGroupFilter(groupFilter)
+	if err != nil {
+		return res, status.Failed(CauseLDAPConfigInvalid,
+			fmt.Errorf("LDAPConfig %q: invalid spec.groupSearch.filter: %w", name, err))
+	}
+	res.groupFilter = tmpl
 
 	if ref := cfg.Spec.BindSecret; ref != nil {
 		sec, err := secrets.Get(context.Background(), rc, ref)
@@ -102,13 +168,15 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
 
-	// Search for the given username
+	// Search for the given username. Ask only for the attributes
+	// ldapEntryToUserInfo reads: never userPassword, whose hash authn has no
+	// use for.
 	searchRequest := ldap.NewSearchRequest(
 		cfg.baseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		strings.ReplaceAll(filterTemplate, "$USERNAME", ldap.EscapeFilter(username)),
 		//fmt.Sprintf("(&(objectClass=person)(uid=%s))", ldap.EscapeFilter(username)),
-		[]string{"uid", "cn", "mail", "memberof", "userPassword", "ou", "o"},
+		[]string{"uid", "cn", "mail"},
 		nil,
 	)
 
@@ -135,13 +203,16 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
 
-	// Now perform a search for groups that the user belongs to
-	groupFilter := fmt.Sprintf("(uniquemember=uid=%s,dc=example,dc=com)", ldap.EscapeFilter(username))
+	// Now search for the groups the user belongs to (spec.groupSearch).
+	groupFilter, err := renderGroupFilter(cfg.groupFilter, user.DN, username)
+	if err != nil {
+		return nil, status.Failed(CauseLDAPConfigInvalid, fmt.Errorf("rendering spec.groupSearch.filter: %w", err))
+	}
 	groupSearchRequest := ldap.NewSearchRequest(
-		cfg.baseDN,
+		cfg.groupBaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 0, 0, false,
 		groupFilter,
-		[]string{"cn"},
+		[]string{cfg.groupNameAttr},
 		nil,
 	)
 
@@ -150,17 +221,26 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		return nil, serverFailure(CauseLDAPSearchFailed, err)
 	}
 
+	// The user's groups are exactly what the group search found (#72): the
+	// user entry's own attributes (e.g. ou) are not groups.
+	return ldapEntryToUserInfo(user, groupNames(groupSR.Entries, cfg.groupNameAttr)), nil
+}
+
+// groupNames names each group entry by its nameAttr value, in order and
+// without duplicates. Attribute names are case-insensitive. An entry without
+// the attribute is skipped, not named "".
+func groupNames(entries []*ldap.Entry, nameAttr string) []string {
 	groups := []string{}
-	for _, entry := range groupSR.Entries {
-		groups = append(groups, entry.GetAttributeValue("cn"))
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.GetEqualFoldAttributeValue(nameAttr)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		groups = append(groups, name)
 	}
-
-	nfo := ldapEntryToUserInfo(user)
-	if len(nfo.GetGroups()) == 0 {
-		nfo.SetGroups(groups)
-	}
-
-	return nfo, nil
+	return groups
 }
 
 // invalidCredentials refuses the caller with the one InvalidCredentials body;
@@ -195,7 +275,9 @@ func serverFailure(cause status.CauseType, err error) error {
 	return status.Failed(cause, err)
 }
 
-func ldapEntryToUserInfo(entry *ldap.Entry) userinfo.Info {
+// ldapEntryToUserInfo is the identity of the user entry, with groups (from the
+// group search). NewDefaultUser drops reserved groups (krateo:loa:).
+func ldapEntryToUserInfo(entry *ldap.Entry, groups []string) userinfo.Info {
 	exts := userinfo.Extensions{}
 	exts.Add("name", entry.GetAttributeValue("cn"))
 	exts.Add("email", entry.GetAttributeValue("mail"))
@@ -205,18 +287,7 @@ func ldapEntryToUserInfo(entry *ldap.Entry) userinfo.Info {
 	uid, _ := shortid.Generate()
 	nfo := userinfo.NewDefaultUser(
 		entry.GetAttributeValue("uid"), uid,
-		entry.GetAttributeValues("ou"), exts)
+		groups, exts)
 
 	return nfo
-}
-
-func execUserDnTemplate(text string, vals map[string]string) (string, error) {
-	tmpl, err := template.New("userDN").Parse(text)
-	if err != nil {
-		return "", err
-	}
-
-	buf := bytes.Buffer{}
-	err = tmpl.Execute(&buf, vals)
-	return buf.String(), err
 }

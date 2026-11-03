@@ -28,8 +28,40 @@ type LDAPConfigSpec struct {
 
 	TLS *bool `json:"tls,omitempty"`
 
+	// GroupSearch configures how a user's groups are found after their bind
+	// succeeds. A user's groups are exactly what this search finds; attributes
+	// of the user's own entry, such as ou, are not groups. Omitted, every field
+	// takes its default.
+	//+optional
+	GroupSearch *LDAPGroupSearch `json:"groupSearch,omitempty"`
+
 	//+optional
 	Graphics *core.Graphics `json:"graphics,omitempty"`
+}
+
+// LDAPGroupSearch configures the search for a user's groups (#72). Each
+// entry the search returns is one group, named by its NameAttribute.
+type LDAPGroupSearch struct {
+	// BaseDN is the base of the subtree the group search is constrained to.
+	// Default: spec.baseDN.
+	//+optional
+	BaseDN string `json:"baseDN,omitempty"`
+
+	// Filter selects the user's groups. It is a Go text/template over the
+	// authenticated user, with two fields: .DN, the DN the user bound as, and
+	// .Username, the login name. Both are already escaped for an LDAP filter.
+	// Default: member or uniqueMember equal to .DN, which covers
+	// groupOfNames, Active Directory and groupOfUniqueNames. For posixGroup,
+	// match memberUid to .Username. A template that doesn't parse, or that
+	// doesn't render a valid LDAP filter, fails every login with a 500
+	// (LDAPConfigInvalid). See docs/api.md for examples.
+	//+optional
+	Filter string `json:"filter,omitempty"`
+
+	// NameAttribute is the group entry attribute whose value is the group's
+	// name. A group entry without it is skipped. Default: cn.
+	//+optional
+	NameAttribute string `json:"nameAttribute,omitempty"`
 }
 
 // +kubebuilder:object:root=true

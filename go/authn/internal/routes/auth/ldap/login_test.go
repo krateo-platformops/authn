@@ -28,10 +28,12 @@ import (
 type fakeGenerator struct {
 	calls int
 	err   error
+	info  userinfo.Info // the identity of the last Generate
 }
 
-func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info) ([]byte, time.Time, error) {
 	g.calls++
+	g.info = nfo
 	if g.err != nil {
 		return nil, time.Time{}, g.err
 	}
@@ -57,32 +59,53 @@ type fakeLDAP struct {
 	userBind  error
 	search    error
 	entries   int
+	userDN    string        // the DN of the user's entry; default aliceDN
+	userOU    []string      // the user entry's ou values
+	groups    []*ldap.Entry // the group search's answer; default one group, cn=devs
 	searches  int
+	requests  []*ldap.SearchRequest // every search, in order
+	binds     []string              // every bind DN, in order
 }
 
 func (f *fakeLDAP) Close() error               { return nil }
 func (f *fakeLDAP) StartTLS(*tls.Config) error { return f.startTLS }
 func (f *fakeLDAP) Bind(dn, password string) error {
+	f.binds = append(f.binds, dn)
 	switch dn {
 	case adminDN:
 		return f.adminBind
-	case aliceDN:
+	case f.user():
 		return f.userBind
 	}
 	return fmt.Errorf("unexpected bind as %q", dn)
 }
 
-func (f *fakeLDAP) Search(*ldap.SearchRequest) (*ldap.SearchResult, error) {
+func (f *fakeLDAP) user() string {
+	if f.userDN != "" {
+		return f.userDN
+	}
+	return aliceDN
+}
+
+func (f *fakeLDAP) Search(req *ldap.SearchRequest) (*ldap.SearchResult, error) {
 	f.searches++
+	f.requests = append(f.requests, req)
 	if f.search != nil {
 		return nil, f.search
 	}
 	if f.searches > 1 { // the group search
+		if f.groups != nil {
+			return &ldap.SearchResult{Entries: f.groups}, nil
+		}
 		return &ldap.SearchResult{Entries: []*ldap.Entry{ldap.NewEntry("cn=devs,dc=example", map[string][]string{"cn": {"devs"}})}}, nil
 	}
 	res := &ldap.SearchResult{}
 	for i := 0; i < f.entries; i++ {
-		res.Entries = append(res.Entries, ldap.NewEntry(aliceDN, map[string][]string{"uid": {"alice"}, "cn": {"Alice"}}))
+		attrs := map[string][]string{"uid": {"alice"}, "cn": {"Alice"}}
+		if f.userOU != nil {
+			attrs["ou"] = f.userOU
+		}
+		res.Entries = append(res.Entries, ldap.NewEntry(f.user(), attrs))
 	}
 	return res, nil
 }
@@ -104,10 +127,14 @@ func testKey(t *testing.T) *rsa.PrivateKey {
 
 func ldapErr(code uint16) error { return ldap.NewError(code, errors.New("from the server")) }
 
-// fakeAPIServer serves the LDAPConfig "corp" (dialing dialURL, with StartTLS)
-// and its bind Secret, each answering with the given code.
-func fakeAPIServer(t *testing.T, configCode, secretCode int, dialURL string) *httptest.Server {
+// fakeAPIServer serves the LDAPConfig "corp" (dialing dialURL, with StartTLS,
+// and with groupSearch as its spec.groupSearch JSON when it isn't empty) and
+// its bind Secret, each answering with the given code.
+func fakeAPIServer(t *testing.T, configCode, secretCode int, dialURL, groupSearch string) *httptest.Server {
 	t.Helper()
+	if groupSearch != "" {
+		groupSearch = `,"groupSearch":` + groupSearch
+	}
 	fail := func(w http.ResponseWriter, code int) {
 		w.WriteHeader(code)
 		reason := map[int]string{404: "NotFound"}[code]
@@ -123,7 +150,7 @@ func fakeAPIServer(t *testing.T, configCode, secretCode int, dialURL string) *ht
 			}
 			fmt.Fprintf(w, `{"apiVersion":"ldap.authn.krateo.io/v1alpha1","kind":"LDAPConfig","metadata":{"name":"corp","namespace":"krateo-system"},
 				"spec":{"dialURL":%q,"baseDN":"dc=example","bindDN":%q,"tls":true,
-				"bindSecret":{"name":"ldap-bind","namespace":"krateo-system","key":"password"}}}`, dialURL, adminDN)
+				"bindSecret":{"name":"ldap-bind","namespace":"krateo-system","key":"password"}%s}}`, dialURL, adminDN, groupSearch)
 		case "/api/v1/namespaces/krateo-system/secrets/ldap-bind":
 			if secretCode != http.StatusOK {
 				fail(w, secretCode)
@@ -149,6 +176,14 @@ type result struct {
 
 func login(t *testing.T, name string, configCode, secretCode int, srvLDAP *fakeLDAP, gen *fakeGenerator, realDial bool) result {
 	t.Helper()
+	return loginAs(t, name, configCode, secretCode, srvLDAP, gen, realDial, "alice", "")
+}
+
+// loginAs is login with the given username, and the LDAPConfig's
+// spec.groupSearch JSON (none when empty).
+func loginAs(t *testing.T, name string, configCode, secretCode int, srvLDAP *fakeLDAP, gen *fakeGenerator, realDial bool,
+	username, groupSearch string) result {
+	t.Helper()
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 	if !realDial {
 		orig := dial
@@ -164,11 +199,13 @@ func login(t *testing.T, name string, configCode, secretCode int, srvLDAP *fakeL
 	if realDial {
 		dialURL = "ldap://127.0.0.1:1" // nothing listens there
 	}
-	srv := fakeAPIServer(t, configCode, secretCode, dialURL)
+	srv := fakeAPIServer(t, configCode, secretCode, dialURL, groupSearch)
 	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: testKey(t), JwtKeyID: "k"})
 
 	var buf bytes.Buffer
-	req := httptest.NewRequest(http.MethodPost, Path+"?name="+name, strings.NewReader(`{"username":"alice","password":"pw"}`))
+	body, err := json.Marshal(loginInfo{Username: username, Password: "pw"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, Path+"?name="+name, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
 	rec := httptest.NewRecorder()
@@ -275,7 +312,7 @@ func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
 		orig := dial
 		dial = func(string) (ldap.Client, error) { return srvLDAP, nil }
 		defer func() { dial = orig }()
-		srv := fakeAPIServer(t, 200, 200, fakeDialURL)
+		srv := fakeAPIServer(t, 200, 200, fakeDialURL, "")
 		route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: &fakeGenerator{}, JwtDuration: time.Hour, JwtPrivateKey: testKey(t), JwtKeyID: "k"})
 
 		var buf bytes.Buffer
@@ -309,6 +346,23 @@ func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	assert.Contains(t, unknownWhy, "no users found")
 	assert.Contains(t, wrongWhy, "Invalid Credentials")
 	assert.Contains(t, emptyWhy, "Empty password")
+}
+
+// The user search asks the directory only for the attributes authn reads
+// (uid, cn, mail), and no search ever asks for userPassword: authn has no use
+// for a password hash, so it doesn't fetch one.
+func TestSearchesNeverRequestPasswords(t *testing.T) {
+	srvLDAP := &fakeLDAP{entries: 1}
+	got := login(t, "corp", 200, 200, srvLDAP, &fakeGenerator{}, false)
+	require.Equal(t, http.StatusOK, got.code)
+
+	require.Len(t, srvLDAP.requests, 2, "the user search, then the group search")
+	assert.Equal(t, []string{"uid", "cn", "mail"}, srvLDAP.requests[0].Attributes)
+	for _, req := range srvLDAP.requests {
+		for _, attr := range req.Attributes {
+			assert.NotEqual(t, "userpassword", strings.ToLower(attr), "requested by the search under %q", req.BaseDN)
+		}
+	}
 }
 
 func TestLoginSucceeds(t *testing.T) {
