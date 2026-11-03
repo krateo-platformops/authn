@@ -261,7 +261,7 @@ func probe(handler http.Handler) ([]string, int) {
 						if strings.Contains(rec.Body.String(), l) {
 							found = append(found, fmt.Sprintf("%s: body contains %q", where, l))
 						}
-						for k, vs := range rec.Header() {
+						for k, vs := range rec.Result().Header {
 							if strings.Contains(strings.Join(vs, ","), l) {
 								found = append(found, fmt.Sprintf("%s: header %s contains %q", where, k, l))
 							}
@@ -325,7 +325,9 @@ func TestSmokeAnswers(t *testing.T) {
 		handler.ServeHTTP(rec, httptest.NewRequest(a.method, a.path, nil))
 		where := a.method + " " + a.path
 		assert.Equal(t, a.code, rec.Code, where)
-		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"), where)
+		// Result() holds the headers actually sent. rec.Header() is the live map,
+		// which still shows a header set after WriteHeader that the client never got.
+		assert.Equal(t, "application/json", rec.Result().Header.Get("Content-Type"), where)
 		if a.cause != "" {
 			var s struct {
 				Details struct {

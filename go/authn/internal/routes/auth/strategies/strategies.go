@@ -85,8 +85,10 @@ func (r *strategiesRoute) Handler() http.HandlerFunc {
 			log.Err(err).Msg("unable to get oauth auth strategies")
 		}
 
-		wri.WriteHeader(http.StatusOK)
+		// Headers must be set before WriteHeader: after it they are ignored and
+		// Go sniffs the body as text/plain.
 		wri.Header().Set("Content-Type", "application/json")
+		wri.WriteHeader(http.StatusOK)
 
 		enc := json.NewEncoder(wri)
 		enc.SetIndent("", "  ")
