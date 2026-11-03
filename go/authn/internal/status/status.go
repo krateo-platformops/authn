@@ -202,10 +202,14 @@ func New(code int, err error) Status {
 //   - 401/403: the request was refused, and retrying it unchanged fails again;
 //   - 500: authn could not finish the job, and the same request may succeed
 //     once authn's dependency or configuration is fixed.
+//
+// Err is answered to the caller. Private, when set, is the real reason, which
+// only LogFailure sees: it is never part of the response.
 type CauseError struct {
-	Code  int
-	Cause CauseType
-	Err   error
+	Code    int
+	Cause   CauseType
+	Err     error
+	Private error
 }
 
 func (e CauseError) Error() string { return e.Err.Error() }
@@ -214,6 +218,13 @@ func (e CauseError) Unwrap() error { return e.Err }
 // Refused is a refusal of the request (403).
 func Refused(cause CauseType, err error) CauseError {
 	return CauseError{Code: http.StatusForbidden, Cause: cause, Err: err}
+}
+
+// RefusedPrivately is a refusal (403) that answers public and keeps the real
+// reason, private, for the server log. Use it where the reason would tell the
+// caller something it must not learn, such as whether a user exists.
+func RefusedPrivately(cause CauseType, public, private error) CauseError {
+	return CauseError{Code: http.StatusForbidden, Cause: cause, Err: public, Private: private}
 }
 
 // Failed is a failure on authn's side (500).

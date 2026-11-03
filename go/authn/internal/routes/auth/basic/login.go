@@ -3,6 +3,7 @@ package basic
 import (
 	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -18,13 +19,40 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 )
 
 const (
 	Path = "/basic/login"
 )
+
+// Causes of a failed basic login: the values of details.causes[0].reason
+// (docs/api.md). They are added, never renamed.
+const (
+	// Refusals of the caller.
+	CauseMissingCredentials status.CauseType = "MissingCredentials" // 401
+	CauseInvalidCredentials status.CauseType = "InvalidCredentials" // 403: unknown user or wrong password, answered alike
+
+	// Failures of authn (500).
+	CauseUserLookupFailed      status.CauseType = "UserLookupFailed"
+	CausePasswordSecretMissing status.CauseType = "PasswordSecretMissing"
+	CausePasswordLookupFailed  status.CauseType = "PasswordLookupFailed"
+	CauseIssuanceFailed                         = status.CauseIssuanceFailed
+)
+
+var (
+	errMissingCredentials = errors.New("missing basic credentials")
+	errInvalidCredentials = errors.New("invalid credentials")
+)
+
+// invalidCredentials refuses the caller with the one InvalidCredentials body;
+// reason goes to the log only.
+func invalidCredentials(reason error) error {
+	return status.RefusedPrivately(CauseInvalidCredentials, errInvalidCredentials, reason)
+}
 
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
@@ -70,7 +98,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		username, password, ok := req.BasicAuth()
 		if !ok {
 			wri.Header().Set("WWW-Authenticate", `Basic realm="krateo", charset="UTF-8"`)
-			http.Error(wri, "Unauthorized", http.StatusUnauthorized)
+			encode.Failure(wri, status.New(http.StatusUnauthorized, errMissingCredentials).
+				WithCause(CauseMissingCredentials, errMissingCredentials.Error()))
 			return
 		}
 
@@ -80,10 +109,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		user, err := r.validate(username, password)
 		if err != nil {
-			// Answered 403, so logged as a refusal (warn). An apiserver error
-			// reading the User or its Secret is answered 403 too.
-			log.Warn().Err(err).Msg("basic auth failed")
-			encode.Forbidden(wri, err)
+			status.LogFailure(log, err).Str("username", username).Msg("basic auth failed")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 		log.Debug().
@@ -93,8 +120,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		dat, notAfter, err := r.gen.Generate(storage.StrategyBasic, user)
 		if err != nil {
-			log.Err(err).Msg("kubeconfig creation failure")
-			encode.InternalError(wri, err)
+			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			status.LogFailure(log, err).Msg("kubeconfig creation failure")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
@@ -116,23 +144,43 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 	}
 }
 
+// validate checks the caller's credentials against its User and the Secret
+// holding its password. An unknown user and a wrong password are the same
+// refusal, InvalidCredentials (403), with the same body, so a caller can't
+// probe which users exist; the real reason only reaches the log. A User or
+// Secret authn can't read is authn's failure (500).
 func (r *loginRoute) validate(username, password string) (userinfo.Info, error) {
-	usr, err := resolvers.UserGet(r.rc, username)
-	if err != nil {
-		return nil, err
+	if len(rest.IsValidPathSegmentName(username)) > 0 || username == "" {
+		// No User can have this name; looking it up would fail client-side.
+		return nil, invalidCredentials(fmt.Errorf("%q is not a valid User name", username))
 	}
 
-	sec, err := secrets.Get(context.Background(), r.rc, usr.Spec.PasswordRef)
-	if err != nil {
-		return nil, err
+	usr, err := resolvers.UserGet(r.rc, username)
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil, invalidCredentials(err)
+	case err != nil:
+		return nil, status.Failed(CauseUserLookupFailed, fmt.Errorf("reading User %q: %w", username, err))
 	}
-	pwd, ok := sec.Data[usr.Spec.PasswordRef.Key]
+
+	ref := usr.Spec.PasswordRef
+	if ref == nil {
+		return nil, status.Failed(CausePasswordSecretMissing, fmt.Errorf("user '%s' has no passwordRef", username))
+	}
+	sec, err := secrets.Get(context.Background(), r.rc, ref)
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil, status.Failed(CausePasswordSecretMissing, err)
+	case err != nil:
+		return nil, status.Failed(CausePasswordLookupFailed, fmt.Errorf("reading the password of user '%s': %w", username, err))
+	}
+	pwd, ok := sec.Data[ref.Key]
 	if !ok {
-		return nil, fmt.Errorf("password for user '%s' not found", username)
+		return nil, status.Failed(CausePasswordSecretMissing, fmt.Errorf("password for user '%s' not found", username))
 	}
 
 	if password != string(pwd) {
-		return nil, fmt.Errorf("invalid credentials")
+		return nil, invalidCredentials(fmt.Errorf("wrong password for user %q", username))
 	}
 
 	exts := userinfo.Extensions{}

@@ -148,5 +148,44 @@ Every `/oidc/login` failure above applies, plus:
 | `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, an empty acr value or one containing whitespace, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
 | `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued |
 
+### `/basic/login` and `/ldap/login` failures
+
+Basic and ldap follow the same contract as `/serviceaccount/login`: every
+failure is a `Status` with its cause in `details.causes[0].reason`, a refusal of the
+caller is `401`/`403`, and authn's own failure is `500`. Before, both answered `403`
+when authn couldn't read the User, the Secret or the LDAP server, and ldap answered
+`417` when it couldn't read the LDAPConfig. An ambiguous LDAP user keeps its `300`.
+
+`InvalidCredentials` is one fixed response: the same code, message and body whether
+the user is unknown, the name unusable or the password wrong, so a caller can't probe
+which users exist. The real reason is only in authn's log (the `reason` field of the
+warn line). An unknown LDAP user was a `404` before; it is now this `403`.
+
+`/basic/login`:
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `MissingCredentials` | 401 | No `Authorization: Basic` header (also sets `WWW-Authenticate`) |
+| `InvalidCredentials` | 403 | Unknown user, unusable user name or wrong password, answered alike |
+| `UserLookupFailed` | 500 | authn could not read the `User` |
+| `PasswordSecretMissing` | 500 | The `User` has no `passwordRef`, or its Secret or key doesn't exist |
+| `PasswordLookupFailed` | 500 | authn could not read the password Secret |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
+
+`/ldap/login`:
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `LDAPConfigNotFound` | 404 | No LDAPConfig has the `name` asked for |
+| `AmbiguousUser` | 300 | More than one entry matches the username |
+| `InvalidCredentials` | 403 | No entry matches the username, the server refused the user's bind (wrong password, account disabled), or the password is empty, answered alike |
+| `LDAPConfigLookupFailed` | 500 | authn could not read the LDAPConfig or its bind Secret |
+| `LDAPUnavailable` | 500 | authn could not connect to the LDAP server: dial, StartTLS, or a dropped connection |
+| `LDAPBindFailed` | 500 | The server refused the `bindDN` bind (wrong or missing `bindSecret`), or failed the user's bind for a reason other than their credentials |
+| `LDAPSearchFailed` | 500 | The user or group search failed, e.g. `baseDN` doesn't exist |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
+
+A missing `name` or an unreadable body is still a `400` without a cause.
+
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).

@@ -17,6 +17,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/plumbing/kubeutil"
 	"github.com/rs/zerolog"
@@ -139,8 +140,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
 			userinfo, err = updateConfig(userinfo, additionalFieldstoReplace)
 			if err != nil {
-				log.Err(err).Str("name", name).Msg("unable to parse updated config from restaction")
+				status.LogFailure(log, err).Str("name", name).Msg("unable to parse updated config from restaction")
 				encode.InternalError(wri, err)
+				return
 			}
 			log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", userinfo.name, userinfo.preferredUsername, userinfo.email, userinfo.groups, userinfo.avatarURL)
 		}

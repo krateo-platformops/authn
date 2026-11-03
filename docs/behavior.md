@@ -95,17 +95,21 @@ A failed login is logged at the level its status code implies: a refusal of the 
 `status.LogFailure(log, err)` (`internal/status/log.go`), which picks the level from
 the same code and adds `code` and `cause` (`details.causes[0].reason`) to the line.
 So an alert on error-level logs fires for authn's failures, not for callers with a bad
-or expired credential. Exceptions:
-- basic and ldap answer `403` also when the apiserver or the LDAP server can't be
-  reached, so those failures log at warn too;
-- the `417` answers (config lookup, OAuth code exchange) stay at error: they are
-  mostly authn's dependencies failing, though the code is a `4xx`.
+or expired credential. One exception: the oauth and oidc `417` answers (config lookup,
+OAuth code exchange) stay at error. They are mostly authn's dependencies failing,
+though the code is a `4xx`.
 
 ### Login inputs per strategy
 
-- **basic** — HTTP `Authorization: Basic` header; `401` with `WWW-Authenticate` if
-  absent (`basic/login.go:65-70`). Password compared in plaintext against the Secret
-  keyed by `User.spec.passwordRef` (`basic/login.go:107-125`).
+- **basic** — HTTP `Authorization: Basic` header; `401` `MissingCredentials` with
+  `WWW-Authenticate` if absent. Password compared in plaintext against the Secret
+  keyed by `User.spec.passwordRef` (`validate`, `basic/login.go`). An unknown user and
+  a wrong password are the same refusal, `403` `InvalidCredentials`, with a
+  byte-identical body; the real reason is logged only (`status.RefusedPrivately`). A
+  User or Secret authn can't read, or a Secret that is missing or lacks the key, is a
+  `500` with its
+  cause (`UserLookupFailed`, `PasswordLookupFailed`, `PasswordSecretMissing`). Every
+  failure is a `Status` with `details.causes[0].reason` ([api](./api.md)).
 - **serviceaccount** — HTTP `Authorization: Bearer <projected SA token>`; `401` with
   `WWW-Authenticate: Bearer` if absent (`serviceaccount/login.go:76-81`). The token
   is validated via the Kubernetes `TokenReview` API: authn submits it with the
@@ -124,8 +128,17 @@ or expired credential. Exceptions:
   missing-bearer `401`, is a JSON `Status` whose `details.causes[0].reason` names the
   cause (`status.FromError`, `internal/status`; [api](./api.md)).
 - **ldap** — `?name=<LDAPConfig>` + JSON body `{"username","password"}`
-  (`ldap/login.go:73-130`). Error mapping: not-found → `404`, multiple entries →
-  `300`, other → `403` (`ldap/login.go:102-110`).
+  (`ldap/login.go`). Past the `400`s for a missing `name` or a bad body, every failure
+  is a `Status` with `details.causes[0].reason` ([api](./api.md)), classified in `getConfig` and `doLogin` (`ldap/support.go`):
+  an unknown LDAPConfig → `404` `LDAPConfigNotFound` (was `417`); several matching
+  entries → `300` `AmbiguousUser`; no matching entry, or the user's own bind refused
+  (LDAP result 49, 48 or 53, or an empty password) → `403` `InvalidCredentials`, one
+  byte-identical body with the real reason logged only.
+  authn's side is a `500`: the LDAPConfig or its bind Secret unreadable
+  (`LDAPConfigLookupFailed`), dial, StartTLS or a dropped connection
+  (`LDAPUnavailable`), the `bindDN` bind refused or a user bind failing for another
+  reason (`LDAPBindFailed`), the user or group search failing, e.g. `NoSuchObject` for
+  a wrong `baseDN` (`LDAPSearchFailed`).
 - **oidc step-up** — `POST /oidc/stepup?name=<OIDCConfig>`, with the same headers as
   the OIDC login (#49). It runs the same flow as `/oidc/login` (`authenticate`,
   `oidc/login.go`), then `checkStepUp` (`oidc/stepup.go`):

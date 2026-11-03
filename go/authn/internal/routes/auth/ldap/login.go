@@ -41,9 +41,26 @@ const (
 )
 
 var (
-	_                 routes.Route = (*loginRoute)(nil)
-	errNotFound                    = errors.New("no users found")
-	errTooManyEntries              = errors.New("too many entries found")
+	_                     routes.Route = (*loginRoute)(nil)
+	errNotFound                        = errors.New("no users found")
+	errTooManyEntries                  = errors.New("too many entries found")
+	errInvalidCredentials              = errors.New("invalid credentials")
+)
+
+// Causes of a failed LDAP login: the values of details.causes[0].reason
+// (docs/api.md). They are added, never renamed.
+const (
+	// Refusals of the caller.
+	CauseLDAPConfigNotFound status.CauseType = "LDAPConfigNotFound" // 404
+	CauseAmbiguousUser      status.CauseType = "AmbiguousUser"      // 300
+	CauseInvalidCredentials status.CauseType = "InvalidCredentials" // 403: unknown user or refused bind, answered alike
+
+	// Failures of authn (500).
+	CauseLDAPConfigLookupFailed status.CauseType = "LDAPConfigLookupFailed"
+	CauseLDAPUnavailable        status.CauseType = "LDAPUnavailable"
+	CauseLDAPBindFailed         status.CauseType = "LDAPBindFailed"
+	CauseLDAPSearchFailed       status.CauseType = "LDAPSearchFailed"
+	CauseIssuanceFailed                          = status.CauseIssuanceFailed
 )
 
 type loginRoute struct {
@@ -93,33 +110,26 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		cfg, err := getConfig(r.rc, name, lo.Username)
 		if err != nil {
-			log.Err(err).Str("name", name).Msg("unable to fetch ldap configuration")
-			encode.ExpectationFailed(wri, err)
+			status.LogFailure(log, err).Str("name", name).Msg("unable to fetch ldap configuration")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
 		nfo, err := doLogin(lo.Username, lo.Password, cfg)
 		if err != nil {
-			// Answered 4xx/300, so logged as a refusal (warn). An unreachable
-			// LDAP server or a failed admin bind is answered 403 too.
-			log.Warn().Err(err).Str("name", name).
+			status.LogFailure(log, err).Str("name", name).
 				Str("dialURL", cfg.dialURL).
 				Str("user", lo.Username).
 				Msg("login with ldap server failed")
-			code := http.StatusForbidden
-			if errors.Is(err, errNotFound) {
-				code = http.StatusNotFound
-			} else if errors.Is(err, errTooManyEntries) {
-				code = http.StatusMultipleChoices
-			}
-			encode.Failure(wri, status.New(code, err))
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
 		dat, notAfter, err := r.gen.Generate(storage.StrategyLDAP, nfo)
 		if err != nil {
-			log.Err(err).Msg("kubeconfig creation failure")
-			encode.InternalError(wri, err)
+			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			status.LogFailure(log, err).Msg("kubeconfig creation failure")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 

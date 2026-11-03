@@ -1,6 +1,7 @@
 package status
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/rs/zerolog"
@@ -13,7 +14,8 @@ import (
 //   - 500 and above, or an error with no cause (FromError answers it with a
 //     500): error. authn, or one of its dependencies, failed.
 //
-// The event carries the error, the code and, when known, the cause.
+// The event carries the error, the code and, when known, the cause and the
+// private reason (CauseError.Private) the caller was not told.
 func LogFailure(log zerolog.Logger, err error) *zerolog.Event {
 	st := FromError(err)
 
@@ -24,6 +26,10 @@ func LogFailure(log zerolog.Logger, err error) *zerolog.Event {
 	ev = ev.Err(err).Int("code", st.Code)
 	if st.Details != nil && len(st.Details.Causes) > 0 {
 		ev = ev.Str("cause", string(st.Details.Causes[0].Type))
+	}
+	var ce CauseError
+	if errors.As(err, &ce) && ce.Private != nil {
+		ev = ev.AnErr("reason", ce.Private)
 	}
 	return ev
 }
