@@ -57,6 +57,7 @@ const (
 
 	// Failures of authn (500).
 	CauseLDAPConfigLookupFailed status.CauseType = "LDAPConfigLookupFailed"
+	CauseLDAPConfigInvalid      status.CauseType = "LDAPConfigInvalid"
 	CauseLDAPUnavailable        status.CauseType = "LDAPUnavailable"
 	CauseLDAPBindFailed         status.CauseType = "LDAPBindFailed"
 	CauseLDAPSearchFailed       status.CauseType = "LDAPSearchFailed"

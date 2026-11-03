@@ -26,7 +26,7 @@ operator namespace** (`POD_NAMESPACE`).
 |---|---|---|
 | `users.basic.authn.krateo.io` | `User` | A basic-auth user: `spec.passwordRef` (Secret selector, required), `displayName`, `avatarURL`, `groups[]`. `metadata.name` is the username. |
 | `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`. `metadata.name` is the issued username. |
-| `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`. |
+| `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`; optional `groupSearch` {`baseDN` (`spec.baseDN`), `filter` (`(\|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute` (`cn`)} finds the user's groups (#72, [below](#ldap-group-search)). |
 | `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. |
 | `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `additionalScopes`, `restActionRef`, `graphics`. |
 
@@ -180,12 +180,50 @@ warn line). An unknown LDAP user was a `404` before; it is now this `403`.
 | `AmbiguousUser` | 300 | More than one entry matches the username |
 | `InvalidCredentials` | 403 | No entry matches the username, the server refused the user's bind (wrong password, account disabled), or the password is empty, answered alike |
 | `LDAPConfigLookupFailed` | 500 | authn could not read the LDAPConfig or its bind Secret |
+| `LDAPConfigInvalid` | 500 | `spec.groupSearch.filter` doesn't parse as a template, can't render, or doesn't render an LDAP filter. Found before authn connects to the server |
 | `LDAPUnavailable` | 500 | authn could not connect to the LDAP server: dial, StartTLS, or a dropped connection |
 | `LDAPBindFailed` | 500 | The server refused the `bindDN` bind (wrong or missing `bindSecret`), or failed the user's bind for a reason other than their credentials |
 | `LDAPSearchFailed` | 500 | The user or group search failed, e.g. `baseDN` doesn't exist |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
 
 A missing `name` or an unreadable body is still a `400` without a cause.
+
+### LDAP group search
+
+After the user's bind succeeds, authn searches for the user's groups, and each entry
+found is one group (the certificate's `O=` and the JWT's `groups`). `spec.groupSearch`
+configures the search (#72); every field is optional, and an empty one takes its default:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `baseDN` | `spec.baseDN` | The subtree searched |
+| `filter` | `(\|(member={{.DN}})(uniqueMember={{.DN}}))` | A Go `text/template` rendering the search filter for the user |
+| `nameAttribute` | `cn` | The group entry attribute that names the group. An entry without it is skipped. Matched case-insensitively |
+
+The template has two fields, each escaped for an LDAP filter before it is substituted,
+so neither can inject filter syntax (`*`, `(`, `)`, `\`, NUL and non-ASCII bytes
+become `\2a`-style escapes):
+
+| Field | Value |
+|---|---|
+| `{{.DN}}` | The DN the user bound as, from the user search |
+| `{{.Username}}` | The login name sent in the request body |
+
+The default covers `groupOfNames` and Active Directory (`member`) and
+`groupOfUniqueNames` (`uniqueMember`). For `posixGroup`, which lists members by
+login name:
+
+```yaml
+spec:
+  groupSearch:
+    baseDN: ou=groups,dc=example,dc=org
+    filter: (&(objectClass=posixGroup)(memberUid={{.Username}}))
+```
+
+The filter is not recursive: Active Directory's nested groups need the matching rule
+in the filter, e.g. `(member:1.2.840.113556.1.4.1941:={{.DN}})`. A user entry that has
+`ou` values gets those as its groups instead, and the group search's result is
+dropped (unchanged by #72).
 
 Full request/response semantics, per-strategy validation rules and error mapping:
 [behavior.md](./behavior.md).

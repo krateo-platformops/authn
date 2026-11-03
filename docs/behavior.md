@@ -138,7 +138,21 @@ though the code is a `4xx`.
   (`LDAPConfigLookupFailed`), dial, StartTLS or a dropped connection
   (`LDAPUnavailable`), the `bindDN` bind refused or a user bind failing for another
   reason (`LDAPBindFailed`), the user or group search failing, e.g. `NoSuchObject` for
-  a wrong `baseDN` (`LDAPSearchFailed`).
+  a wrong `baseDN` (`LDAPSearchFailed`), and a `spec.groupSearch.filter` that isn't a
+  usable template (`LDAPConfigInvalid`).
+  After the user's bind, the groups come from a second search configured by
+  `spec.groupSearch` (#72; [api](./api.md#ldap-group-search)): under
+  `groupSearch.baseDN` (default `spec.baseDN`), with `groupSearch.filter` rendered as a
+  Go `text/template` whose `.DN` (the DN the user bound as) and `.Username` (the login
+  name) are `ldap.EscapeFilter`-escaped (default
+  `(|(member={{.DN}})(uniqueMember={{.DN}}))`), keeping each entry's
+  `groupSearch.nameAttribute` (default `cn`, matched case-insensitively; an entry
+  without it is skipped). `getConfig` parses the template and checks a sample
+  rendering with `ldap.CompileFilter`, so a bad one fails before authn dials the server.
+  Before #72 the filter was hardcoded to `(uniquemember=uid=<username>,dc=example,dc=com)`,
+  so outside that one directory layout every login got no groups. The user's own `ou`
+  values, when it has any, still win over the group search's result
+  (`ldapEntryToUserInfo`).
 - **oidc step-up** — `POST /oidc/stepup?name=<OIDCConfig>`, with the same headers as
   the OIDC login (#49). It runs the same flow as `/oidc/login` (`authenticate`,
   `oidc/login.go`), then `checkStepUp` (`oidc/stepup.go`):
@@ -208,6 +222,11 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.bindDN` + `spec.bindSecret` (optional; omit for anonymous bind).
 - `spec.tls` (optional bool — `StartTLS` with `InsecureSkipVerify`, see
   [gotchas.md](./gotchas.md)).
+- `spec.groupSearch` (optional, #72) — the search for the user's groups: `baseDN`
+  (default `spec.baseDN`), `filter` (a `text/template` over the escaped `.DN` and
+  `.Username`; default `(|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute`
+  (default `cn`). An invalid `filter` fails every login with `500`
+  `LDAPConfigInvalid`.
 - `spec.graphics` (optional).
 
 ### `OIDCConfig` (`oidc.authn.krateo.io`) — `apis/authn/oidc/v1alpha1/types.go`

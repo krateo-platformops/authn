@@ -95,6 +95,33 @@ spec:
                 - icon
                 - textColor
                 type: object
+              groupSearch:
+                description: |-
+                  GroupSearch configures how a user's groups are found after their bind
+                  succeeds. Omitted, every field takes its default.
+                properties:
+                  baseDN:
+                    description: |-
+                      BaseDN is the base of the subtree the group search is constrained to.
+                      Default: spec.baseDN.
+                    type: string
+                  filter:
+                    description: |-
+                      Filter selects the user's groups. It is a Go text/template over the
+                      authenticated user, with two fields: .DN, the DN the user bound as, and
+                      .Username, the login name. Both are already escaped for an LDAP filter.
+                      Default: member or uniqueMember equal to .DN, which covers
+                      groupOfNames, Active Directory and groupOfUniqueNames. For posixGroup,
+                      match memberUid to .Username. A template that doesn't parse, or that
+                      doesn't render a valid LDAP filter, fails every login with a 500
+                      (LDAPConfigInvalid). See docs/api.md for examples.
+                    type: string
+                  nameAttribute:
+                    description: |-
+                      NameAttribute is the group entry attribute whose value is the group's
+                      name. A group entry without it is skipped. Default: cn.
+                    type: string
+                type: object
               tls:
                 type: boolean
             required:
