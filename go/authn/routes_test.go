@@ -261,7 +261,7 @@ func probe(handler http.Handler) ([]string, int) {
 						if strings.Contains(rec.Body.String(), l) {
 							found = append(found, fmt.Sprintf("%s: body contains %q", where, l))
 						}
-						for k, vs := range rec.Header() {
+						for k, vs := range rec.Result().Header {
 							if strings.Contains(strings.Join(vs, ","), l) {
 								found = append(found, fmt.Sprintf("%s: header %s contains %q", where, k, l))
 							}
@@ -295,3 +295,50 @@ func TestJWKSIsPublicOnly(t *testing.T) {
 }
 
 func testLogger() zerolog.Logger { return zerolog.Nop() }
+
+// smokeAnswers are the answers authn gives, with no credentials and no
+// external dependency, on each route. They are what a roll's smoke check
+// asserts (docs/release.md "Smoke check after a roll"): any other answer, a
+// 500 above all, means authn itself is broken. Keep the docs table in sync.
+var smokeAnswers = []struct {
+	method, path string
+	code         int
+	cause        string
+}{
+	{http.MethodGet, "/health", http.StatusOK, ""},
+	{http.MethodGet, "/strategies", http.StatusOK, ""},
+	{http.MethodGet, "/.well-known/jwks.json", http.StatusOK, ""},
+	{http.MethodGet, "/basic/login", http.StatusUnauthorized, "MissingCredentials"},
+	{http.MethodPost, "/serviceaccount/login", http.StatusUnauthorized, "MissingBearer"},
+	{http.MethodPost, "/ldap/login", http.StatusBadRequest, ""},
+	{http.MethodGet, "/oauth/login", http.StatusBadRequest, ""},
+	{http.MethodGet, "/oidc/login", http.StatusBadRequest, ""},
+	{http.MethodPost, "/oidc/stepup", http.StatusBadRequest, ""},
+}
+
+// TestSmokeAnswers pins the smoke-check contract: every route answers its
+// documented code and cause to a request with no credentials, as JSON.
+func TestSmokeAnswers(t *testing.T) {
+	handler := routes.Serve(publicRoutes(t, &mintCounter{}), testLogger())
+	for _, a := range smokeAnswers {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(a.method, a.path, nil))
+		where := a.method + " " + a.path
+		assert.Equal(t, a.code, rec.Code, where)
+		// Result() holds the headers actually sent. rec.Header() is the live map,
+		// which still shows a header set after WriteHeader that the client never got.
+		assert.Equal(t, "application/json", rec.Result().Header.Get("Content-Type"), where)
+		if a.cause != "" {
+			var s struct {
+				Details struct {
+					Causes []struct {
+						Reason string `json:"reason"`
+					} `json:"causes"`
+				} `json:"details"`
+			}
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &s), where)
+			require.NotEmpty(t, s.Details.Causes, where)
+			assert.Equal(t, a.cause, s.Details.Causes[0].Reason, where)
+		}
+	}
+}

@@ -22,6 +22,14 @@ couldn't. A live read on 057 and demo found it while confirming their authn vers
 release build now passes the tag and commit (`release-tag.yaml` → `build_args`), and the
 Dockerfile injects them with `-ldflags -X main.Version / main.Build`. A build without
 them, such as a PR validation or a local build, reports `dev`.
+## 2026-11-03 — `/strategies` answers `application/json`
+
+`GET /strategies` set `Content-Type` after `WriteHeader(200)`, so the header was dropped and
+Go sniffed the body as `text/plain`, although it is a JSON array. installer's pre-roll smoke
+baseline caught it on 057 and demo. `TestSmokeAnswers` had passed, because it read the
+recorder's live header map (`rec.Header()`) instead of the headers actually sent
+(`rec.Result().Header`). Both are fixed. The surface tests now read sent headers, so a
+header set too late fails them.
 
 ## 2026-11-03 — LDAP users get their groups
 
