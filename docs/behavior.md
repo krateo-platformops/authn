@@ -178,8 +178,8 @@ warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
   optionally `X-Code-Verifier`, forwarded as the PKCE `code_verifier`
   (`oauth2.VerifierOption`) exactly as on oidc; before, `/oauth/login` dropped it, so a
   client that sent a `code_challenge` got every exchange refused.
-  Code is exchanged via `golang.org/x/oauth2`; token type must be `bearer` when a
-  RESTAction is configured. A failed exchange is classified by `classifyExchange` →
+  Code is exchanged via `golang.org/x/oauth2`; token type must be `bearer`, compared
+  case-insensitively (RFC 6749 §7.1), when a RESTAction is configured. A failed exchange is classified by `classifyExchange` →
   `codeexchange.Refusal` (`internal/helpers/codeexchange`): the token endpoint's
   `error` `invalid_grant`, or GitHub's `bad_verification_code` (answered with HTTP
   `200`, which `x/oauth2` still reports as a `RetrieveError`), is `403`

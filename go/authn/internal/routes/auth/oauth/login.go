@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -145,7 +146,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		userinfo := userInfo{}
 		log.Debug().Str("name", name).Msg("resolving restaction")
 		if restactionRef != nil {
-			if tok.TokenType != "bearer" {
+			// RFC 6749 §7.1: the token type is case-insensitive.
+			if !strings.EqualFold(tok.TokenType, "bearer") {
 				err := codeexchange.Failed(fmt.Errorf("oauth2 token is not type bearer: %s", tok.TokenType))
 				status.LogFailure(log, err).Str("name", name).Msg("error while resolving restaction")
 				encode.Failure(wri, status.FromError(err))

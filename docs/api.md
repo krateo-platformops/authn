@@ -189,7 +189,7 @@ any failed code exchange answered `417`.
 | `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself: `invalid_grant`, or GitHub's `bad_verification_code` (which GitHub answers with HTTP `200`) | Start the sign-in again |
 | `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig | Retry later |
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key | Retry later |
-| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token isn't `bearer` while a RESTAction needs it | Retry later |
+| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token type isn't `bearer` (in any case, RFC 6749 §7.1) while a RESTAction needs it | Retry later |
 | `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity (see `/oidc/login`) | Retry later |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
