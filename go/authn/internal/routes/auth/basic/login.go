@@ -55,6 +55,9 @@ var (
 // comparePassword reports whether got is the stored password want, in time
 // that depends on neither: both are hashed to SHA-256 first, so their
 // lengths don't leak either, then compared with subtle.ConstantTimeCompare.
+// The digest is not password storage: nothing hashed is kept or returned, it
+// only gives both sides one length (CodeQL's go/weak-sensitive-data-hashing
+// alerts on it were dismissed as false positives for that reason).
 // A variable, so a test can count comparisons.
 var comparePassword = func(got string, want []byte) bool {
 	g, w := sha256.Sum256([]byte(got)), sha256.Sum256(want)
