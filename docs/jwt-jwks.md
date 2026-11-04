@@ -195,6 +195,14 @@ for verification only (`JWT_PREVIOUS_KEYS`):
 3. After the longest token lifetime has passed (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, 24h
    by default), remove the entry, then delete the old Secret.
 
+**The key must survive every upgrade.** authn's chart does not create the signing-key
+Secret: the installer's chart does, reusing the existing key through `lookup` and
+generating one (`genPrivateKey`) only when `lookup` finds none. `helm template` never
+resolves `lookup`, so offline renders always show the generate branch. Only a live check
+proves the key was kept. A change in the `/.well-known/jwks.json` body with no rotation
+configured (same `kid`, no `previousKeys`) means the key was regenerated, and every
+outstanding token stopped verifying. Treat it as an incident, not a roll artefact.
+
 Run each step's upgrade with `--wait` (or follow it with `kubectl rollout status`). A bad
 previous-key setting makes the new pod exit at boot while the old pod keeps serving, so
 without waiting `helm upgrade` reports success and the rotation silently stalls.

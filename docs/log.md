@@ -14,6 +14,22 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — the RESTAction token leaves the URL
+
+authn resolved a `restActionRef` with `GET /call?…&extras={"token":"<the user's IdP access
+token>"}`, unescaped, so the token sat in every URL a gateway logged, and in authn's own
+trace spans when tracing was on. It also read snowplow's error body twice, so a refusal or
+a timeout reached the log as an empty string. snowplow confirmed that `POST /call/read`
+takes the extras in the body, in every live version (since 1.12.28), and that snowplow
+itself records no query. authn now sends the token there, and a snowplow failure is `500`
+`RESTActionFailed` carrying snowplow's code and reason.
+
+Diego first chose to delete the `LegacyResolve` fallback as well, which copies the
+RESTAction and its endpoint Secrets with the user's token written in. Reading the
+krateo-saas installer then showed `github-oauth-restaction` has no `${ .token }` header,
+so it works only through that copy. The fallback stays, logged at warn on every use, and
+goes once the RESTActions carry the header and installer confirms nothing falls back.
+
 ## 2026-11-04 — /oauth/login forwards the PKCE verifier
 
 PKCE is the client's to add: authn is stateless between the redirect and the exchange, so

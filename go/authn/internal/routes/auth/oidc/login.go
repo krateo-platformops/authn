@@ -153,17 +153,22 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 
 	log.Debug().Str("name", name).Msg("resolving restaction")
 	if cfg.RESTActionRef != nil {
-		additionalFieldstoReplace, err := restaction.Resolve(callCtx, rc, cfg.RESTActionRef, tok.email, tok.bearerToken)
-		keysOK, errr := checkKeys(additionalFieldstoReplace)
-		if err != nil || !keysOK || errr != nil {
-			if errr != nil {
-				log.Err(err).Str("name", name).Msgf("restaction parsing has found the following error: %v", errr)
+		ref := cfg.RESTActionRef
+		additionalFieldstoReplace, err := restaction.Resolve(callCtx, ref, tok.bearerToken)
+		if err == nil {
+			if _, kerr := checkKeys(additionalFieldstoReplace); kerr != nil {
+				err = fmt.Errorf("the RESTAction's answer is unusable: %w", kerr)
 			}
-			log.Err(err).Str("name", name).Msg("unable to resolve restaction, retrying with legacy resolve (copy)")
-			additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, rc, cfg.RESTActionRef, tok.email, tok.bearerToken)
+		}
+		if err != nil {
+			// The RESTAction may be written for the old shape, without a
+			// ${ .token } header: only the legacy copy path serves it.
+			log.Warn().Err(err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).
+				Msg("restaction fell back to the legacy copy path")
+			additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, rc, ref, tok.email, tok.bearerToken)
 			if err != nil {
-				err = status.Failed(CauseRESTActionFailed, fmt.Errorf("unable to resolve the RESTAction: %w", err))
-				status.LogFailure(log, err).Str("name", name).Msg("unable to resolve restaction, stopping")
+				err = restaction.Failed(err)
+				status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction, stopping")
 				encode.Failure(wri, status.FromError(err))
 				return nil, tok, nil, false
 			}
@@ -211,7 +216,7 @@ const (
 	CauseClientSecretLookupFailed status.CauseType = "ClientSecretLookupFailed"
 	CauseTokenExchangeFailed                       = codeexchange.CauseTokenExchangeFailed
 	CauseUserInfoFailed           status.CauseType = "UserInfoFailed"
-	CauseRESTActionFailed         status.CauseType = "RESTActionFailed"
+	CauseRESTActionFailed                          = restaction.CauseRESTActionFailed
 )
 
 // checkAllowedGroups admits nfo when allowed is empty, or when nfo holds at
