@@ -29,15 +29,6 @@ rules:
   - get
   - create
   - update
-- apiGroups:
-  - templates.krateo.io
-  resources:
-  - restactions
-  verbs:
-  - get
-  - create
-  - update
-  - delete
 # krateo basic.authn crd
 - apiGroups:
   - basic.authn.krateo.io
