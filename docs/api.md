@@ -169,7 +169,7 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret | Retry later |
 | `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), or answering something unusable. The IdP's answer is logged, not returned | Retry later |
 | `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200`, not JSON, or a field authn asked for has the wrong type | Retry later |
-| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity | Retry later |
+| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity. When snowplow answered, the message carries its code and reason (e.g. `snowplow answered 504 Timeout`); snowplow's own message is logged only | Retry later |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 Before #81, a missing or unreadable OIDCConfig answered `417` without a cause, and
@@ -190,7 +190,7 @@ any failed code exchange answered `417`.
 | `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig | Retry later |
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key | Retry later |
 | `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token isn't `bearer` while a RESTAction needs it | Retry later |
-| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity | Retry later |
+| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity (see `/oidc/login`) | Retry later |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 ### `/oidc/stepup` failures

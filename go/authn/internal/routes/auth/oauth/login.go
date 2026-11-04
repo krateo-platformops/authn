@@ -66,7 +66,7 @@ const (
 	CauseOAuthConfigLookupFailed  status.CauseType = "OAuthConfigLookupFailed"
 	CauseClientSecretLookupFailed status.CauseType = "ClientSecretLookupFailed"
 	CauseTokenExchangeFailed                       = codeexchange.CauseTokenExchangeFailed
-	CauseRESTActionFailed         status.CauseType = "RESTActionFailed"
+	CauseRESTActionFailed                          = restaction.CauseRESTActionFailed
 	CauseIssuanceFailed                            = status.CauseIssuanceFailed
 )
 
@@ -151,15 +151,22 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 				encode.Failure(wri, status.FromError(err))
 				return
 			}
-			additionalFieldstoReplace, err := restaction.Resolve(callCtx, r.rc, restactionRef, uuid.New().String(), tok.AccessToken)
-			value, ok := additionalFieldstoReplace["name"]
-			_, okk := additionalFieldstoReplace["name"].(string)
-			if err != nil || !ok || !okk || value == nil {
-				log.Err(err).Str("name", name).Msg("unable to resolve restaction, retrying with legacy resolve (copy)")
-				additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, r.rc, restactionRef, uuid.New().String(), tok.AccessToken)
+			ref := restactionRef
+			additionalFieldstoReplace, err := restaction.Resolve(callCtx, ref, tok.AccessToken)
+			if err == nil {
+				if v, ok := additionalFieldstoReplace["name"].(string); !ok || v == "" {
+					err = errors.New("the RESTAction's answer has no name")
+				}
+			}
+			if err != nil {
+				// The RESTAction may be written for the old shape, without a
+				// ${ .token } header: only the legacy copy path serves it.
+				log.Warn().Err(err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).
+					Msg("restaction fell back to the legacy copy path")
+				additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, r.rc, ref, uuid.New().String(), tok.AccessToken)
 				if err != nil {
-					err = status.Failed(CauseRESTActionFailed, fmt.Errorf("unable to resolve the RESTAction: %w", err))
-					status.LogFailure(log, err).Str("name", name).Msg("unable to resolve restaction, stopping")
+					err = restaction.Failed(err)
+					status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction, stopping")
 					encode.Failure(wri, status.FromError(err))
 					return
 				}

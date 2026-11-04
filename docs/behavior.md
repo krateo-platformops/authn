@@ -305,17 +305,31 @@ TokenReview call.
 
 ### snowplow (identity enrichment)
 When an `OIDCConfig`/`OAuthConfig` has a `restActionRef`, authn enriches the identity
-by calling snowplow's `/call` endpoint for that RESTAction
-(`internal/helpers/restaction/resolver.go:26-66`), authenticating with the long-lived
-`authn` service JWT (`main.go:195-203`). Two resolution paths:
-- **`Resolve`** — calls the RESTAction directly, passing the user's bearer token as
-  an `extras` param (`resolver.go:26-66`).
-- **`LegacyResolve`** — fallback used when `Resolve` doesn't return a usable `name`:
-  it deep-copies the RESTAction + its endpoint Secrets per-user, calls it, then
-  deletes the copies (`resolver.go:68-186`). The returned `status` map may override
-  `name`, `email`, `preferredUsername`, `groups`, `avatarURL`
-  (`oidc/support.go:233-280`); any other key is rejected (`checkKeys` default case,
-  `oidc/support.go:317-319`).
+by asking snowplow to resolve that RESTAction (`internal/helpers/restaction/resolver.go`),
+authenticating with the long-lived `authn` service JWT. Two resolution paths:
+- **`Resolve`** — `POST /call/read?apiVersion=templates.krateo.io/v1&resource=restactions&name=…&namespace=…`
+  (query escaped) with body `{"extras":{"token":"<the user's IdP access token>"}}`.
+  **Requires snowplow ≥ 1.12.28**, the first with `/call/read`. Before 0.35.2 the token
+  went in the URL (`GET /call?…&extras={"token":…}`, unescaped), where any URL-logging
+  gateway, and authn's own trace spans when tracing is on, recorded it. A RESTAction
+  reads the token as `${ .token }`. Put it in a stage **header**
+  (`"${ \"Authorization: Bearer \" + .token }"`), never in a stage **path**: snowplow
+  logs a failing stage's path unredacted (snowplow #1143). A non-`200` from snowplow is
+  a `SnowplowError` (its code, `reason` and `message`). The caller gets `500`
+  `RESTActionFailed` with the code and reason; the message stays in authn's log
+  (`restaction.Failed`).
+- **`LegacyResolve`** — the fallback for RESTActions written for the old shape, whose
+  stages carry no `${ .token }` header. It runs when `Resolve` fails, or its answer is
+  unusable (oidc: `checkKeys`; oauth: no `name`). It copies the RESTAction and its
+  endpoint Secrets per user, with the user's token written into each Secret copy under
+  `token` (unless the Secret already has one), calls `GET /call` on the copy, then
+  deletes the copies. **Every use logs a warn**, `restaction fell back to the legacy copy
+  path`, naming the RESTAction. It is deleted once no live RESTAction needs it: the
+  krateo-saas `github-oauth-restaction` is the known one (no `.token` header).
+
+The returned `status` map may override `name`, `email`, `preferredUsername`, `groups`,
+`avatarURL` (`updateConfig`, `oidc/support.go`). On oidc, any other key makes the
+answer unusable (`checkKeys`).
 
 The snowplow base URL comes from `SNOWPLOW_SERVICE_HOST`/`SNOWPLOW_SERVICE_PORT` or
 `URL_SNOWPLOW` (default `http://snowplow.krateo-system.svc.cluster.local:8081`,
