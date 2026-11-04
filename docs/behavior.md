@@ -102,7 +102,7 @@ warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
 ### Login inputs per strategy
 
 - **basic** — HTTP `Authorization: Basic` header; `401` `MissingCredentials` with
-  `WWW-Authenticate` if absent. Password compared in plaintext against the Secret
+  `WWW-Authenticate` if absent. Password compared in constant time (SHA-256 digests, `subtle.ConstantTimeCompare`) against the plaintext in the Secret
   keyed by `User.spec.passwordRef` (`validate`, `basic/login.go`). An unknown user and
   a wrong password are the same refusal, `403` `InvalidCredentials`, with a
   byte-identical body; the real reason is logged only (`status.RefusedPrivately`). A
