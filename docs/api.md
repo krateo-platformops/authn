@@ -134,7 +134,7 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) |
 | `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` |
 | `TokenExpired` | 403 | `exp` is more than 1 minute in the past |
-| `IDTokenInvalid` | 403 | The ID token can't be decoded, or `aud`/`exp` is missing or malformed |
+| `IDTokenInvalid` | 403 | The ID token can't be decoded, `aud`/`exp` is missing or malformed, or a claim authn reads has the wrong type (`groups` not a list of strings; `preferred_username`, `name`, `picture`, `email` or `acr` not a string; `auth_time` not a number). A `null` claim counts as omitted |
 | `GroupNotAllowed` | 403 | `spec.allowedGroups` is set and the user holds none of those groups (after the RESTAction, and after reserved `krateo:loa:` groups are stripped). Applies to `/oidc/stepup` too |
 | `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` |
 | `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` |
@@ -143,7 +143,7 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `OIDCConfigInvalid` | 500 | The authorize or token endpoint is known neither from the spec nor from discovery |
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret |
 | `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), or answering something unusable. The IdP's answer is logged, not returned |
-| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed |
+| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200`, not JSON, or a field authn asked for has the wrong type |
 | `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
 
