@@ -95,17 +95,18 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		name := req.URL.Query().Get("name")
 		if len(name) == 0 {
-			err := fmt.Errorf("LDAPConfig 'name' must be specified")
-			log.Warn().Err(err).Msg("empty 'name' parameter in query string")
-			encode.BadRequest(wri, err)
+			err := status.BadRequest(status.CauseMissingConfigName, errors.New("LDAPConfig 'name' must be specified"))
+			status.LogFailure(log, err).Msg("empty 'name' parameter in query string")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
 		var lo loginInfo
 		err := decode.JSONBody(wri, req, &lo)
 		if err != nil && !decode.IsEmptyBodyError(err) {
-			log.Warn().Err(err).Msg("invalid request body")
-			encode.BadRequest(wri, err)
+			err = status.BadRequest(status.CauseInvalidRequestBody, err)
+			status.LogFailure(log, err).Msg("invalid request body")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 

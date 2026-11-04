@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/krateo-platformops/authn/internal/helpers/codeexchange"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
@@ -87,8 +88,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		log.Debug().Msg("generating secret from oidc idtoken")
 		dat, notAfter, err := r.gen.Generate(storage.StrategyOIDC, nfo)
 		if err != nil {
-			log.Err(err).Msg("kubeconfig creation failure")
-			encode.InternalError(wri, err)
+			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			status.LogFailure(log, err).Msg("kubeconfig creation failure")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
@@ -112,9 +114,16 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 func authenticate(wri http.ResponseWriter, req *http.Request, base context.Context, rc *rest.Config, log zerolog.Logger) (cfg *oidcConfig, tok idToken, nfo userinfo.Info, ok bool) {
 	name := req.URL.Query().Get("name")
 	if len(name) == 0 {
-		err := fmt.Errorf("OIDCConfig 'name' must be specified")
-		log.Warn().Err(err).Msg("empty 'name' parameter in query string")
-		encode.BadRequest(wri, err)
+		err := status.BadRequest(status.CauseMissingConfigName, errors.New("OIDCConfig 'name' must be specified"))
+		status.LogFailure(log, err).Msg("empty 'name' parameter in query string")
+		encode.Failure(wri, status.FromError(err))
+		return nil, tok, nil, false
+	}
+	code := req.Header.Get(authCodeKey)
+	if len(code) == 0 {
+		err := status.BadRequest(status.CauseMissingAuthorizationCode, fmt.Errorf("the %s header must carry the authorization code", authCodeKey))
+		status.LogFailure(log, err).Str("name", name).Msg("empty authorization code")
+		encode.Failure(wri, status.FromError(err))
 		return nil, tok, nil, false
 	}
 
@@ -127,20 +136,16 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 
 	cfg, err := getConfig(callCtx, rc, name)
 	if err != nil {
-		log.Err(err).Str("name", name).Msg("unable to fetch oidc configuration")
-		if errors.As(err, new(status.CauseError)) {
-			encode.Failure(wri, status.FromError(err))
-		} else {
-			encode.ExpectationFailed(wri, err)
-		}
+		status.LogFailure(log, err).Str("name", name).Msg("unable to fetch oidc configuration")
+		encode.Failure(wri, status.FromError(err))
 		return nil, tok, nil, false
 	}
 
 	log.Debug().Str("name", name).Msg("starting oidc login")
-	tok, err = doLogin(callCtx, req.Header.Get(authCodeKey), req.Header.Get(codeVerifierKey), cfg)
+	tok, err = doLogin(callCtx, code, req.Header.Get(codeVerifierKey), cfg)
 	if err != nil {
-		// A rejected ID token is a 403 with its cause; anything else is
-		// authn's failure, a 500.
+		// A rejected code or ID token is a 403 with its cause; anything else
+		// is authn's (or its IdP's) failure, a 500.
 		status.LogFailure(log, err).Str("name", name).Msg("unable to complete login")
 		encode.Failure(wri, status.FromError(err))
 		return nil, tok, nil, false
@@ -157,8 +162,9 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 			log.Err(err).Str("name", name).Msg("unable to resolve restaction, retrying with legacy resolve (copy)")
 			additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, rc, cfg.RESTActionRef, tok.email, tok.bearerToken)
 			if err != nil {
-				log.Err(err).Str("name", name).Msg("unable to resolve restaction, stopping")
-				encode.InternalError(wri, err)
+				err = status.Failed(CauseRESTActionFailed, fmt.Errorf("unable to resolve the RESTAction: %w", err))
+				status.LogFailure(log, err).Str("name", name).Msg("unable to resolve restaction, stopping")
+				encode.Failure(wri, status.FromError(err))
 				return nil, tok, nil, false
 			}
 		}
@@ -167,22 +173,16 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 		log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
 		tok, err = updateConfig(tok, additionalFieldstoReplace)
 		if err != nil {
-			log.Err(err).Str("name", name).Msg("unable to parse updated idtoken from restaction")
-			encode.InternalError(wri, err)
+			err = status.Failed(CauseRESTActionFailed, fmt.Errorf("the RESTAction's answer is unusable: %w", err))
+			status.LogFailure(log, err).Str("name", name).Msg("unable to parse updated idtoken from restaction")
+			encode.Failure(wri, status.FromError(err))
 			return nil, tok, nil, false
 		}
 		log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", tok.name, tok.preferredUsername, tok.email, tok.groups, tok.avatarURL)
 	}
 
 	log.Debug().Str("name", name).Msg("validating idtoken")
-	nfo, err = validate(tok)
-	if err != nil {
-		log.Warn().Err(err).Str("name", name).
-			Str("tokenURL", cfg.TokenURL).
-			Msg("user info default user error for oidc")
-		encode.Forbidden(wri, err)
-		return nil, tok, nil, false
-	}
+	nfo = validate(tok)
 
 	if err := checkAllowedGroups(cfg.AllowedGroups, nfo); err != nil {
 		status.LogFailure(log, err).Str("name", name).Str("username", nfo.GetUserName()).Msg("login refused")
@@ -195,6 +195,24 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 // CauseGroupNotAllowed refuses a user the OIDCConfig's allowedGroups don't
 // admit (403).
 const CauseGroupNotAllowed status.CauseType = "GroupNotAllowed"
+
+// Causes of a failed OIDC login besides the ID token's (idtoken.go), step-up's
+// (stepup.go) and allowedGroups': the values of details.causes[0].reason
+// (docs/api.md). They are added, never renamed.
+const (
+	// Refusals of the caller.
+	CauseOIDCConfigNotFound        status.CauseType = "OIDCConfigNotFound" // 404
+	CauseAuthorizationCodeRejected                  = codeexchange.CauseAuthorizationCodeRejected
+
+	// Failures of authn or its IdP (500).
+	CauseOIDCConfigLookupFailed   status.CauseType = "OIDCConfigLookupFailed"
+	CauseOIDCConfigInvalid        status.CauseType = "OIDCConfigInvalid"
+	CauseOIDCDiscoveryFailed      status.CauseType = "OIDCDiscoveryFailed"
+	CauseClientSecretLookupFailed status.CauseType = "ClientSecretLookupFailed"
+	CauseTokenExchangeFailed                       = codeexchange.CauseTokenExchangeFailed
+	CauseUserInfoFailed           status.CauseType = "UserInfoFailed"
+	CauseRESTActionFailed         status.CauseType = "RESTActionFailed"
+)
 
 // checkAllowedGroups admits nfo when allowed is empty, or when nfo holds at
 // least one allowed group. nfo's groups are final: reserved groups are
@@ -211,13 +229,12 @@ func checkAllowedGroups(allowed []string, nfo userinfo.Info) error {
 	return status.Refused(CauseGroupNotAllowed, fmt.Errorf("user %q is in none of the groups this OIDCConfig admits", nfo.GetUserName()))
 }
 
-func validate(idToken idToken) (userinfo.Info, error) {
+func validate(idToken idToken) userinfo.Info {
 	exts := userinfo.Extensions{}
 	exts.Add("name", idToken.name)
 	exts.Add("avatarUrl", idToken.avatarURL)
 	exts.Add("email", idToken.email)
 
 	uid, _ := shortid.Generate()
-	nfo := userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(idToken.preferredUsername), uid, idToken.groups, exts)
-	return nfo, nil
+	return userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(idToken.preferredUsername), uid, idToken.groups, exts)
 }

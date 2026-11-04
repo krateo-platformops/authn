@@ -310,10 +310,10 @@ var smokeAnswers = []struct {
 	{http.MethodGet, "/.well-known/jwks.json", http.StatusOK, ""},
 	{http.MethodGet, "/basic/login", http.StatusUnauthorized, "MissingCredentials"},
 	{http.MethodPost, "/serviceaccount/login", http.StatusUnauthorized, "MissingBearer"},
-	{http.MethodPost, "/ldap/login", http.StatusBadRequest, ""},
-	{http.MethodGet, "/oauth/login", http.StatusBadRequest, ""},
-	{http.MethodGet, "/oidc/login", http.StatusBadRequest, ""},
-	{http.MethodPost, "/oidc/stepup", http.StatusBadRequest, ""},
+	{http.MethodPost, "/ldap/login", http.StatusBadRequest, "MissingConfigName"},
+	{http.MethodGet, "/oauth/login", http.StatusBadRequest, "MissingConfigName"},
+	{http.MethodGet, "/oidc/login", http.StatusBadRequest, "MissingConfigName"},
+	{http.MethodPost, "/oidc/stepup", http.StatusBadRequest, "MissingConfigName"},
 }
 
 // TestSmokeAnswers pins the smoke-check contract: every route answers its

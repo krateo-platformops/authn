@@ -120,12 +120,17 @@ unreachable" is the remaining case: no response at all.
 
 ### `/oidc/login` failures
 
-The ID token is validated before any claim is used. Failures are `Status` bodies with
-the same shape as above: `403` for a token authn won't accept (retrying the same login
-fails again), and `500` for an OIDCConfig authn can't validate against.
+The ID token is validated before any claim is used. Every failure is a `Status` body
+with the same shape as above: `400` for a request authn can't act on, `404` for an
+OIDCConfig that doesn't exist, `403` for a code or token authn won't accept (retrying
+the same login fails again), and `500` when authn or its IdP failed.
 
 | `details.causes[0].reason` | Code | Meaning |
 |---|---|---|
+| `MissingConfigName` | 400 | No `?name=` |
+| `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one. Answered before authn looks anything up |
+| `OIDCConfigNotFound` | 404 | No OIDCConfig has the `name` asked for |
+| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself (`error` `invalid_grant`, RFC 6749 §5.2): expired, already used, issued for another redirect URI, or a PKCE verifier that doesn't match. There is nothing to retype: start the sign-in again. The IdP's own answer is logged, not returned |
 | `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) |
 | `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` |
 | `TokenExpired` | 403 | `exp` is more than 1 minute in the past |
@@ -133,9 +138,35 @@ fails again), and `500` for an OIDCConfig authn can't validate against.
 | `GroupNotAllowed` | 403 | `spec.allowedGroups` is set and the user holds none of those groups (after the RESTAction, and after reserved `krateo:loa:` groups are stripped). Applies to `/oidc/stepup` too |
 | `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` |
 | `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` |
+| `OIDCConfigLookupFailed` | 500 | authn could not read the OIDCConfig |
+| `OIDCDiscoveryFailed` | 500 | The `discoveryURL` document could not be read: unreachable, not `200`, or not JSON |
+| `OIDCConfigInvalid` | 500 | The authorize or token endpoint is known neither from the spec nor from discovery |
+| `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret |
+| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), or answering something unusable. The IdP's answer is logged, not returned |
+| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed |
+| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
 
-Other OIDC failures, such as a rejected code or an unreachable token endpoint, are still
-a `500` without a cause.
+Before #81, a missing or unreadable OIDCConfig answered `417` without a cause, and
+every other failure here without a cause answered `500`, including a refused code,
+which is the caller's.
+
+### `/oauth/login` failures
+
+Same contract as `/oidc/login`. Before #81, a missing or unreadable OAuthConfig and
+any failed code exchange answered `417`.
+
+| `details.causes[0].reason` | Code | Meaning |
+|---|---|---|
+| `MissingConfigName` | 400 | No `?name=` |
+| `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one |
+| `OAuthConfigNotFound` | 404 | No OAuthConfig has the `name` asked for |
+| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself: `invalid_grant`, or GitHub's `bad_verification_code` (which GitHub answers with HTTP `200`) |
+| `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig |
+| `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key |
+| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token isn't `bearer` while a RESTAction needs it |
+| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
 
 ### `/oidc/stepup` failures
 
@@ -155,7 +186,8 @@ Basic and ldap follow the same contract as `/serviceaccount/login`: every
 failure is a `Status` with its cause in `details.causes[0].reason`, a refusal of the
 caller is `401`/`403`, and authn's own failure is `500`. Before, both answered `403`
 when authn couldn't read the User, the Secret or the LDAP server, and ldap answered
-`417` when it couldn't read the LDAPConfig. An ambiguous LDAP user keeps its `300`.
+`417` when it couldn't read the LDAPConfig. An ambiguous LDAP user keeps its `300`; its
+body says `"status":"Failure"` since #81 (it said `Success`).
 
 `InvalidCredentials` is one fixed response: the same code, message and body whether
 the user is unknown, the name unusable or the password wrong, so a caller can't probe
@@ -177,6 +209,8 @@ warn line). An unknown LDAP user was a `404` before; it is now this `403`.
 
 | `details.causes[0].reason` | Code | Meaning |
 |---|---|---|
+| `MissingConfigName` | 400 | No `?name=` |
+| `InvalidRequestBody` | 400 | The body isn't the JSON `{"username","password"}`. An empty body is not refused here: the login goes on with an empty username and password |
 | `LDAPConfigNotFound` | 404 | No LDAPConfig has the `name` asked for |
 | `AmbiguousUser` | 300 | More than one entry matches the username |
 | `InvalidCredentials` | 403 | No entry matches the username, the server refused the user's bind (wrong password, account disabled), or the password is empty, answered alike |
@@ -187,7 +221,8 @@ warn line). An unknown LDAP user was a `404` before; it is now this `403`.
 | `LDAPSearchFailed` | 500 | The user or group search failed, e.g. `baseDN` doesn't exist |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
 
-A missing `name` or an unreadable body is still a `400` without a cause.
+Every `Status` whose code isn't `2xx` says `"status":"Failure"`. Before #81 a `400` or a
+`300` said `Success`.
 
 ### LDAP group search
 

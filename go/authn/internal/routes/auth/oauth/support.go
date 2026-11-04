@@ -3,11 +3,14 @@ package oauth
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/authn/internal/status"
 	"golang.org/x/oauth2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 )
 
@@ -20,19 +23,29 @@ type userInfo struct {
 }
 
 func getConfig(rc *rest.Config, name string) (*oauth2.Config, *core.ObjectRef, error) {
+	if len(rest.IsValidPathSegmentName(name)) > 0 {
+		// No OAuthConfig can have this name; looking it up would fail client-side.
+		return nil, nil, status.CauseError{Code: http.StatusNotFound, Cause: CauseOAuthConfigNotFound,
+			Err: fmt.Errorf("OAuthConfig %q not found", name)}
+	}
 	ghc, err := resolvers.GetOAuthConfig(rc, name)
-	if err != nil {
-		return nil, nil, fmt.Errorf("unable to resolve OAuth configuration")
+	switch {
+	case apierrors.IsNotFound(err):
+		return nil, nil, status.CauseError{Code: http.StatusNotFound, Cause: CauseOAuthConfigNotFound,
+			Err: fmt.Errorf("OAuthConfig %q not found", name)}
+	case err != nil:
+		return nil, nil, status.Failed(CauseOAuthConfigLookupFailed, fmt.Errorf("unable to resolve OAuth configuration: %w", err))
 	}
 
 	sec, err := secrets.Get(context.Background(), rc, ghc.Spec.ClientSecretRef)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, status.Failed(CauseClientSecretLookupFailed, fmt.Errorf("unable to read the client secret: %w", err))
 	}
 
 	clientSecret, ok := sec.Data[ghc.Spec.ClientSecretRef.Key]
 	if !ok {
-		return nil, nil, fmt.Errorf("client secret not found")
+		return nil, nil, status.Failed(CauseClientSecretLookupFailed,
+			fmt.Errorf("the client secret has no key %q", ghc.Spec.ClientSecretRef.Key))
 	}
 
 	return &oauth2.Config{

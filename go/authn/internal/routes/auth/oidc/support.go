@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/codeexchange"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/krateo-platformops/authn/internal/telemetry"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 )
 
@@ -60,12 +62,24 @@ type idToken struct {
 }
 
 func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, error) {
-	cfg, err := resolvers.OIDCConfigGet(ctx, rc, name)
-	if errors.Is(err, resolvers.ErrIssuerConflict) {
-		return &oidcConfig{}, status.Failed(CauseIssuerConflict, err)
+	if len(rest.IsValidPathSegmentName(name)) > 0 {
+		// No OIDCConfig can have this name; looking it up would fail client-side.
+		return &oidcConfig{}, status.CauseError{Code: http.StatusNotFound, Cause: CauseOIDCConfigNotFound,
+			Err: fmt.Errorf("OIDCConfig %q not found", name)}
 	}
-	if err != nil {
-		return &oidcConfig{}, fmt.Errorf("unable to resolve OIDC configuration: %w", err)
+	cfg, err := resolvers.OIDCConfigGet(ctx, rc, name)
+	switch {
+	case apierrors.IsNotFound(err):
+		return &oidcConfig{}, status.CauseError{Code: http.StatusNotFound, Cause: CauseOIDCConfigNotFound,
+			Err: fmt.Errorf("OIDCConfig %q not found", name)}
+	case errors.Is(err, resolvers.ErrIssuerConflict):
+		return &oidcConfig{}, status.Failed(CauseIssuerConflict, err)
+	case errors.Is(err, resolvers.ErrDiscoveryFailed):
+		return &oidcConfig{}, status.Failed(CauseOIDCDiscoveryFailed, err)
+	case errors.Is(err, resolvers.ErrEndpointsMissing):
+		return &oidcConfig{}, status.Failed(CauseOIDCConfigInvalid, err)
+	case err != nil:
+		return &oidcConfig{}, status.Failed(CauseOIDCConfigLookupFailed, fmt.Errorf("unable to resolve OIDC configuration: %w", err))
 	}
 
 	res := &oidcConfig{
@@ -85,7 +99,7 @@ func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, 
 	if ref := cfg.Spec.ClientSecret; ref != nil {
 		sec, err := secrets.Get(context.Background(), rc, ref)
 		if err != nil {
-			return res, err
+			return res, status.Failed(CauseClientSecretLookupFailed, fmt.Errorf("unable to read the client secret: %w", err))
 		}
 		if val, ok := sec.Data[ref.Key]; ok {
 			res.ClientSecret = string(val)
@@ -114,29 +128,36 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenURL,
 		strings.NewReader(data.Encode()))
 	if err != nil {
-		return idToken{}, fmt.Errorf("failed to create request to token endpoint: %v", err)
+		return idToken{}, codeexchange.Failed(fmt.Errorf("failed to create request to token endpoint: %v", err))
 	}
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	tokenReq.Header.Set("Accept", "application/json")
 
 	resp, err := telemetry.HTTPClient().Do(tokenReq)
 	if err != nil {
-		return idToken{}, fmt.Errorf("failed to send request to token endpoint: %v", err)
+		return idToken{}, codeexchange.Failed(fmt.Errorf("failed to send request to token endpoint: %v", err))
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return idToken{}, fmt.Errorf("failed to read response body: %v", err)
+		return idToken{}, codeexchange.Failed(fmt.Errorf("failed to read response body: %v", err))
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return idToken{}, fmt.Errorf("token endpoint returned non-200 status code: %d, body: %s", resp.StatusCode, string(body))
+		// RFC 6749 §5.2: an error answer is JSON with an "error" code.
+		var answer struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &answer)
+		return idToken{}, codeexchange.Refusal(resp.StatusCode, answer.Error,
+			fmt.Errorf("token endpoint answered %d: %s", resp.StatusCode, string(body)))
 	}
 
 	var token TokenResponse
 	err = json.Unmarshal(body, &token)
 	if err != nil {
-		return idToken{}, fmt.Errorf("failed to unmarshal token response: %v", err)
+		return idToken{}, codeexchange.Failed(fmt.Errorf("failed to unmarshal token response: %v", err))
 	}
 
 	claims, err := decodeJWT(token.IDToken)
@@ -195,21 +216,21 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 		if token.AccessToken != "" {
 			request, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.UserInfoURL, nil)
 			if err != nil {
-				return idToken{}, fmt.Errorf("failed to create http request for userinfo endpoint: %v", err)
+				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to create http request for userinfo endpoint: %v", err))
 			}
 			request.Header.Set("Authorization", "Bearer "+token.AccessToken)
 			resp, err := telemetry.HTTPClient().Do(request)
 			if err != nil {
-				return idToken{}, fmt.Errorf("failed to send userinfo request: %v", err)
+				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to send userinfo request: %v", err))
 			}
 			userInfoDataJson, err := io.ReadAll(resp.Body)
 			if err != nil {
-				return idToken{}, fmt.Errorf("failed to read userinfo response: %v", err)
+				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to read userinfo response: %v", err))
 			}
 			var userInfo map[string]interface{}
 			err = json.Unmarshal(userInfoDataJson, &userInfo)
 			if err != nil {
-				return idToken{}, fmt.Errorf("error parsing userinfo payload JSON: %v", err)
+				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("error parsing userinfo payload JSON: %v", err))
 			}
 
 			// Replace the missing values that we did not find in the id token
@@ -237,7 +258,7 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 				}
 			}
 		} else {
-			return idToken{}, fmt.Errorf("unable to get access_token from response")
+			return idToken{}, codeexchange.Failed(errors.New("the token response has no access_token, which the userinfo call needs"))
 		}
 	}
 	return res, nil

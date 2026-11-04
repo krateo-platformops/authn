@@ -14,6 +14,20 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — oidc and oauth logins answer the failure contract; no more 417
+
+The oidc and oauth logins were the last routes outside the failure contract. A missing or
+unreadable config answered `417` without a cause, and an authorization code the IdP refused
+(expired, reused, wrong PKCE verifier) answered oidc `500`: a caller's mistake logged at
+error, as if authn had broken. Diego chose to split the exchange by the token endpoint's
+OAuth `error`: `invalid_grant` (and GitHub's `bad_verification_code`) is `403`
+`AuthorizationCodeRejected`, anything else `500` `TokenExchangeFailed`, with the IdP's own
+answer kept to the log. A missing config is `404` `OIDCConfigNotFound` /
+`OAuthConfigNotFound`, like LDAP's. Every `400` gained a cause (`MissingConfigName`,
+`MissingAuthorizationCode`, `InvalidRequestBody`), and a non-`2xx` `Status` now always says
+`Failure`: `400` and LDAP's `300` said `Success`. frontend confirmed the portal never
+branched on `417`.
+
 ## 2026-11-04 — OIDCConfig `allowedGroups`: admit only members
 
 An OIDC login used to admit everyone the IdP authenticated; only RBAC limited what they could
