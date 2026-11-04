@@ -72,10 +72,10 @@ answers, all `application/json`:
 | `GET /.well-known/jwks.json` | `200` | |
 | `GET /basic/login` | `401` | `MissingCredentials` |
 | `POST /serviceaccount/login` | `401` | `MissingBearer` |
-| `POST /ldap/login` (no `name`) | `400` | |
-| `GET /oauth/login` (no `name`) | `400` | |
-| `GET /oidc/login` (no `name`) | `400` | |
-| `POST /oidc/stepup` (no `name`) | `400` | |
+| `POST /ldap/login` (no `name`) | `400` | `MissingConfigName` |
+| `GET /oauth/login` (no `name`) | `400` | `MissingConfigName` |
+| `GET /oidc/login` (no `name`) | `400` | `MissingConfigName` |
+| `POST /oidc/stepup` (no `name`) | `400` | `MissingConfigName` |
 
 None of these depends on an IdP, a directory or a config CR, so any other answer, a
 `500` above all, means authn itself is broken. Between two releases with no change to

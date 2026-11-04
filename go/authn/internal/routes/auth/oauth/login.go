@@ -3,12 +3,14 @@ package oauth
 import (
 	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/krateo-platformops/authn/internal/helpers/codeexchange"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
@@ -49,6 +51,21 @@ const (
 
 var _ routes.Route = (*loginRoute)(nil)
 
+// Causes of a failed OAuth login: the values of details.causes[0].reason
+// (docs/api.md). They are added, never renamed.
+const (
+	// Refusals of the caller.
+	CauseOAuthConfigNotFound       status.CauseType = "OAuthConfigNotFound" // 404
+	CauseAuthorizationCodeRejected                  = codeexchange.CauseAuthorizationCodeRejected
+
+	// Failures of authn or its IdP (500).
+	CauseOAuthConfigLookupFailed  status.CauseType = "OAuthConfigLookupFailed"
+	CauseClientSecretLookupFailed status.CauseType = "ClientSecretLookupFailed"
+	CauseTokenExchangeFailed                       = codeexchange.CauseTokenExchangeFailed
+	CauseRESTActionFailed         status.CauseType = "RESTActionFailed"
+	CauseIssuanceFailed                            = status.CauseIssuanceFailed
+)
+
 type loginRoute struct {
 	rc            *rest.Config
 	gen           kubeconfig.Generator
@@ -78,24 +95,24 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		name := req.URL.Query().Get("name")
 		if len(name) == 0 {
-			err := fmt.Errorf("OAuthConfig 'name' must be specified")
-			log.Warn().Err(err).Msg("empty 'name' parameter in query string")
-			encode.BadRequest(wri, err)
+			err := status.BadRequest(status.CauseMissingConfigName, errors.New("OAuthConfig 'name' must be specified"))
+			status.LogFailure(log, err).Msg("empty 'name' parameter in query string")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
 		code := req.Header.Get(authCodeKey)
-		log.Debug().Str("name", name).Str("code", code).Msg("received authorization code")
 		if len(code) == 0 {
-			log.Warn().Msg("empty oauth code")
-			encode.BadRequest(wri, fmt.Errorf("empty oauth code"))
+			err := status.BadRequest(status.CauseMissingAuthorizationCode, fmt.Errorf("the %s header must carry the authorization code", authCodeKey))
+			status.LogFailure(log, err).Str("name", name).Msg("empty authorization code")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
 		oc, restactionRef, err := getConfig(r.rc, name)
 		if err != nil {
-			log.Err(err).Str("name", name).Msg("unable to fetch oauth2 configuration")
-			encode.ExpectationFailed(wri, err)
+			status.LogFailure(log, err).Str("name", name).Msg("unable to fetch oauth2 configuration")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
@@ -111,8 +128,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		exchangeCtx := context.WithValue(callCtx, oauth2.HTTPClient, telemetry.HTTPClient())
 		tok, err := oc.Exchange(exchangeCtx, code)
 		if err != nil {
-			log.Err(err).Msg("unable to auth code for token")
-			encode.ExpectationFailed(wri, err)
+			err = classifyExchange(err)
+			status.LogFailure(log, err).Str("name", name).Msg("unable to exchange the authorization code")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
@@ -120,9 +138,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		log.Debug().Str("name", name).Msg("resolving restaction")
 		if restactionRef != nil {
 			if tok.TokenType != "bearer" {
-				err := fmt.Errorf("oauth2 token is not type bearer: %s", tok.TokenType)
-				log.Err(err).Str("name", name).Msgf("error while resolving restaction")
-				encode.InternalError(wri, err)
+				err := codeexchange.Failed(fmt.Errorf("oauth2 token is not type bearer: %s", tok.TokenType))
+				status.LogFailure(log, err).Str("name", name).Msg("error while resolving restaction")
+				encode.Failure(wri, status.FromError(err))
 				return
 			}
 			additionalFieldstoReplace, err := restaction.Resolve(callCtx, r.rc, restactionRef, uuid.New().String(), tok.AccessToken)
@@ -132,27 +150,24 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 				log.Err(err).Str("name", name).Msg("unable to resolve restaction, retrying with legacy resolve (copy)")
 				additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, r.rc, restactionRef, uuid.New().String(), tok.AccessToken)
 				if err != nil {
-					log.Err(err).Str("name", name).Msg("unable to resolve restaction, stopping")
-					encode.InternalError(wri, err)
+					err = status.Failed(CauseRESTActionFailed, fmt.Errorf("unable to resolve the RESTAction: %w", err))
+					status.LogFailure(log, err).Str("name", name).Msg("unable to resolve restaction, stopping")
+					encode.Failure(wri, status.FromError(err))
 					return
 				}
 			}
 			log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
 			userinfo, err = updateConfig(userinfo, additionalFieldstoReplace)
 			if err != nil {
+				err = status.Failed(CauseRESTActionFailed, fmt.Errorf("the RESTAction's answer is unusable: %w", err))
 				status.LogFailure(log, err).Str("name", name).Msg("unable to parse updated config from restaction")
-				encode.InternalError(wri, err)
+				encode.Failure(wri, status.FromError(err))
 				return
 			}
 			log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", userinfo.name, userinfo.preferredUsername, userinfo.email, userinfo.groups, userinfo.avatarURL)
 		}
 
-		user, err := r.validate(userinfo)
-		if err != nil {
-			log.Err(err).Msg("unable to fetch user info from provider")
-			encode.ExpectationFailed(wri, err)
-			return
-		}
+		user := r.validate(userinfo)
 		log.Info().
 			Str("user", user.GetUserName()).
 			Strs("groups", user.GetGroups()).
@@ -160,8 +175,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		dat, notAfter, err := r.gen.Generate(storage.StrategyOAuth, user)
 		if err != nil {
-			log.Err(err).Msg("kubeconfig creation failure")
-			encode.InternalError(wri, err)
+			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			status.LogFailure(log, err).Msg("kubeconfig creation failure")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
@@ -178,14 +194,23 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 	}
 }
 
-func (r *loginRoute) validate(user userInfo) (userinfo.Info, error) {
+func (r *loginRoute) validate(user userInfo) userinfo.Info {
 	exts := userinfo.Extensions{}
 	exts.Add("name", user.name)
 	exts.Add("email", user.email)
 	exts.Add("avatarUrl", user.avatarURL)
 
 	uid, _ := shortid.Generate()
-	info := userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(user.preferredUsername), uid, user.groups, exts)
+	return userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(user.preferredUsername), uid, user.groups, exts)
+}
 
-	return info, nil
+// classifyExchange gives a failed code exchange its cause: the token
+// endpoint's error answer is a refusal of the code or a failure
+// (codeexchange.Refusal); no answer at all is a failure.
+func classifyExchange(err error) error {
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) && re.Response != nil {
+		return codeexchange.Refusal(re.Response.StatusCode, re.ErrorCode, err)
+	}
+	return codeexchange.Failed(err)
 }

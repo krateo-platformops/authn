@@ -130,6 +130,22 @@ type CauseType string
 // but authn could not issue its credential or sign its token (500).
 const CauseIssuanceFailed CauseType = "IssuanceFailed"
 
+// Causes of a 400 shared by the logins that take a config name and an
+// authorization code.
+const (
+	// CauseMissingConfigName: the query has no ?name= naming the config.
+	CauseMissingConfigName CauseType = "MissingConfigName"
+	// CauseMissingAuthorizationCode: the X-Auth-Code header is missing or empty.
+	CauseMissingAuthorizationCode CauseType = "MissingAuthorizationCode"
+	// CauseInvalidRequestBody: the request body is not the JSON the route takes.
+	CauseInvalidRequestBody CauseType = "InvalidRequestBody"
+)
+
+// BadRequest is a request authn can't act on as sent (400).
+func BadRequest(cause CauseType, err error) CauseError {
+	return CauseError{Code: http.StatusBadRequest, Cause: cause, Err: err}
+}
+
 // StatusCause mirrors Kubernetes' metav1.StatusCause.
 type StatusCause struct {
 	Type    CauseType `json:"reason"`
@@ -154,6 +170,9 @@ func New(code int, err error) Status {
 	}
 
 	switch code {
+	case http.StatusBadRequest:
+		res.Status = StatusFailure
+		res.Reason = StatusReasonBadRequest
 	case http.StatusUnauthorized:
 		res.Status = StatusFailure
 		res.Reason = StatusReasonUnauthorized
@@ -191,7 +210,12 @@ func New(code int, err error) Status {
 		res.Status = StatusFailure
 		res.Reason = StatusReasonUnsupportedMediaType
 	default:
-		res.Status = StatusSuccess
+		// Only a 2xx is a success. Any other code without a reason of its
+		// own (300 AmbiguousUser, for one) is still a failure.
+		res.Status = StatusFailure
+		if code >= 200 && code <= 299 {
+			res.Status = StatusSuccess
+		}
 	}
 
 	return res

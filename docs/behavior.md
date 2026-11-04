@@ -95,9 +95,9 @@ A failed login is logged at the level its status code implies: a refusal of the 
 `status.LogFailure(log, err)` (`internal/status/log.go`), which picks the level from
 the same code and adds `code` and `cause` (`details.causes[0].reason`) to the line.
 So an alert on error-level logs fires for authn's failures, not for callers with a bad
-or expired credential. One exception: the oauth and oidc `417` answers (config lookup,
-OAuth code exchange) stay at error. They are mostly authn's dependencies failing,
-though the code is a `4xx`.
+or expired credential. Every login answers this way since #81, which replaced the oauth
+and oidc `417`s: a refused authorization code is a `403` (`AuthorizationCodeRejected`,
+warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
 
 ### Login inputs per strategy
 
@@ -174,10 +174,17 @@ though the code is a `4xx`.
   sweep (`internal/stepupsweep`): every 5 minutes, 5 minutes after the certificate's
   `notAfter`, read from the certificate itself, with UID and resourceVersion
   preconditions so a step-up that rewrote the Secret keeps it.
-- **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go:73-90`).
-  Code is exchanged via `golang.org/x/oauth2` (`oauth/login.go:106`); token type must
-  be `bearer` when a RESTAction is configured (`oauth/login.go:116-121`).
-- **oidc** — `?name=<OIDCConfig>` + `X-Auth-Code` header, and optionally
+- **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go`).
+  Code is exchanged via `golang.org/x/oauth2`; token type must be `bearer` when a
+  RESTAction is configured. A failed exchange is classified by `classifyExchange` →
+  `codeexchange.Refusal` (`internal/helpers/codeexchange`): the token endpoint's
+  `error` `invalid_grant`, or GitHub's `bad_verification_code` (answered with HTTP
+  `200`, which `x/oauth2` still reports as a `RetrieveError`), is `403`
+  `AuthorizationCodeRejected`; anything else is `500` `TokenExchangeFailed`. The
+  provider's answer goes to the log only (`CauseError.Private`). Every failure is a
+  `Status` with a cause ([api](./api.md#oauthlogin-failures)).
+- **oidc** — `?name=<OIDCConfig>` + `X-Auth-Code` header (a missing one is `400`
+  `MissingAuthorizationCode` before any lookup), and optionally
   `X-Code-Verifier`. Code is POSTed to the token endpoint, with the PKCE
   `code_verifier` (RFC 7636) when the header is present. authn doesn't generate PKCE
   itself: the client that builds the authorization request adds the
@@ -194,7 +201,11 @@ though the code is a `4xx`.
   `IssuerUnknown`, and authn logs a warning naming the config at startup. The signature
   is **not** checked: the token comes back-channel from the configured token endpoint,
   authenticated with the client secret over TLS, which OIDC Core §3.1.3.7 accepts in
-  place of it.
+  place of it. A non-`200` from the token endpoint is classified like oauth's
+  (`codeexchange.Refusal` on its JSON `error`), and `getConfig` (`oidc/support.go`)
+  gives every config failure its cause: `404` `OIDCConfigNotFound`, `500`
+  `OIDCConfigLookupFailed`, `OIDCDiscoveryFailed` (`resolvers.ErrDiscoveryFailed`),
+  `OIDCConfigInvalid` (`resolvers.ErrEndpointsMissing`), `ClientSecretLookupFailed`.
 
 ## CRDs it reads
 

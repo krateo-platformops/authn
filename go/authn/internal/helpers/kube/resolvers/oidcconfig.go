@@ -25,6 +25,13 @@ import (
 // issuer its discovery document advertises.
 var ErrIssuerConflict = errors.New("spec.issuer differs from the discovered issuer")
 
+// ErrDiscoveryFailed reports a discovery document that could not be read.
+var ErrDiscoveryFailed = errors.New("OIDC discovery failed")
+
+// ErrEndpointsMissing reports an OIDCConfig whose authorize or token endpoint
+// is known neither from its spec nor from discovery.
+var ErrEndpointsMissing = errors.New("authorize or token endpoint unknown")
+
 type DiscoveryEndpointResponse struct {
 	Issuer                 string `json:"issuer"`
 	Authorization_endpoint string `json:"authorization_endpoint"`
@@ -170,19 +177,22 @@ func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpoint
 	var doc DiscoveryEndpointResponse
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
-		return doc, fmt.Errorf("failed to create http request for discovery endpoint: %v", err)
+		return doc, fmt.Errorf("%w: creating the request: %v", ErrDiscoveryFailed, err)
 	}
 	resp, err := telemetry.HTTPClient().Do(request)
 	if err != nil {
-		return doc, fmt.Errorf("failed to send discovery request: %v", err)
+		return doc, fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return doc, fmt.Errorf("%w: %s answered %d", ErrDiscoveryFailed, discoveryURL, resp.StatusCode)
+	}
 	endpointsDataJson, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return doc, fmt.Errorf("failed to read discovery response: %v", err)
+		return doc, fmt.Errorf("%w: reading the response: %v", ErrDiscoveryFailed, err)
 	}
 	if err := json.Unmarshal(endpointsDataJson, &doc); err != nil {
-		return doc, fmt.Errorf("failed to unmarshal discovery response: %v", err)
+		return doc, fmt.Errorf("%w: the response is not a discovery document: %v", ErrDiscoveryFailed, err)
 	}
 	return doc, nil
 }
@@ -203,9 +213,9 @@ func applyDiscovery(cfg *oidcv1alpha1.OIDCConfig, endpointsData DiscoveryEndpoin
 	}
 
 	if (cfg.Spec.TokenURL == "" || cfg.Spec.AuthorizationURL == "") && cfg.Spec.DiscoveryURL == "" {
-		return fmt.Errorf("url for discovery and authorize/token endpoints cannot be empty")
+		return fmt.Errorf("%w: url for discovery and authorize/token endpoints cannot be empty", ErrEndpointsMissing)
 	} else if cfg.Spec.TokenURL == "" || cfg.Spec.AuthorizationURL == "" {
-		return fmt.Errorf("url for authorize/token endpoint cannot be empty")
+		return fmt.Errorf("%w: url for authorize/token endpoint cannot be empty", ErrEndpointsMissing)
 	}
 
 	cfg.Spec.AuthorizationURL = authCodeURL(cfg)
