@@ -164,11 +164,11 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` | Tell an administrator |
 | `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` | Tell an administrator |
 | `OIDCConfigLookupFailed` | 500 | authn could not read the OIDCConfig | Retry later |
-| `OIDCDiscoveryFailed` | 500 | The `discoveryURL` document could not be read: unreachable, not `200`, or not JSON | Retry later |
+| `OIDCDiscoveryFailed` | 500 | The `discoveryURL` document could not be read: unreachable, not `200` (a redirect is refused, not followed), or not JSON | Retry later |
 | `OIDCConfigInvalid` | 500 | The authorize or token endpoint is known neither from the spec nor from discovery | Tell an administrator |
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret | Retry later |
-| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), or answering something unusable. The IdP's answer is logged, not returned | Retry later |
-| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200`, not JSON, or a field authn asked for has the wrong type | Retry later |
+| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), redirecting (refused, never followed: the request carries the client secret, code and verifier), or answering something unusable. The IdP's answer is logged, not returned | Retry later |
+| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200` (a redirect is refused), not JSON, or a field authn asked for has the wrong type | Retry later |
 | `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity. When snowplow answered, the message carries its code and reason (e.g. `snowplow answered 504 Timeout`); snowplow's own message is logged only | Retry later |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 

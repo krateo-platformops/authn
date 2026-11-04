@@ -303,6 +303,18 @@ ServiceAccount to be granted `create` on `tokenreviews.authentication.k8s.io` (i
 addition to the CSR RBAC above); without it every intra-service login fails at the
 TokenReview call.
 
+### Outbound calls refuse redirects
+Every call authn makes to another service goes through `outbound.Client()`
+(`internal/helpers/outbound`): the IdP's token endpoint (the client secret, code and
+PKCE verifier in the body), UserInfo (the user's token), discovery, and snowplow
+(authn's JWT, plus the user's token in the body). It refuses every redirect
+(`ErrRedirectRefused`). net/http alone isn't enough: it keeps `Authorization` on a hop to
+a subdomain or another port, and a 307/308 resends the body to wherever `Location`
+points. A refusal fails the call with its existing cause (`TokenExchangeFailed`,
+`UserInfoFailed`, `OIDCDiscoveryFailed`, `RESTActionFailed`), and the redirect's target
+host is logged. The client is built fresh on each call, so `http.DefaultClient` is never
+changed.
+
 ### snowplow (identity enrichment)
 When an `OIDCConfig`/`OAuthConfig` has a `restActionRef`, authn enriches the identity
 by asking snowplow to resolve that RESTAction (`internal/helpers/restaction/resolver.go`),

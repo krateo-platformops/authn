@@ -14,6 +14,16 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — outbound calls refuse redirects
+
+oasgen-provider measured, in its own client (#401), that net/http keeps `Authorization`
+on a redirect to a subdomain or another port. A 307/308 also resends the body to any
+host. authn's own outbound calls all carry credentials and all followed redirects by Go's
+default: the token exchange (client secret, code, verifier), UserInfo (the user's token),
+discovery, and snowplow (authn's JWT and the user's token). Diego chose to refuse
+redirects on all four. They now share `outbound.Client()`, and each test drives a real
+redirect and asserts that the target received nothing.
+
 ## 2026-11-04 — basic auth compares passwords in constant time
 
 `/basic/login` compared `password != string(pwd)`, so the time to refuse a guess grew with

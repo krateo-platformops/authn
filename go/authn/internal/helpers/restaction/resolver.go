@@ -12,7 +12,7 @@ import (
 
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
-	"github.com/krateo-platformops/authn/internal/telemetry"
+	"github.com/krateo-platformops/authn/internal/helpers/outbound"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/krateo-platformops/plumbing/kubeutil"
 	templatesv1 "github.com/krateo-platformops/snowplow/apis/templates/v1"
@@ -59,7 +59,7 @@ func Resolve(ctx context.Context, ref *core.ObjectRef, bearerToken string) (map[
 	}
 	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", jwt))
 
-	resp, err := telemetry.HTTPClient().Do(request)
+	resp, err := outbound.Client().Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send http request for restaction call to snowplow: %w", err)
 	}
@@ -131,7 +131,7 @@ func LegacyResolve(ctx context.Context, rc *rest.Config, restaction *core.Object
 	}
 	request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", jwt))
 
-	resp, err := telemetry.HTTPClient().Do(request)
+	resp, err := outbound.Client().Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send http request for restaction call to snowplow: %w", err)
 	}

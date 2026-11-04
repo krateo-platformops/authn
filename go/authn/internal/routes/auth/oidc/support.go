@@ -16,8 +16,8 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/codeexchange"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/authn/internal/helpers/outbound"
 	"github.com/krateo-platformops/authn/internal/status"
-	"github.com/krateo-platformops/authn/internal/telemetry"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 )
@@ -133,7 +133,7 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	tokenReq.Header.Set("Accept", "application/json")
 
-	resp, err := telemetry.HTTPClient().Do(tokenReq)
+	resp, err := outbound.Client().Do(tokenReq)
 	if err != nil {
 		return idToken{}, codeexchange.Failed(fmt.Errorf("failed to send request to token endpoint: %v", err))
 	}
@@ -248,7 +248,7 @@ func fetchUserInfo(ctx context.Context, userInfoURL, accessToken string) (map[st
 	}
 	request.Header.Set("Authorization", "Bearer "+accessToken)
 	request.Header.Set("Accept", "application/json")
-	resp, err := telemetry.HTTPClient().Do(request)
+	resp, err := outbound.Client().Do(request)
 	if err != nil {
 		return nil, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to send userinfo request: %v", err))
 	}
