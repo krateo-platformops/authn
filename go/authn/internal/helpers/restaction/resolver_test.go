@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/outbound"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,4 +87,22 @@ func TestFailedWithoutAnAnswer(t *testing.T) {
 	ce := Failed(errors.New("dial tcp 10.0.0.9:8081: connection refused"))
 	assert.Equal(t, "the RESTAction could not be resolved", ce.Error())
 	assert.NotContains(t, ce.Error(), "10.0.0.9")
+}
+
+// snowplow is called with authn's JWT and the user's token, so a redirect is
+// refused and its target never contacted.
+func TestResolveRefusesRedirects(t *testing.T) {
+	reached := 0
+	dest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { reached++ }))
+	t.Cleanup(dest.Close)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL+"/call/read", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Resolve(snowplowCtx(srv.URL), &core.ObjectRef{Name: "gh", Namespace: "krateo-system"}, userToken)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, outbound.ErrRedirectRefused), "%v", err)
+	assert.Zero(t, reached)
+	assert.Equal(t, CauseRESTActionFailed, Failed(err).Cause)
 }

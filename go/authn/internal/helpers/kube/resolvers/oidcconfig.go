@@ -16,7 +16,7 @@ import (
 	oidcv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oidc/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
-	"github.com/krateo-platformops/authn/internal/telemetry"
+	"github.com/krateo-platformops/authn/internal/helpers/outbound"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )
@@ -179,7 +179,7 @@ func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpoint
 	if err != nil {
 		return doc, fmt.Errorf("%w: creating the request: %v", ErrDiscoveryFailed, err)
 	}
-	resp, err := telemetry.HTTPClient().Do(request)
+	resp, err := outbound.Client().Do(request)
 	if err != nil {
 		return doc, fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
 	}

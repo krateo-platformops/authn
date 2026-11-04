@@ -16,12 +16,12 @@ import (
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
+	"github.com/krateo-platformops/authn/internal/helpers/outbound"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
 	"github.com/krateo-platformops/authn/internal/status"
-	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/plumbing/kubeutil"
 	"github.com/rs/zerolog"
 	"golang.org/x/oauth2"
@@ -130,7 +130,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// use code to get token. Use the request-scoped context (not a fresh
 		// Background) so the token-exchange hop is traced and cancelled with the
 		// inbound request; inject the instrumented HTTP client when tracing is on.
-		exchangeCtx := context.WithValue(callCtx, oauth2.HTTPClient, telemetry.HTTPClient())
+		exchangeCtx := context.WithValue(callCtx, oauth2.HTTPClient, outbound.Client())
 		var exchangeOpts []oauth2.AuthCodeOption
 		if verifier := req.Header.Get(codeVerifierKey); verifier != "" {
 			exchangeOpts = append(exchangeOpts, oauth2.VerifierOption(verifier))
