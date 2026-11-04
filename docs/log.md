@@ -14,6 +14,15 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — basic auth compares passwords in constant time
+
+`/basic/login` compared `password != string(pwd)`, so the time to refuse a guess grew with
+how much of it matched. It now hashes both sides to SHA-256 and compares them with
+`subtle.ConstantTimeCompare`. An unknown user costs the same comparison, against a fixed
+value. Diego chose this over also accepting bcrypt hashes. The stored format is
+unchanged, so installer has nothing to migrate. Still open: a known user costs a Secret
+read that an unknown user doesn't (gotchas).
+
 ## 2026-11-04 — the RESTAction token leaves the URL
 
 authn resolved a `restActionRef` with `GET /call?…&extras={"token":"<the user's IdP access

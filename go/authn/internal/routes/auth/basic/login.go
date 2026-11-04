@@ -3,6 +3,8 @@ package basic
 import (
 	"context"
 	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -50,6 +52,19 @@ var (
 
 // invalidCredentials refuses the caller with the one InvalidCredentials body;
 // reason goes to the log only.
+// comparePassword reports whether got is the stored password want, in time
+// that depends on neither: both are hashed to SHA-256 first, so their
+// lengths don't leak either, then compared with subtle.ConstantTimeCompare.
+// A variable, so a test can count comparisons.
+var comparePassword = func(got string, want []byte) bool {
+	g, w := sha256.Sum256([]byte(got)), sha256.Sum256(want)
+	return subtle.ConstantTimeCompare(g[:], w[:]) == 1
+}
+
+// unknownUserPassword is what an unknown user's password is compared with.
+// No caller's password can match it usefully: the login is refused anyway.
+var unknownUserPassword = []byte("authn: no such user")
+
 func invalidCredentials(reason error) error {
 	return status.RefusedPrivately(CauseInvalidCredentials, errInvalidCredentials, reason)
 }
@@ -158,6 +173,9 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 	usr, err := resolvers.UserGet(r.rc, username)
 	switch {
 	case apierrors.IsNotFound(err):
+		// Compare anyway, so an unknown user costs the comparison a known
+		// one does.
+		_ = comparePassword(password, unknownUserPassword)
 		return nil, invalidCredentials(err)
 	case err != nil:
 		return nil, status.Failed(CauseUserLookupFailed, fmt.Errorf("reading User %q: %w", username, err))
@@ -179,7 +197,7 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 		return nil, status.Failed(CausePasswordSecretMissing, fmt.Errorf("password for user '%s' not found", username))
 	}
 
-	if password != string(pwd) {
+	if !comparePassword(password, pwd) {
 		return nil, invalidCredentials(fmt.Errorf("wrong password for user %q", username))
 	}
 

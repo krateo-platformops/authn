@@ -179,10 +179,13 @@ create and delete can leave orphaned `<name>-<email>` RESTActions/Secrets behind
 also requires authn to have write/delete RBAC on `restactions` and Secrets, beyond
 the read-only access the other paths need (the chart's Role grants it).
 
-## Basic-auth password comparison is plaintext, non-constant-time
-`validate` compares `password != string(pwd)` directly (`basic/login.go:122`) against
-the raw Secret value — the password is stored in plaintext in the referenced Secret
-and compared without a constant-time check.
+## Basic-auth passwords are stored in plaintext
+The User's `passwordRef` Secret holds the password itself, not a hash. The comparison
+is constant-time: both sides are hashed to SHA-256 and compared with
+`subtle.ConstantTimeCompare` (`comparePassword`, `basic/login.go`), so neither the
+content nor the length leaks. An unknown user costs the same comparison against a fixed
+value. One timing difference remains: a known user costs a Secret read, which an
+unknown user doesn't. Closing it would mean reading a Secret for every unknown name.
 
 ## snowplow URL resolution has a quirk
 The snowplow URL is built eagerly from `SNOWPLOW_SERVICE_HOST`/`PORT` **before**
