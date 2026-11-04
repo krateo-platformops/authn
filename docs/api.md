@@ -130,7 +130,7 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `MissingConfigName` | 400 | No `?name=` |
 | `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one. Answered before authn looks anything up |
 | `OIDCConfigNotFound` | 404 | No OIDCConfig has the `name` asked for |
-| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself (`error` `invalid_grant`, RFC 6749 §5.2): expired, already used, issued for another redirect URI, or a PKCE verifier that doesn't match. There is nothing to retype: start the sign-in again. The IdP's own answer is logged, not returned |
+| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself (`error` `invalid_grant`, RFC 6749 §5.2): expired, already used, issued for another redirect URI, or a PKCE verifier that doesn't match. There is nothing to retype: start the sign-in again. If a fresh code is refused too, the cause is repeatable and needs an administrator: the authorization request's `redirect_uri` differs from `spec.redirectURI` (it can't when the client uses `/strategies`' `authCodeURL` unchanged), or the client sends the wrong verifier. The IdP answers all of these with the same `invalid_grant`, so authn can't tell them apart in the response. Its log can: the IdP's full answer is in the warn line's `reason` |
 | `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) |
 | `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` |
 | `TokenExpired` | 403 | `exp` is more than 1 minute in the past |
