@@ -174,7 +174,10 @@ warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
   sweep (`internal/stepupsweep`): every 5 minutes, 5 minutes after the certificate's
   `notAfter`, read from the certificate itself, with UID and resourceVersion
   preconditions so a step-up that rewrote the Secret keeps it.
-- **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go`).
+- **oauth** — `?name=<OAuthConfig>` + `X-Auth-Code` header (`oauth/login.go`), and
+  optionally `X-Code-Verifier`, forwarded as the PKCE `code_verifier`
+  (`oauth2.VerifierOption`) exactly as on oidc; before, `/oauth/login` dropped it, so a
+  client that sent a `code_challenge` got every exchange refused.
   Code is exchanged via `golang.org/x/oauth2`; token type must be `bearer` when a
   RESTAction is configured. A failed exchange is classified by `classifyExchange` →
   `codeexchange.Refusal` (`internal/helpers/codeexchange`): the token endpoint's

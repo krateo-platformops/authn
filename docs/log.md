@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — /oauth/login forwards the PKCE verifier
+
+PKCE is the client's to add: authn is stateless between the redirect and the exchange, so
+the portal generates the verifier, puts the `code_challenge` on the authorization URL and
+sends the verifier back in `X-Code-Verifier`. `/oidc/login` and `/oidc/stepup` forwarded it;
+`/oauth/login` didn't, so once the portal added PKCE every OAuth (GitHub) login would have
+been refused as `AuthorizationCodeRejected`. frontend found that the portal sends no PKCE at
+all. That matters even though authn is a confidential client: authn redeems any code posted
+to it with its own secret, so a code intercepted from the victim's browser can be traded at
+authn for the victim's credential. PKCE closes that. The portal enables it on OAuth flows
+once a release with this fix is pinned.
+
 ## 2026-11-04 — a wrongly typed OIDC claim is refused, not a dropped connection
 
 `doLogin` read ID-token and UserInfo claims with unchecked type assertions. An IdP sending

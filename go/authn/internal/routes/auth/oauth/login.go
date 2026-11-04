@@ -47,6 +47,10 @@ func Login(ctx context.Context, rc *rest.Config, opts LoginOptions) routes.Route
 const (
 	Path        = "/oauth/login"
 	authCodeKey = "X-Auth-Code"
+	// codeVerifierKey carries the PKCE code_verifier (RFC 7636) of the
+	// authorization request whose code is in X-Auth-Code. Optional, as on
+	// /oidc/login: the client that added the code_challenge sends it.
+	codeVerifierKey = "X-Code-Verifier"
 )
 
 var _ routes.Route = (*loginRoute)(nil)
@@ -126,7 +130,11 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// Background) so the token-exchange hop is traced and cancelled with the
 		// inbound request; inject the instrumented HTTP client when tracing is on.
 		exchangeCtx := context.WithValue(callCtx, oauth2.HTTPClient, telemetry.HTTPClient())
-		tok, err := oc.Exchange(exchangeCtx, code)
+		var exchangeOpts []oauth2.AuthCodeOption
+		if verifier := req.Header.Get(codeVerifierKey); verifier != "" {
+			exchangeOpts = append(exchangeOpts, oauth2.VerifierOption(verifier))
+		}
+		tok, err := oc.Exchange(exchangeCtx, code, exchangeOpts...)
 		if err != nil {
 			err = classifyExchange(err)
 			status.LogFailure(log, err).Str("name", name).Msg("unable to exchange the authorization code")
