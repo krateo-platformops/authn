@@ -14,6 +14,15 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-03 — `/strategies` answers `application/json`
+
+`GET /strategies` set `Content-Type` after `WriteHeader(200)`, so the header was dropped and
+Go sniffed the body as `text/plain`, although it is a JSON array. installer's pre-roll smoke
+baseline caught it on 057 and demo. `TestSmokeAnswers` had passed, because it read the
+recorder's live header map (`rec.Header()`) instead of the headers actually sent
+(`rec.Result().Header`). Both are fixed. The surface tests now read sent headers, so a
+header set too late fails them.
+
 ## 2026-11-03 — LDAP users get their groups
 
 The LDAP login looked up a user's groups with a hardcoded filter,
