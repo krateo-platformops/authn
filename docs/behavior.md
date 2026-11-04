@@ -190,8 +190,11 @@ warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
   itself: the client that builds the authorization request adds the
   `code_challenge`, keeps the verifier, and sends it back in `X-Code-Verifier`; ID-token claims (`preferred_username`, `name`, `picture`, `email`,
   `groups`) are read, and the UserInfo endpoint is called only for the claims the ID
-  token omits (`oidc/support.go:112-208`). `groups` is never sourced from UserInfo
-  (`oidc/support.go:149-156`).
+  token omits. `groups` is never sourced from UserInfo. Every claim is read with
+  `stringClaim`/`stringListClaim` (`oidc/support.go`): absent or `null` is omitted (and
+  asked of UserInfo), any other wrong type is `403` `IDTokenInvalid` from the ID token
+  and `500` `UserInfoFailed` from UserInfo. Unchecked type assertions used to panic the
+  request, and net/http then dropped the connection without answering.
   Before any claim is read, the ID token is validated (`validateIDToken`,
   `oidc/idtoken.go`, #50): `iss` must equal the expected issuer, `aud` must contain
   `clientID` (and `azp` must equal it when there are several audiences), and `exp`

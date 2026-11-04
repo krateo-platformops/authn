@@ -14,6 +14,16 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — a wrongly typed OIDC claim is refused, not a dropped connection
+
+`doLogin` read ID-token and UserInfo claims with unchecked type assertions. An IdP sending
+`"groups":"devs"`, a numeric `email` or a `null` `name` panicked the request. net/http
+recovered and closed the connection without answering, so the portal saw "authn
+unreachable", and nothing was logged as a failed login. Diego chose typed reads, with no
+panic-recovery middleware that could hide the next one. A wrongly typed ID-token claim is
+`403` `IDTokenInvalid`, a wrongly typed UserInfo field `500` `UserInfoFailed`, and `null` counts
+as omitted (OIDC Core §5.1). UserInfo's status code is now checked and its body closed.
+
 ## 2026-11-04 — oidc and oauth logins answer the failure contract; no more 417
 
 The oidc and oauth logins were the last routes outside the failure contract. A missing or

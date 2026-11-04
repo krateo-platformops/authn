@@ -1,8 +1,6 @@
 package oidc
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -43,9 +41,7 @@ func TestCheckAllowedGroups(t *testing.T) {
 
 func loginRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptest.ResponseRecorder {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+	route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
 
 	req := httptest.NewRequest(http.MethodGet, Path+"?name=kc", nil)
 	req.Header.Set("X-Auth-Code", "code")

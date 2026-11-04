@@ -169,99 +169,146 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 		return idToken{}, err
 	}
 
-	callUserInfo := false
+	invalid := func(key string, err error) (idToken, error) {
+		return idToken{}, status.Refused(CauseIDTokenInvalid, fmt.Errorf("ID token claim %s %w", key, err))
+	}
+
 	var res idToken
-	res.acr, _ = claims["acr"].(string)
-	if at, ok := claims["auth_time"].(float64); ok {
+	var err2 error
+	if res.acr, _, err2 = stringClaim(claims, "acr"); err2 != nil {
+		return invalid("acr", err2)
+	}
+	if v, ok := claims["auth_time"]; ok && v != nil {
+		at, isNumber := v.(float64)
+		if !isNumber {
+			return invalid("auth_time", errNotANumber)
+		}
 		res.authTime = time.Unix(int64(at), 0)
 	}
 
-	// Check if the values are in the map, if not, call the userinfo endpoint
-	if value, ok := claims["preferred_username"]; ok {
-		res.preferredUsername = value.(string)
-	} else {
-		callUserInfo = true
+	// The profile claims, read from the ID token. Any it omits is asked of the
+	// UserInfo endpoint, when there is one.
+	profile := []struct {
+		key string
+		dst *string
+	}{
+		{"preferred_username", &res.preferredUsername},
+		{"name", &res.name},
+		{"picture", &res.avatarURL},
+		{"email", &res.email},
 	}
-
-	if value, ok := claims["name"]; ok {
-		res.name = value.(string)
-	} else {
-		callUserInfo = true
-	}
-
-	if value, ok := claims["picture"]; ok {
-		res.avatarURL = value.(string)
-	} else {
-		callUserInfo = true
-	}
-
-	if value, ok := claims["email"]; ok {
-		res.email = value.(string)
-	} else {
-		callUserInfo = true
+	var missing []int
+	for i, c := range profile {
+		v, ok, err := stringClaim(claims, c.key)
+		if err != nil {
+			return invalid(c.key, err)
+		}
+		if !ok {
+			missing = append(missing, i)
+			continue
+		}
+		*c.dst = v
 	}
 
 	res.bearerToken = token.AccessToken
 
-	if value, ok := claims["groups"]; ok {
-		interfaceArray := value.([]interface{})
-		stringArray := []string{}
-		for _, interfaceValue := range interfaceArray {
-			stringArray = append(stringArray, interfaceValue.(string))
+	// groups is never asked of UserInfo: it isn't part of its standard answer.
+	if res.groups, _, err2 = stringListClaim(claims, "groups"); err2 != nil {
+		return invalid("groups", err2)
+	}
+
+	if len(missing) == 0 || cfg.UserInfoURL == "" {
+		return res, nil
+	}
+	if token.AccessToken == "" {
+		return idToken{}, codeexchange.Failed(errors.New("the token response has no access_token, which the userinfo call needs"))
+	}
+	userInfo, err := fetchUserInfo(ctx, cfg.UserInfoURL, token.AccessToken)
+	if err != nil {
+		return idToken{}, err
+	}
+	for _, i := range missing {
+		v, ok, err := stringClaim(userInfo, profile[i].key)
+		if err != nil {
+			return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("userinfo field %s %w", profile[i].key, err))
 		}
-		res.groups = stringArray
-	} // we do not call userinfo for groups because groups are not part of the standard response for the userinfo endpoint
-
-	if callUserInfo && cfg.UserInfoURL != "" {
-		if token.AccessToken != "" {
-			request, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.UserInfoURL, nil)
-			if err != nil {
-				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to create http request for userinfo endpoint: %v", err))
-			}
-			request.Header.Set("Authorization", "Bearer "+token.AccessToken)
-			resp, err := telemetry.HTTPClient().Do(request)
-			if err != nil {
-				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to send userinfo request: %v", err))
-			}
-			userInfoDataJson, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to read userinfo response: %v", err))
-			}
-			var userInfo map[string]interface{}
-			err = json.Unmarshal(userInfoDataJson, &userInfo)
-			if err != nil {
-				return idToken{}, status.Failed(CauseUserInfoFailed, fmt.Errorf("error parsing userinfo payload JSON: %v", err))
-			}
-
-			// Replace the missing values that we did not find in the id token
-			if _, ok := claims["preferred_username"]; !ok {
-				if _, okk := userInfo["preferred_username"]; okk {
-					res.preferredUsername = userInfo["preferred_username"].(string)
-				}
-			}
-
-			if _, ok := claims["name"]; !ok {
-				if _, okk := userInfo["name"]; okk {
-					res.name = userInfo["name"].(string)
-				}
-			}
-
-			if _, ok := claims["picture"]; !ok {
-				if _, okk := userInfo["picture"]; okk {
-					res.avatarURL = userInfo["picture"].(string)
-				}
-			}
-
-			if _, ok := claims["email"]; !ok {
-				if _, okk := userInfo["email"]; okk {
-					res.email = userInfo["email"].(string)
-				}
-			}
-		} else {
-			return idToken{}, codeexchange.Failed(errors.New("the token response has no access_token, which the userinfo call needs"))
+		if ok {
+			*profile[i].dst = v
 		}
 	}
 	return res, nil
+}
+
+// fetchUserInfo asks the UserInfo endpoint for the claims of the user
+// accessToken belongs to.
+func fetchUserInfo(ctx context.Context, userInfoURL, accessToken string) (map[string]any, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, userInfoURL, nil)
+	if err != nil {
+		return nil, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to create http request for userinfo endpoint: %v", err))
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Accept", "application/json")
+	resp, err := telemetry.HTTPClient().Do(request)
+	if err != nil {
+		return nil, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to send userinfo request: %v", err))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, status.Failed(CauseUserInfoFailed, fmt.Errorf("userinfo endpoint answered %d", resp.StatusCode))
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, status.Failed(CauseUserInfoFailed, fmt.Errorf("failed to read userinfo response: %v", err))
+	}
+	var userInfo map[string]any
+	if err := json.Unmarshal(body, &userInfo); err != nil {
+		return nil, status.Failed(CauseUserInfoFailed, fmt.Errorf("error parsing userinfo payload JSON: %v", err))
+	}
+	return userInfo, nil
+}
+
+var (
+	errNotAString      = errors.New("is not a string")
+	errNotANumber      = errors.New("is not a number")
+	errNotAStringsList = errors.New("is not a list of strings")
+)
+
+// stringClaim reads the string claim key of m. A claim that is absent or null
+// is not there (ok false): OIDC Core §5.1 asks providers to omit a claim
+// rather than send it null, and some send null anyway. Any other non-string
+// is an error.
+func stringClaim(m map[string]any, key string) (v string, ok bool, err error) {
+	raw, present := m[key]
+	if !present || raw == nil {
+		return "", false, nil
+	}
+	v, ok = raw.(string)
+	if !ok {
+		return "", false, errNotAString
+	}
+	return v, true, nil
+}
+
+// stringListClaim reads the claim key of m as a list of strings, with the same
+// absent-or-null rule as stringClaim.
+func stringListClaim(m map[string]any, key string) (v []string, ok bool, err error) {
+	raw, present := m[key]
+	if !present || raw == nil {
+		return nil, false, nil
+	}
+	list, isList := raw.([]any)
+	if !isList {
+		return nil, false, errNotAStringsList
+	}
+	v = make([]string, 0, len(list))
+	for _, item := range list {
+		str, isString := item.(string)
+		if !isString {
+			return nil, false, errNotAStringsList
+		}
+		v = append(v, str)
+	}
+	return v, true, nil
 }
 
 func decodeJWT(tokenString string) (map[string]interface{}, error) {
