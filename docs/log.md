@@ -14,6 +14,16 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — OIDCConfig `allowedGroups`: admit only members
+
+An OIDC login used to admit everyone the IdP authenticated; only RBAC limited what they could
+do. For child platforms signing their owner in through the parent's Keycloak, Diego chose a
+gate in authn as well, as defence in depth. `spec.allowedGroups` admits a user only if their
+final groups include one of its entries. Everyone else gets `403 GroupNotAllowed` at
+`/oidc/login` and `/oidc/stepup`, and nothing is minted. The check runs after the RESTAction
+and after reserved `krateo:loa:` groups are stripped, so a step-up group can never be what
+admits someone. Empty or omitted keeps today's behaviour. CRD change (authn-crds).
+
 ## 2026-11-03 — /health reports the version actually running
 
 `GET /health` answered `{"name":"auth","version":""}` on every cluster: nothing stamped

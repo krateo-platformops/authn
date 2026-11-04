@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
@@ -182,7 +183,32 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 		encode.Forbidden(wri, err)
 		return nil, tok, nil, false
 	}
+
+	if err := checkAllowedGroups(cfg.AllowedGroups, nfo); err != nil {
+		status.LogFailure(log, err).Str("name", name).Str("username", nfo.GetUserName()).Msg("login refused")
+		encode.Failure(wri, status.FromError(err))
+		return nil, tok, nil, false
+	}
 	return cfg, tok, nfo, true
+}
+
+// CauseGroupNotAllowed refuses a user the OIDCConfig's allowedGroups don't
+// admit (403).
+const CauseGroupNotAllowed status.CauseType = "GroupNotAllowed"
+
+// checkAllowedGroups admits nfo when allowed is empty, or when nfo holds at
+// least one allowed group. nfo's groups are final: reserved groups are
+// already stripped, so krateo:loa:* can never admit anyone.
+func checkAllowedGroups(allowed []string, nfo userinfo.Info) error {
+	if len(allowed) == 0 {
+		return nil
+	}
+	for _, g := range nfo.GetGroups() {
+		if slices.Contains(allowed, g) {
+			return nil
+		}
+	}
+	return status.Refused(CauseGroupNotAllowed, fmt.Errorf("user %q is in none of the groups this OIDCConfig admits", nfo.GetUserName()))
 }
 
 func validate(idToken idToken) (userinfo.Info, error) {

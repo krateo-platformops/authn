@@ -91,6 +91,11 @@ func (in *OIDCConfigSpec) DeepCopyInto(out *OIDCConfigSpec) {
 		in, out := &in.ClientSecret, &out.ClientSecret
 		*out = (*in).DeepCopy()
 	}
+	if in.AllowedGroups != nil {
+		in, out := &in.AllowedGroups, &out.AllowedGroups
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.StepUp != nil {
 		in, out := &in.StepUp, &out.StepUp
 		*out = new(OIDCStepUp)

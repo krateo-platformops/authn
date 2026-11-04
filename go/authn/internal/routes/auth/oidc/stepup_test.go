@@ -163,6 +163,17 @@ func (g *stepUpGenerator) GenerateStepUp(_ storage.Strategy, u userinfo.Info, tt
 // IdP token endpoint returning an ID token with the given extra claims.
 func stepUpEnv(t *testing.T, stepUp string, claims map[string]any) *rest.Config {
 	t.Helper()
+	extra := ""
+	if stepUp != "" {
+		extra = `"stepUp":` + stepUp
+	}
+	return oidcEnv(t, extra, claims)
+}
+
+// oidcEnv is stepUpEnv with any extra OIDCConfig spec fields (JSON members,
+// comma-separated, without braces).
+func oidcEnv(t *testing.T, extraSpec string, claims map[string]any) *rest.Config {
+	t.Helper()
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -181,8 +192,8 @@ func stepUpEnv(t *testing.T, stepUp string, claims map[string]any) *rest.Config 
 
 	spec := `"issuer":"` + testIssuer + `","authorizationURL":"https://idp.example/auth","tokenURL":"` + idp.URL + `",
 		"redirectURI":"https://portal.example/auth","clientID":"portal"`
-	if stepUp != "" {
-		spec += `,"stepUp":` + stepUp
+	if extraSpec != "" {
+		spec += `,` + extraSpec
 	}
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/apis/oidc.authn.krateo.io/v1alpha1/namespaces/krateo-system/oidcconfigs/kc" {

@@ -28,7 +28,7 @@ operator namespace** (`POD_NAMESPACE`).
 | `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`. `metadata.name` is the issued username. |
 | `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`; optional `groupSearch` {`baseDN` (`spec.baseDN`), `filter` (`(\|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute` (`cn`)} finds the user's groups (#72, [below](#ldap-group-search)). |
 | `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. |
-| `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `additionalScopes`, `restActionRef`, `graphics`. |
+| `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `clientSecret`, `redirectURI`, plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `allowedGroups[]` admits only users holding at least one of those groups (others get `403 GroupNotAllowed`); optional `additionalScopes`, `restActionRef`, `graphics`. |
 
 `graphics` (`icon`, `displayName`, `backgroundColor`, `textColor`) styles the
 frontend login button; `restActionRef` points at a snowplow RESTAction that compiles
@@ -130,6 +130,7 @@ fails again), and `500` for an OIDCConfig authn can't validate against.
 | `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` |
 | `TokenExpired` | 403 | `exp` is more than 1 minute in the past |
 | `IDTokenInvalid` | 403 | The ID token can't be decoded, or `aud`/`exp` is missing or malformed |
+| `GroupNotAllowed` | 403 | `spec.allowedGroups` is set and the user holds none of those groups (after the RESTAction, and after reserved `krateo:loa:` groups are stripped). Applies to `/oidc/stepup` too |
 | `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` |
 | `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` |
 
