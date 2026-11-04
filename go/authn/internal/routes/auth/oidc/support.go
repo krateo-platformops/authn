@@ -23,6 +23,7 @@ import (
 type oidcConfig struct {
 	// StepUp is nil when the OIDCConfig doesn't enable step-up.
 	StepUp           *stepUpConfig
+	AllowedGroups    []string
 	DiscoveryURL     string
 	Issuer           string
 	AuthorizeURL     string
@@ -78,6 +79,7 @@ func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, 
 		AdditionalScopes: cfg.Spec.AdditionalScopes,
 		RESTActionRef:    cfg.Spec.RESTActionRef,
 		StepUp:           resolveStepUp(cfg.Spec.StepUp),
+		AllowedGroups:    cfg.Spec.AllowedGroups,
 	}
 
 	if ref := cfg.Spec.ClientSecret; ref != nil {

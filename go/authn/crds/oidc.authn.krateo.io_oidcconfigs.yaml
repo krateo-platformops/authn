@@ -44,6 +44,18 @@ spec:
             properties:
               additionalScopes:
                 type: string
+              allowedGroups:
+                description: |-
+                  AllowedGroups restricts who may log in with this provider: a user is
+                  admitted only if their groups (from the ID token, or the RESTAction)
+                  include at least one of these. Anyone else is refused with 403
+                  GroupNotAllowed, and no credential is issued. Empty or omitted: every
+                  user the provider authenticates is admitted, and RBAC alone decides
+                  what they may do.
+                items:
+                  minLength: 1
+                  type: string
+                type: array
               authorizationURL:
                 type: string
               clientID:

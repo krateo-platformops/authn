@@ -31,6 +31,16 @@ type OIDCConfigSpec struct {
 	//+optional
 	AdditionalScopes string `json:"additionalScopes"`
 
+	// AllowedGroups restricts who may log in with this provider: a user is
+	// admitted only if their groups (from the ID token, or the RESTAction)
+	// include at least one of these. Anyone else is refused with 403
+	// GroupNotAllowed, and no credential is issued. Empty or omitted: every
+	// user the provider authenticates is admitted, and RBAC alone decides
+	// what they may do.
+	//+optional
+	// +kubebuilder:validation:items:MinLength=1
+	AllowedGroups []string `json:"allowedGroups,omitempty"`
+
 	// StepUp enables POST /oidc/stepup for this provider: a login that proves
 	// a higher assurance level (acr) gets a short-lived credential carrying
 	// the group krateo:loa:2. Without it, step-up is refused.

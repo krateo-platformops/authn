@@ -239,6 +239,12 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.discoveryURL`, `spec.authorizationURL`, `spec.tokenURL`, `spec.userInfoURL`,
   `spec.additionalScopes`. With `discoveryURL` the document is read on every login
   (it supplies the issuer); its endpoints are applied only when some endpoint is unset.
+- `spec.allowedGroups` (optional) — when non-empty, a user is admitted only if their
+  final groups (ID token or RESTAction, reserved `krateo:loa:` groups already stripped)
+  include at least one entry. Anyone else gets `403 GroupNotAllowed` at `/oidc/login` and
+  `/oidc/stepup`, and nothing is minted. Empty: everyone the IdP authenticates is
+  admitted and RBAC alone decides. It's defence in depth on top of the IdP's own gate,
+  e.g. a per-child Keycloak client admitting `child:<name>:member`.
 - `spec.stepUp` (optional) — enables `POST /oidc/stepup` (#49): `acrValues` (≥1, the
   `acr` values that prove LoA2; each non-empty and without whitespace), `maxAge` (default 5m, how recent `auth_time` must be),
   `ttl` (default 15m, ≥10m, the step-up credential's requested lifetime, never
