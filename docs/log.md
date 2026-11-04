@@ -14,6 +14,14 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-03 — /health reports the version actually running
+
+`GET /health` answered `{"name":"auth","version":""}` on every cluster: nothing stamped
+`main.Version` at build time, so the endpoint documented to identify the running build
+couldn't. A live read on 057 and demo found it while confirming their authn version. The
+release build now passes the tag and commit (`release-tag.yaml` → `build_args`), and the
+Dockerfile injects them with `-ldflags -X main.Version / main.Build`. A build without
+them, such as a PR validation or a local build, reports `dev`.
 ## 2026-11-03 — `/strategies` answers `application/json`
 
 `GET /strategies` set `Content-Type` after `WriteHeader(200)`, so the header was dropped and

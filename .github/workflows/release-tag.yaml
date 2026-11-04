@@ -16,3 +16,7 @@ jobs:
       packages: write
     with:
       modules: '[{"mod":"authn","context":"go/authn"}]'
+      # Stamp the binary so /health reports the version actually running.
+      build_args: |
+        VERSION=${{ github.ref_name }}
+        BUILD=${{ github.sha }}

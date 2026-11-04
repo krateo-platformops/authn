@@ -24,8 +24,14 @@ COPY internal/ internal/
 # Every file of package main (go build ignores the _test.go files).
 COPY *.go ./
 
-# Build
-RUN CGO_ENABLED=0 GO111MODULE=on go build -a -o /bin/server . && \
+# Build. VERSION and BUILD stamp main.Version / main.Build, which /health and the
+# startup log report; release-tag.yaml passes the tag and the commit. A build without
+# them (a PR validation or a local build) reports "dev".
+ARG VERSION=dev
+ARG BUILD=unknown
+RUN CGO_ENABLED=0 GO111MODULE=on go build -a \
+      -ldflags "-X main.Version=${VERSION} -X main.Build=${BUILD}" \
+      -o /bin/server . && \
     strip /bin/server
 
 # Deployment environment
