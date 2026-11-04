@@ -166,18 +166,9 @@ no RBAC), unless a `restActionRef` supplies them.
 
 ## RESTAction enrichment can only set five keys
 The `status` map snowplow returns may override exactly `name`, `email`,
-`preferredUsername`, `groups`, `avatarURL` (`oidc/support.go:233-280`). `checkKeys`
-rejects **any** other key via its `default` branch (`oidc/support.go:317-319`), which
-flips the flow to `LegacyResolve`. A RESTAction that returns extra top-level status
-fields will never take the fast path.
-
-## LegacyResolve mutates the cluster mid-login
-`LegacyResolve` **creates** a per-user copy of the RESTAction and each referenced
-endpoint Secret, calls snowplow, then **deletes** them
-(`restaction/resolver.go:68-186`). A login that crashes or is cancelled between
-create and delete can leave orphaned `<name>-<email>` RESTActions/Secrets behind. It
-also requires authn to have write/delete RBAC on `restactions` and Secrets, beyond
-the read-only access the other paths need (the chart's Role grants it).
+`preferredUsername`, `groups`, `avatarURL` (`updateConfig`). Any other key is ignored,
+not an error. A RESTAction must read the user's token as `${ .token }`, in a stage
+header (never a path). There is no copy-and-inject fallback any more.
 
 ## Basic-auth passwords are stored in plaintext
 The User's `passwordRef` Secret holds the password itself, not a hash. The comparison

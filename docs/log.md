@@ -14,6 +14,19 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-04 — the legacy RESTAction copy path is gone
+
+`LegacyResolve` served RESTActions written without a `${ .token }` header. It copied the
+RESTAction and its endpoint Secrets per user, wrote the user's IdP token into each Secret
+copy, called the copy and deleted it. On demo, every GitHub sign-in went that way. Once
+krateo-saas#44 gave `github-oauth-restaction` the header, and installer confirmed that
+authn's `restaction fell back to the legacy copy path` warn had stopped, authn dropped:
+
+- the path itself;
+- the Role's `restactions` create/update/delete rule;
+- `checkKeys`, whose only effect was to send a RESTAction with extra status fields down
+  the copy path. Extra fields are now ignored.
+
 ## 2026-11-04 — basic auth compares passwords in constant time
 
 `/basic/login` compared `password != string(pwd)`, so the time to refuse a guess grew with
