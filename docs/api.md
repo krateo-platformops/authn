@@ -83,6 +83,31 @@ oauth and oidc logins answered an empty `200` in that case.
 use the JWT ([#36](https://github.com/krateo-platformops/authn/issues/36)). JWT lifetime = the cert lifetime knob
 (`AUTHN_KUBECONFIG_CRT_EXPIRES_IN`, default 24h).
 
+### What a caller should do with a failure
+
+The tables below are the **complete** list of failure causes: `TestEveryCauseIsDocumented`
+(`go/authn/causes_doc_test.go`) fails the build if the source declares a cause with no row
+here. A release's notes list only what that release changed.
+
+Each row's **Caller should** column is one of seven actions. The code says whose failure it
+is; the action says what helps, which the code alone can't. A redirect flow and a password
+form both answer `403`, for instance, but only one of them has something to retype.
+
+| Caller should | Meaning |
+|---|---|
+| Send credentials | None were sent: ask for them (a person) or attach them (a service) |
+| Retype credentials | They were refused: let the person try again |
+| Start the sign-in again | This attempt can't be finished, and a fresh redirect usually succeeds. If a fresh attempt fails the same way, tell an administrator: the cause is then repeatable |
+| Ask for access | The identity is proven but not allowed here. An administrator grants access; retrying won't help |
+| Tell an administrator | A configuration problem. Retrying won't help until it is fixed |
+| Retry later | authn or a dependency failed, possibly for a moment. Retry; if it persists, tell an administrator |
+| Fix the client | The request is malformed: a bug in the caller, not something a person can fix |
+
+A cause means the same in every table, with two exceptions. `AudienceMismatch` is the
+service account's token on `/serviceaccount/login` (fix the client) and the IdP's ID
+token on `/oidc/login` (tell an administrator). `TokenExpired` here is always the **ID
+token the IdP just issued**, never the caller's own Krateo session.
+
 ### `/serviceaccount/login` failures
 
 Every failure is a Kubernetes-style `Status`. **The status code says whose failure it
@@ -103,17 +128,17 @@ mirroring Kubernetes `StatusDetails`:
  "details":{"causes":[{"reason":"AudienceMismatch","message":"token audience mismatch (require \"authn\")"}]}}
 ```
 
-| `details.causes[0].reason` | Code | Meaning |
-|---|---|---|
-| `MissingBearer` | 401 | No `Authorization: Bearer` header (also sets `WWW-Authenticate`) |
-| `TokenNotAuthenticated` | 403 | The apiserver did not authenticate the token; its `status.error` (e.g. invalid or expired token) is in the message |
-| `AudienceMismatch` | 403 | The token isn't bound to authn's audience (default `authn`) |
-| `NotAServiceAccount` | 403 | The token's user isn't `system:serviceaccount:<ns>:<name>` |
-| `NoMapping` | 403 | No `ServiceAccount` mapping allowlists this SA |
-| `AmbiguousMapping` | 403 | More than one mapping references this SA |
-| `TokenReviewFailed` | 500 | authn could not call the TokenReview API |
-| `MappingLookupFailed` | 500 | authn could not list the mappings |
-| `IssuanceFailed` | 500 | The caller was authenticated and mapped, but authn could not issue its clientconfig or sign its JWT |
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `MissingBearer` | 401 | No `Authorization: Bearer` header (also sets `WWW-Authenticate`) | Send credentials |
+| `TokenNotAuthenticated` | 403 | The apiserver did not authenticate the token; its `status.error` (e.g. invalid or expired token) is in the message | Send credentials |
+| `AudienceMismatch` | 403 | The token isn't bound to authn's audience (default `authn`) | Fix the client |
+| `NotAServiceAccount` | 403 | The token's user isn't `system:serviceaccount:<ns>:<name>` | Fix the client |
+| `NoMapping` | 403 | No `ServiceAccount` mapping allowlists this SA | Ask for access |
+| `AmbiguousMapping` | 403 | More than one mapping references this SA | Tell an administrator |
+| `TokenReviewFailed` | 500 | authn could not call the TokenReview API | Retry later |
+| `MappingLookupFailed` | 500 | authn could not list the mappings | Retry later |
+| `IssuanceFailed` | 500 | The caller was authenticated and mapped, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 Values are added, never renamed, and a cause never changes its code. "authn was
 unreachable" is the remaining case: no response at all.
@@ -125,27 +150,27 @@ with the same shape as above: `400` for a request authn can't act on, `404` for 
 OIDCConfig that doesn't exist, `403` for a code or token authn won't accept (retrying
 the same login fails again), and `500` when authn or its IdP failed.
 
-| `details.causes[0].reason` | Code | Meaning |
-|---|---|---|
-| `MissingConfigName` | 400 | No `?name=` |
-| `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one. Answered before authn looks anything up |
-| `OIDCConfigNotFound` | 404 | No OIDCConfig has the `name` asked for |
-| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself (`error` `invalid_grant`, RFC 6749 §5.2): expired, already used, issued for another redirect URI, or a PKCE verifier that doesn't match. There is nothing to retype: start the sign-in again. If a fresh code is refused too, the cause is repeatable and needs an administrator: the authorization request's `redirect_uri` differs from `spec.redirectURI` (it can't when the client uses `/strategies`' `authCodeURL` unchanged), or the client sends the wrong verifier. The IdP answers all of these with the same `invalid_grant`, so authn can't tell them apart in the response. Its log can: the IdP's full answer is in the warn line's `reason` |
-| `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) |
-| `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` |
-| `TokenExpired` | 403 | `exp` is more than 1 minute in the past |
-| `IDTokenInvalid` | 403 | The ID token can't be decoded, `aud`/`exp` is missing or malformed, or a claim authn reads has the wrong type (`groups` not a list of strings; `preferred_username`, `name`, `picture`, `email` or `acr` not a string; `auth_time` not a number). A `null` claim counts as omitted |
-| `GroupNotAllowed` | 403 | `spec.allowedGroups` is set and the user holds none of those groups (after the RESTAction, and after reserved `krateo:loa:` groups are stripped). Applies to `/oidc/stepup` too |
-| `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` |
-| `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` |
-| `OIDCConfigLookupFailed` | 500 | authn could not read the OIDCConfig |
-| `OIDCDiscoveryFailed` | 500 | The `discoveryURL` document could not be read: unreachable, not `200`, or not JSON |
-| `OIDCConfigInvalid` | 500 | The authorize or token endpoint is known neither from the spec nor from discovery |
-| `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret |
-| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), or answering something unusable. The IdP's answer is logged, not returned |
-| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200`, not JSON, or a field authn asked for has the wrong type |
-| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity |
-| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `MissingConfigName` | 400 | No `?name=` | Fix the client |
+| `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one. Answered before authn looks anything up | Fix the client |
+| `OIDCConfigNotFound` | 404 | No OIDCConfig has the `name` asked for | Tell an administrator |
+| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself (`error` `invalid_grant`, RFC 6749 §5.2): expired, already used, issued for another redirect URI, or a PKCE verifier that doesn't match. There is nothing to retype: start the sign-in again. If a fresh code is refused too, the cause is repeatable and needs an administrator: the authorization request's `redirect_uri` differs from `spec.redirectURI` (it can't when the client uses `/strategies`' `authCodeURL` unchanged), or the client sends the wrong verifier. The IdP answers all of these with the same `invalid_grant`, so authn can't tell them apart in the response. Its log can: the IdP's full answer is in the warn line's `reason` | Start the sign-in again |
+| `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) | Tell an administrator |
+| `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` | Tell an administrator |
+| `TokenExpired` | 403 | The ID token the IdP just issued has an `exp` more than 1 minute in the past (not the caller's Krateo session). Repeating means the clocks of authn and the IdP disagree | Start the sign-in again |
+| `IDTokenInvalid` | 403 | The ID token can't be decoded, `aud`/`exp` is missing or malformed, or a claim authn reads has the wrong type (`groups` not a list of strings; `preferred_username`, `name`, `picture`, `email` or `acr` not a string; `auth_time` not a number). A `null` claim counts as omitted | Tell an administrator |
+| `GroupNotAllowed` | 403 | `spec.allowedGroups` is set and the user holds none of those groups (after the RESTAction, and after reserved `krateo:loa:` groups are stripped). Applies to `/oidc/stepup` too | Ask for access |
+| `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` | Tell an administrator |
+| `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` | Tell an administrator |
+| `OIDCConfigLookupFailed` | 500 | authn could not read the OIDCConfig | Retry later |
+| `OIDCDiscoveryFailed` | 500 | The `discoveryURL` document could not be read: unreachable, not `200`, or not JSON | Retry later |
+| `OIDCConfigInvalid` | 500 | The authorize or token endpoint is known neither from the spec nor from discovery | Tell an administrator |
+| `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret | Retry later |
+| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), or answering something unusable. The IdP's answer is logged, not returned | Retry later |
+| `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200`, not JSON, or a field authn asked for has the wrong type | Retry later |
+| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity | Retry later |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 Before #81, a missing or unreadable OIDCConfig answered `417` without a cause, and
 every other failure here without a cause answered `500`, including a refused code,
@@ -156,29 +181,29 @@ which is the caller's.
 Same contract as `/oidc/login`. Before #81, a missing or unreadable OAuthConfig and
 any failed code exchange answered `417`.
 
-| `details.causes[0].reason` | Code | Meaning |
-|---|---|---|
-| `MissingConfigName` | 400 | No `?name=` |
-| `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one |
-| `OAuthConfigNotFound` | 404 | No OAuthConfig has the `name` asked for |
-| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself: `invalid_grant`, or GitHub's `bad_verification_code` (which GitHub answers with HTTP `200`) |
-| `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig |
-| `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key |
-| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token isn't `bearer` while a RESTAction needs it |
-| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity |
-| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `MissingConfigName` | 400 | No `?name=` | Fix the client |
+| `MissingAuthorizationCode` | 400 | No `X-Auth-Code` header, or an empty one | Fix the client |
+| `OAuthConfigNotFound` | 404 | No OAuthConfig has the `name` asked for | Tell an administrator |
+| `AuthorizationCodeRejected` | 403 | The token endpoint refused the code itself: `invalid_grant`, or GitHub's `bad_verification_code` (which GitHub answers with HTTP `200`) | Start the sign-in again |
+| `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig | Retry later |
+| `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key | Retry later |
+| `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token isn't `bearer` while a RESTAction needs it | Retry later |
+| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity | Retry later |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 ### `/oidc/stepup` failures
 
 Every `/oidc/login` failure above applies, plus:
 
-| `details.causes[0].reason` | Code | Meaning |
-|---|---|---|
-| `StepUpNotEnabled` | 403 | The OIDCConfig has no `spec.stepUp` |
-| `InsufficientAssurance` | 403 | The ID token's `acr` isn't in `spec.stepUp.acrValues` |
-| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: redo the step-up redirect. Send `max_age` on every step-up request (`stepUpAuthCodeURL` does), since an IdP may answer `acr_values` from SSO with an old `auth_time` |
-| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, an empty acr value or one containing whitespace, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) |
-| `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued |
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `StepUpNotEnabled` | 403 | The OIDCConfig has no `spec.stepUp` | Fix the client |
+| `InsufficientAssurance` | 403 | The ID token's `acr` isn't in `spec.stepUp.acrValues` | Start the sign-in again |
+| `StaleAuthentication` | 403 | `auth_time` is missing or older than `spec.stepUp.maxAge`: redo the step-up redirect. Send `max_age` on every step-up request (`stepUpAuthCodeURL` does), since an IdP may answer `acr_values` from SSO with an old `auth_time` | Start the sign-in again |
+| `StepUpMisconfigured` | 500 | `spec.stepUp` has no `acrValues`, an empty acr value or one containing whitespace, a non-positive `maxAge`, or a `ttl` under 10m (the CSR API's minimum) | Tell an administrator |
+| `IssuanceFailed` | 500 | The step-up was proven, but the credential or its token couldn't be issued | Retry later |
 
 ### `/basic/login` and `/ldap/login` failures
 
@@ -196,30 +221,30 @@ warn line). An unknown LDAP user was a `404` before; it is now this `403`.
 
 `/basic/login`:
 
-| `details.causes[0].reason` | Code | Meaning |
-|---|---|---|
-| `MissingCredentials` | 401 | No `Authorization: Basic` header (also sets `WWW-Authenticate`) |
-| `InvalidCredentials` | 403 | Unknown user, unusable user name or wrong password, answered alike |
-| `UserLookupFailed` | 500 | authn could not read the `User` |
-| `PasswordSecretMissing` | 500 | The `User` has no `passwordRef`, or its Secret or key doesn't exist |
-| `PasswordLookupFailed` | 500 | authn could not read the password Secret |
-| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `MissingCredentials` | 401 | No `Authorization: Basic` header (also sets `WWW-Authenticate`) | Send credentials |
+| `InvalidCredentials` | 403 | Unknown user, unusable user name or wrong password, answered alike | Retype credentials |
+| `UserLookupFailed` | 500 | authn could not read the `User` | Retry later |
+| `PasswordSecretMissing` | 500 | The `User` has no `passwordRef`, or its Secret or key doesn't exist | Tell an administrator |
+| `PasswordLookupFailed` | 500 | authn could not read the password Secret | Retry later |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 `/ldap/login`:
 
-| `details.causes[0].reason` | Code | Meaning |
-|---|---|---|
-| `MissingConfigName` | 400 | No `?name=` |
-| `InvalidRequestBody` | 400 | The body isn't the JSON `{"username","password"}`. An empty body is not refused here: the login goes on with an empty username and password |
-| `LDAPConfigNotFound` | 404 | No LDAPConfig has the `name` asked for |
-| `AmbiguousUser` | 300 | More than one entry matches the username |
-| `InvalidCredentials` | 403 | No entry matches the username, the server refused the user's bind (wrong password, account disabled), or the password is empty, answered alike |
-| `LDAPConfigLookupFailed` | 500 | authn could not read the LDAPConfig or its bind Secret |
-| `LDAPConfigInvalid` | 500 | `spec.groupSearch.filter` doesn't parse as a template, can't render, or doesn't render an LDAP filter. Found before authn connects to the server |
-| `LDAPUnavailable` | 500 | authn could not connect to the LDAP server: dial, StartTLS, or a dropped connection |
-| `LDAPBindFailed` | 500 | The server refused the `bindDN` bind (wrong or missing `bindSecret`), or failed the user's bind for a reason other than their credentials |
-| `LDAPSearchFailed` | 500 | The user or group search failed, e.g. `baseDN` doesn't exist |
-| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT |
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `MissingConfigName` | 400 | No `?name=` | Fix the client |
+| `InvalidRequestBody` | 400 | The body isn't the JSON `{"username","password"}`. An empty body is not refused here: the login goes on with an empty username and password | Fix the client |
+| `LDAPConfigNotFound` | 404 | No LDAPConfig has the `name` asked for | Tell an administrator |
+| `AmbiguousUser` | 300 | More than one entry matches the username | Tell an administrator |
+| `InvalidCredentials` | 403 | No entry matches the username, the server refused the user's bind (wrong password, account disabled), or the password is empty, answered alike | Retype credentials |
+| `LDAPConfigLookupFailed` | 500 | authn could not read the LDAPConfig or its bind Secret | Retry later |
+| `LDAPConfigInvalid` | 500 | `spec.groupSearch.filter` doesn't parse as a template, can't render, or doesn't render an LDAP filter. Found before authn connects to the server | Tell an administrator |
+| `LDAPUnavailable` | 500 | authn could not connect to the LDAP server: dial, StartTLS, or a dropped connection | Retry later |
+| `LDAPBindFailed` | 500 | The server refused the `bindDN` bind (wrong or missing `bindSecret`), or failed the user's bind for a reason other than their credentials | Tell an administrator |
+| `LDAPSearchFailed` | 500 | The user or group search failed, e.g. `baseDN` doesn't exist | Tell an administrator |
+| `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 Every `Status` whose code isn't `2xx` says `"status":"Failure"`. Before #81 a `400` or a
 `300` said `Success`.
