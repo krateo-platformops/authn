@@ -254,6 +254,7 @@ func TestLoginSucceeds(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, 1, gen.calls)
 	assert.Contains(t, rec.Body.String(), "accessToken")
+	assert.Contains(t, rec.Body.String(), `"strategy":{"kind":"basic"}`, "basic has no config to name")
 }
 
 func lastLine(b []byte) []byte {

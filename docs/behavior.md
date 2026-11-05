@@ -68,10 +68,14 @@ return:
   "accessToken": "<JWT, omitted if no signing key>",
   "user":   { "displayName": "...", "username": "...", "avatarURL": "..." },
   "groups": ["..."],
+  "strategy": { "kind": "oidc", "name": "..." },
   "data":   <base64-free JSON kubeconfig (Kind: Config)>
 }
 ```
 
+- `strategy` names the login that issued the session, in `/strategies`' terms. Each login
+  route sets it on `encode.Extras`; `name` is absent for `basic` and `serviceaccount`,
+  and a step-up sets none.
 - `data` is the per-user kubeconfig minted by the generator (`config/build.go:115-147`).
   Its `client-key-data` is a private key ([gotchas](./gotchas.md)).
 - **`/serviceaccount/login` omits `data`.** It still mints the identity and persists the

@@ -243,6 +243,7 @@ func TestStepUpGrantsAShortLivedCredential(t *testing.T) {
 	var out map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 	assert.NotContains(t, out, "data", "no kubeconfig in the response")
+	assert.NotContains(t, out, "strategy", "a step-up token is not a session")
 
 	var tok string
 	require.NoError(t, json.Unmarshal(out["accessToken"], &tok))

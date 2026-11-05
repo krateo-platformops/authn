@@ -137,6 +137,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		if err := encode.Success(wri, dat, &encode.Extras{
 			UserInfo:      nfo,
+			Strategy:      &encode.Strategy{Kind: string(storage.StrategyLDAP), Name: name},
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,

@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-05 — the login response names its strategy
+
+The portal has to decide whether to offer a step-up before it redirects anyone, and it
+had no record of how a person signed in. `/oidc/stepup` couldn't answer that: it reads
+no session, so it can only refuse after the redirect. Every login response now carries
+`strategy`, in `/strategies`' terms. Authn doesn't bind a step-up to the session: someone
+with an IdP account can complete one whatever session they hold, and the credential
+belongs to that IdP identity. That grants nothing they didn't already prove, and the
+admission policy still enforces the gate, so the portal compares usernames and discards
+a mismatch.
+
 ## 2026-11-04 — outbound calls refuse redirects
 
 oasgen-provider measured, in its own client (#401), that net/http keeps `Authorization`

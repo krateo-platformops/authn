@@ -172,6 +172,7 @@ type result struct {
 	level   string
 	minted  int
 	tokened bool
+	body    string
 }
 
 func login(t *testing.T, name string, configCode, secretCode int, srvLDAP *fakeLDAP, gen *fakeGenerator, realDial bool) result {
@@ -211,7 +212,7 @@ func loginAs(t *testing.T, name string, configCode, secretCode int, srvLDAP *fak
 	rec := httptest.NewRecorder()
 	route.Handler().ServeHTTP(rec, req)
 
-	res := result{code: rec.Code, minted: gen.calls, tokened: strings.Contains(rec.Body.String(), "accessToken")}
+	res := result{code: rec.Code, minted: gen.calls, tokened: strings.Contains(rec.Body.String(), "accessToken"), body: rec.Body.String()}
 	if rec.Code == http.StatusOK {
 		return res
 	}
@@ -371,4 +372,5 @@ func TestLoginSucceeds(t *testing.T) {
 	assert.Equal(t, http.StatusOK, got.code)
 	assert.Equal(t, 1, got.minted)
 	assert.True(t, got.tokened)
+	assert.Contains(t, got.body, `"strategy":{"kind":"ldap","name":"corp"}`)
 }

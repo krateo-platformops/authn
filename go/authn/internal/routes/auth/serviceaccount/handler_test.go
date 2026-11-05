@@ -132,6 +132,7 @@ func TestHandlerOmitsKubeconfigFromResponse(t *testing.T) {
 	assert.Contains(t, out, "accessToken")
 	assert.Contains(t, out, "user")
 	assert.True(t, strings.Contains(string(out["groups"]), "krateo:cdc"))
+	assert.JSONEq(t, `{"kind":"serviceaccount"}`, string(out["strategy"]))
 }
 
 // Every failure carries a machine-readable cause in details.causes, and its
