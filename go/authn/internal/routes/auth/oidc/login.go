@@ -96,6 +96,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		if err := encode.Success(wri, dat, &encode.Extras{
 			UserInfo:      nfo,
+			Strategy:      &encode.Strategy{Kind: string(storage.StrategyOIDC), Name: req.URL.Query().Get("name")},
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,

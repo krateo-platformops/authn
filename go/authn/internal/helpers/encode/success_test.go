@@ -136,3 +136,19 @@ func TestSuccessAnswersIssuanceFailedWhenSigningFails(t *testing.T) {
 	assert.Contains(t, out.Details.Causes[0].Message, "issuing access token")
 	assert.NotContains(t, rec.Body.String(), "Config", "no kubeconfig in a failure")
 }
+
+// The strategy is what a login says about itself. Without one (a step-up) the
+// key is absent, not empty, so a client can't mistake it for a session's.
+func TestSuccessBodyStrategy(t *testing.T) {
+	body, err := successBody(nil, &Extras{Strategy: &Strategy{Kind: "oidc", Name: "kc"}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"strategy":{"kind":"oidc","name":"kc"}}`, string(body))
+
+	body, err = successBody(nil, &Extras{Strategy: &Strategy{Kind: "basic"}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"strategy":{"kind":"basic"}}`, string(body))
+
+	body, err = successBody(nil, &Extras{})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{}`, string(body))
+}

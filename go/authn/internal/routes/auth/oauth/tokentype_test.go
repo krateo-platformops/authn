@@ -75,6 +75,7 @@ func TestLoginAcceptsTheBearerTypeInAnyCase(t *testing.T) {
 			if wantCode == http.StatusOK {
 				assert.True(t, snowplowCalled)
 				assert.Equal(t, 1, gen.calls)
+				assert.Contains(t, rec.Body.String(), `"strategy":{"kind":"oauth","name":"gh"}`)
 			} else {
 				assert.False(t, snowplowCalled, "a non-bearer token never reaches the RESTAction")
 				assert.Zero(t, gen.calls)

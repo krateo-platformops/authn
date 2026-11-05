@@ -64,9 +64,18 @@ Every strategy returns the same shape:
   "accessToken": "<RS256 JWT, kid header set — see jwt-jwks.md>",
   "user":   { "displayName": "…", "username": "…", "avatarURL": "…" },
   "groups": ["…"],
+  "strategy": { "kind": "oidc", "name": "keycloak" },
   "data":   { "kind": "Config", "…": "the per-user kubeconfig" }
 }
 ```
+
+`strategy` says which login issued the session, in the terms of `GET /strategies`: `kind`
+is `basic`, `ldap`, `oauth`, `oidc` or `serviceaccount`, and `name` is the config CR's
+name (absent for `basic` and `serviceaccount`). So `kind` and `name` find the session's
+`/strategies` entry, and that entry's `extensions.stepUpAuthCodeURL` says whether it
+offers a step-up. A session issued by an older authn has no `strategy`. It describes the
+session for a client's display logic, and authorizes nothing. `POST /oidc/stepup` returns
+no `strategy`, since its token is not a session.
 
 `data` is a complete kubeconfig whose client certificate carries
 `CN=username, O=groups`: the caller's Kubernetes identity, scoped from then on by

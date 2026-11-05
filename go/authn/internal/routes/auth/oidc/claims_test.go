@@ -45,6 +45,15 @@ func TestNullClaimsAreOmitted(t *testing.T) {
 	assert.Empty(t, gen.sessions[0].GetGroups())
 }
 
+// A session says which login issued it, in /strategies' terms, so a client can
+// find the entry and offer that entry's step-up.
+func TestLoginNamesItsStrategy(t *testing.T) {
+	gen := &stepUpGenerator{notAfter: time.Now().Add(time.Hour)}
+	rec := loginRequest(t, oidcEnv(t, "", map[string]any{}), gen)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"strategy":{"kind":"oidc","name":"kc"}`)
+}
+
 // UserInfo is asked only for the profile claims the ID token omits; what it
 // answers is checked the same way, and a bad answer is authn's IdP failing:
 // 500 UserInfoFailed.

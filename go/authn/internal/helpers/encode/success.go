@@ -15,8 +15,19 @@ import (
 // DefaultJwtDuration is the token lifetime used when a caller supplies none.
 const DefaultJwtDuration = time.Hour * 8
 
+// Strategy names the login that issued a session, in the same terms as
+// GET /strategies: Kind and, for a strategy configured by a CR, Name match an
+// entry there. A client uses it to tell how the person signed in, for example
+// to offer a step-up only to a session whose OIDCConfig has one.
+type Strategy struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitempty"`
+}
+
 type Extras struct {
-	UserInfo      userinfo.Info
+	UserInfo userinfo.Info
+	// Strategy is nil on a step-up: its token is not a session.
+	Strategy      *Strategy
 	JwtDuration   time.Duration
 	JwtPrivateKey *rsa.PrivateKey
 	JwtKeyID      string
@@ -78,6 +89,8 @@ func successBody(dat []byte, extras *Extras) (_ []byte, err error) {
 	}
 
 	if extras != nil {
+		out.Strategy = extras.Strategy
+
 		if nfo := extras.UserInfo; nfo != nil {
 			out.User = &user{
 				Username:    nfo.GetUserName(),
@@ -114,5 +127,6 @@ type response struct {
 	AccessToken string          `json:"accessToken,omitempty"`
 	User        *user           `json:"user,omitempty"`
 	Groups      []string        `json:"groups,omitempty"`
+	Strategy    *Strategy       `json:"strategy,omitempty"`
 	Data        json.RawMessage `json:"data,omitempty"`
 }

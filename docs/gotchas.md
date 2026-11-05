@@ -50,6 +50,14 @@ The Kubernetes CSR signer backdates `notBefore` by 5 minutes to absorb clock ske
 reads as 25m. Measure a lifetime from issue time (the login JWT's `iat`) to `notAfter`,
 not from `notBefore`.
 
+## A step-up isn't tied to the session
+`POST /oidc/stepup` reads no session: the identity comes only from the ID token. Anyone
+with an account in the IdP can complete one, whatever they're signed in as, and the
+credential belongs to that IdP identity, not to the session's user. That grants nothing
+the IdP login didn't prove. A client that means to act as the session's user must compare
+the response's `user.username` with the session's and discard a mismatch. To decide
+whether to offer a step-up at all, use the login response's `strategy`.
+
 ## A step-up credential lives beside the session, never in it
 `POST /oidc/stepup` writes `<user>-clientconfig-stepup`, never `<user>-clientconfig`.
 The name ends in `-stepup`, so no username's session Secret can collide with
