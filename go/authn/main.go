@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/certrenewal"
 	"github.com/krateo-platformops/authn/internal/env"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
@@ -20,6 +21,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/leader"
 	"github.com/krateo-platformops/authn/internal/middlewares/cors"
 	"github.com/krateo-platformops/authn/internal/routes"
+	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/routes/health"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
@@ -89,6 +91,10 @@ func main() {
 	serviceAccountAudience := flag.String("serviceaccount-audience",
 		env.String("AUTHN_SERVICEACCOUNT_AUDIENCE", serviceaccount.DefaultAudience),
 		"audience the projected ServiceAccount token must carry for the /serviceaccount/login strategy")
+
+	basicDecoySecret := flag.String("basic-decoy-secret",
+		env.String("AUTHN_BASIC_DECOY_SECRET", ""),
+		"name of the Secret, in authn's namespace, that /basic/login reads for an unknown user")
 
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "Flags:")
@@ -200,6 +206,17 @@ func main() {
 		log.Info().Str("kid", k.KID).Msg("publishing a previous JWT key for verification only")
 	}
 
+	var decoySecret *core.SecretKeySelector
+	if *basicDecoySecret != "" {
+		decoySecret = &core.SecretKeySelector{
+			Name:      *basicDecoySecret,
+			Namespace: os.Getenv(util.NamespaceEnvVar),
+			Key:       basic.DecoyKey,
+		}
+	} else {
+		log.Warn().Msg("no basic decoy Secret configured: a refused basic login takes less time for an unknown user")
+	}
+
 	healthy := int32(0)
 
 	all, err := buildRoutes(routeOptions{
@@ -210,6 +227,7 @@ func main() {
 		PreviousKeys:           previousKeys,
 		JwtDuration:            *certExpiresIn,
 		ServiceAccountAudience: *serviceAccountAudience,
+		BasicDecoySecret:       decoySecret,
 		SelfUsername:           *authnUsername,
 		SnowplowURL:            *snowplowURL,
 		Healthy:                &healthy,
