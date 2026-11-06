@@ -49,7 +49,6 @@ func main() {
 	// Flags
 	kconfig := flag.String(clientcmd.RecommendedConfigPathFlag, "", "absolute path to the kubeconfig file")
 	debugOn := flag.Bool("debug", env.Bool("AUTHN_DEBUG", false), "dump verbose output")
-	dumpEnv := flag.Bool("dump-env", env.Bool("AUTHN_DUMP_ENV", false), "dump environment variables")
 	corsOn := flag.Bool("cors", env.Bool("AUTHN_CORS", true), "enable or disable CORS")
 	otelTracingOn := flag.Bool("otel-tracing", telemetry.TracingEnabled(),
 		"enable OpenTelemetry tracing (OTLP/HTTP); defaults to OTEL_TRACING_ENABLED, which defaults to OTEL_ENABLED; default off")
@@ -121,25 +120,18 @@ func main() {
 		Timestamp().
 		Logger()
 
-	if log.Debug().Enabled() {
-		evt := log.Debug().
-			Str("version", Version).
-			Str("build", Build).
-			Str("debug", fmt.Sprintf("%t", *debugOn)).
-			Str("cors", fmt.Sprintf("%t", *corsOn)).
-			Str("port", fmt.Sprintf("%d", *servicePort)).
-			Str("clusterName", *clusterName).
-			Str("kubernetesURL", *kubernetesURL).
-			Dur("certExpire", *certExpiresIn).
-			Dur("serviceCertExpire", *serviceCertExpiresIn).
-			Bool("certRenewal", *certRenewalOn)
-
-		if *dumpEnv {
-			evt = evt.Strs("env-vars", os.Environ())
-		}
-
-		evt.Msg("configuration and env vars info")
-	}
+	log.Debug().
+		Str("version", Version).
+		Str("build", Build).
+		Str("debug", fmt.Sprintf("%t", *debugOn)).
+		Str("cors", fmt.Sprintf("%t", *corsOn)).
+		Str("port", fmt.Sprintf("%d", *servicePort)).
+		Str("clusterName", *clusterName).
+		Str("kubernetesURL", *kubernetesURL).
+		Dur("certExpire", *certExpiresIn).
+		Dur("serviceCertExpire", *serviceCertExpiresIn).
+		Bool("certRenewal", *certRenewalOn).
+		Msg("configuration info")
 
 	log.Debug().Msgf("Snowplow URL from Service ENV: %s", temp)
 	log.Debug().Msgf("Snowplow URL computed/from parameter: %s", *snowplowURL)
