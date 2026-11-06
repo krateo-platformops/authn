@@ -5,7 +5,6 @@ SERVER="$(kubectl config view --raw -o json | jq -r '.clusters[] | select(.name 
 CA_DATA="$(kubectl config view --raw -o json | jq -r '.clusters[] | select(.name == "'${CLUSTER}'") | .cluster."certificate-authority-data"')"
 
 export AUTHN_DEBUG=true
-export AUTHN_DUMP_ENV=true
 export AUTHN_PORT=8181
 export AUTHN_KUBECONFIG_CACRT=$CA_DATA
 export AUTHN_KUBECONFIG_CLUSTER_NAME=$CLUSTER

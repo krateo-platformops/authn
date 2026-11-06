@@ -288,9 +288,6 @@
         "AUTHN_CORS": {
           "type": "string"
         },
-        "AUTHN_DUMP_ENV": {
-          "type": "string"
-        },
         "AUTHN_SERVICE_CRT_EXPIRES_IN": {
           "type": "string",
           "description": "Requested lifetime of authn's own client certificate (Go duration). The signer may grant less."

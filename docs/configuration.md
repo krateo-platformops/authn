@@ -64,8 +64,7 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `AUTHN_CRT_RENEWAL_THRESHOLD` | `0.66` | Fraction of the granted lifetime after which authn's own certificate is re-issued (0 < x < 1). |
 | `AUTHN_CRT_RENEWAL_ENABLED` | `true` | Background renewal of authn's own certificate; `false` lets it expire until a restart. |
 | `AUTHN_CORS` | `true` | Permissive `*`-origin CORS for the browser hop (allows `X-Auth-Code`, `X-Code-Verifier` + W3C trace-context headers). |
-| `AUTHN_DEBUG` | chart: `true` | Verbose (debug-level) logging. |
-| `AUTHN_DUMP_ENV` | chart: `true` | Dump env vars in the debug boot log. |
+| `AUTHN_DEBUG` | `false` | Debug-level logging, which includes each OIDC and OAuth sign-in's name, username and email. Don't leave it on in production. |
 | `AUTHN_PORT` | `8082` (chart sets = `service.port`) | Listen port. |
 | `AUTHN_NAMESPACE` | chart: release namespace | Where generated `AuthInfo` Secrets are stored. |
 | `POD_NAMESPACE` | chart: release namespace | The operator namespace — **all config CRs are resolved here**. |

@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-06 — debug is off by default, and the environment dump is gone
+
+The chart shipped `AUTHN_DEBUG=true` and `AUTHN_DUMP_ENV=true`, so production wrote its
+whole environment as one line at each start, and that line falsely tripped
+`sre-certificate-expiry-warning` on every authn restart. Debug also logged each OIDC and
+OAuth sign-in's name, username and email, and the values a RESTAction adds. Observability
+found the dump, and its count found ten matching lines on demo. Diego chose to set debug
+off in the chart and delete `--dump-env` and `AUTHN_DUMP_ENV`: `kubectl` already shows this
+configuration, and a future secret in the environment can't reach the logs this way.
+`AUTHN_DEBUG` remains as an override for debugging, with the personal data that brings.
+
 ## 2026-11-06 — an unknown basic user costs a Secret read too
 
 A known user cost a Secret read that an unknown user didn't, so response time could reveal
