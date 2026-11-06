@@ -142,7 +142,7 @@ The common back-end of every successful login.
 - **`generateClientCertAndKey`** (`gen.go:24-85`): builds a CSR
   (`kube.NewCertificateRequest` with username as CN and groups as O), creates the
   Kubernetes `CertificateSigningRequest` (`gen.go:36-39`), **auto-approves it**
-  (`gen.go:60`), waits for the signed cert (`gen.go:68`), and base64-encodes cert +
+  (`gen.go:60`), watches for the signed cert (`gen.go:66`), and base64-encodes cert +
   PKCS#1 key. The CSR's name is generated (`<username>-<random>`) and the CSR is
   deleted once the certificate is read, so concurrent issuances for one user don't
   interfere.

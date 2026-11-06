@@ -16,14 +16,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/types"
+	csrutil "k8s.io/client-go/util/certificate/csr"
 )
 
 const (
-	certificateWaitTimeout       = 5 * time.Minute
-	certificateWaitPollInternval = 3 * time.Second
-	resourceAnnotationKey        = "krateo.user.id"
-	customSignerName             = "kubernetes.io/kube-apiserver-client"
+	certificateWaitTimeout = 5 * time.Minute
+	resourceAnnotationKey  = "krateo.user.id"
+	customSignerName       = "kubernetes.io/kube-apiserver-client"
 )
 
 func NewPrivateKey() (*rsa.PrivateKey, error) {
@@ -105,43 +105,20 @@ func ApproveCertificateSigningRequest(client kubernetes.Interface, csr *certv1.C
 	return nil
 }
 
-// WaitForCertificate wait for certificate field to be generated in CSR's status.certificate field
-func WaitForCertificate(client kubernetes.Interface, name string) error {
-	ctx := context.Background()
-	err := wait.PollUntilContextTimeout(ctx, certificateWaitPollInternval,
-		certificateWaitTimeout, false, CertificateExistsFunc(client, name))
+// WaitForCertificate waits for the signer to issue the CSR, and returns the
+// certificate. It watches the CSR, so it returns as soon as the certificate
+// exists rather than on a poll tick, and a denied or failed CSR ends it at once.
+// A certificate issued before the watch starts isn't missed: client-go lists
+// the CSR first.
+func WaitForCertificate(client kubernetes.Interface, name string, uid types.UID) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), certificateWaitTimeout)
+	defer cancel()
+
+	crt, err := csrutil.WaitForCertificate(ctx, client, name, uid)
 	if err != nil {
-		return fmt.Errorf("waiting for CSR certificate to be generated: %w", err)
+		return nil, fmt.Errorf("waiting for CSR certificate to be generated: %w", err)
 	}
-
-	return nil
-}
-
-func CertificateExistsFunc(client kubernetes.Interface, name string) wait.ConditionWithContextFunc {
-	return func(ctx context.Context) (bool, error) {
-		obj, err := client.CertificatesV1().CertificateSigningRequests().
-			Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-
-		if len(obj.Status.Certificate) > 0 {
-			return true, nil
-		}
-
-		return false, nil
-	}
-}
-
-// Certificate get the certificate from the CertificateSigningRequests status
-func Certificate(client kubernetes.Interface, name string) ([]byte, error) {
-	csr, err := client.CertificatesV1().CertificateSigningRequests().
-		Get(context.Background(), name, metav1.GetOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("getting CSR '%s': %w", name, err)
-	}
-
-	return csr.Status.Certificate, nil
+	return crt, nil
 }
 
 // NewCertificateSigningRequest builds a CSR whose name the apiserver

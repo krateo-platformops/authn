@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-06 — a login no longer waits a fixed 3s for its certificate
+
+`WaitForCertificate` polled the CSR every 3s and made its first check only after the first
+interval, so every login that issues a clientconfig, on any strategy, waited at least 3s
+after approving the CSR. snowplow's run 21 measured a basic login at a 3.2s median, which
+that wait fits, though the steps weren't timed separately. Diego chose a watch over a
+faster poll: `WaitForCertificate` now uses client-go's `csr.WaitForCertificate`, which lists
+then watches, so a certificate issued before the watch starts isn't missed. It returns the
+certificate, so the separate read is gone, and a denied or failed CSR ends the wait at once
+instead of after the 5-minute timeout. The chart's ClusterRole already granted `list` and
+`watch`, so there is no RBAC change.
+
 ## 2026-11-05 — the login response names its strategy
 
 The portal has to decide whether to offer a step-up before it redirects anyone, and it
