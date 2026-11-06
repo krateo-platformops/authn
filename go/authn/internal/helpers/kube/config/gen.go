@@ -63,12 +63,7 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 
 	// wait for certificate
 	l.Debug().Str("crs.name", csr.Name).Msg("waiting for certificate...")
-	err = kube.WaitForCertificate(client, csr.Name)
-	if err != nil {
-		return "", "", nil, err
-	}
-
-	crt, err := kube.Certificate(client, csr.Name)
+	crt, err := kube.WaitForCertificate(client, csr.Name, csr.UID)
 	if err != nil {
 		return "", "", nil, err
 	}

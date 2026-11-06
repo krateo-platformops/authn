@@ -295,7 +295,9 @@ signer `kubernetes.io/kube-apiserver-client` and **self-approves it**
 chart installs (create / get / list / watch / approve / delete / update on
 `certificatesigningrequests`, plus `approve` on the signer — see
 `helm/authn/templates/clusterrole.yaml`; `manifests/rbac.csr.yaml` is the dev-cluster
-equivalent). The minted cert's CN = username and O = groups become the caller's
+equivalent). authn then watches the CSR, so the login continues as soon as the signer
+issues the certificate; a denied or failed CSR ends it at once, and no certificate within
+5 minutes fails it. The minted cert's CN = username and O = groups become the caller's
 Kubernetes identity.
 
 ### Kubernetes TokenReview API (intra-service auth)
