@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
@@ -64,8 +65,13 @@ var comparePassword = func(got string, want []byte) bool {
 	return subtle.ConstantTimeCompare(g[:], w[:]) == 1
 }
 
-// unknownUserPassword is what an unknown user's password is compared with.
-// No caller's password can match it usefully: the login is refused anyway.
+// DecoyKey is the key of the decoy Secret's value
+// (helm/authn/templates/basic-decoy-secret.yaml).
+const DecoyKey = "password"
+
+// unknownUserPassword is what an unknown user's password is compared with when
+// the decoy Secret can't be read. No caller's password can match it usefully,
+// and neither can the decoy's value: the login is refused anyway.
 var unknownUserPassword = []byte("authn: no such user")
 
 func invalidCredentials(reason error) error {
@@ -77,6 +83,9 @@ type LoginOptions struct {
 	JwtDuration         time.Duration
 	JwtPrivateKey       *rsa.PrivateKey
 	JwtKeyID            string
+	// DecoySecret is read for an unknown user, so that a refusal costs the
+	// Secret read a known user's does. Nil skips the read.
+	DecoySecret *core.SecretKeySelector
 }
 
 func Login(rc *rest.Config, opts LoginOptions) routes.Route {
@@ -86,6 +95,7 @@ func Login(rc *rest.Config, opts LoginOptions) routes.Route {
 		jwtDuration:   opts.JwtDuration,
 		jwtPrivateKey: opts.JwtPrivateKey,
 		jwtKeyID:      opts.JwtKeyID,
+		decoySecret:   opts.DecoySecret,
 	}
 }
 
@@ -97,6 +107,7 @@ type loginRoute struct {
 	jwtDuration   time.Duration
 	jwtPrivateKey *rsa.PrivateKey
 	jwtKeyID      string
+	decoySecret   *core.SecretKeySelector
 }
 
 func (r *loginRoute) Name() string {
@@ -177,10 +188,11 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 	usr, err := resolvers.UserGet(r.rc, username)
 	switch {
 	case apierrors.IsNotFound(err):
-		// Compare anyway, so an unknown user costs the comparison a known
-		// one does.
-		_ = comparePassword(password, unknownUserPassword)
-		return nil, invalidCredentials(err)
+		// Do the work a known user costs, a Secret read and a comparison, so
+		// the time taken doesn't tell a caller which users exist.
+		want, decoyErr := r.decoyPassword()
+		_ = comparePassword(password, want)
+		return nil, invalidCredentials(errors.Join(err, decoyErr))
 	case err != nil:
 		return nil, status.Failed(CauseUserLookupFailed, fmt.Errorf("reading User %q: %w", username, err))
 	}
@@ -212,4 +224,22 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 	uid, _ := shortid.Generate()
 	nfo := userinfo.NewDefaultUser(usr.Name, uid, usr.Spec.Groups, exts)
 	return nfo, nil
+}
+
+// decoyPassword reads the decoy Secret and returns its value. A failed read is
+// returned for the log only: the caller still gets the refusal an unknown user
+// gets, because a different answer would say the name is unknown.
+func (r *loginRoute) decoyPassword() ([]byte, error) {
+	if r.decoySecret == nil {
+		return unknownUserPassword, nil
+	}
+	sec, err := secrets.Get(context.Background(), r.rc, r.decoySecret)
+	if err != nil {
+		return unknownUserPassword, fmt.Errorf("reading the decoy Secret: %w", err)
+	}
+	pwd, ok := sec.Data[r.decoySecret.Key]
+	if !ok {
+		return unknownUserPassword, fmt.Errorf("the decoy Secret has no key %q", r.decoySecret.Key)
+	}
+	return pwd, nil
 }

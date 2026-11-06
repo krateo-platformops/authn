@@ -14,6 +14,16 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-06 — an unknown basic user costs a Secret read too
+
+A known user cost a Secret read that an unknown user didn't, so response time could reveal
+which usernames exist even though the `403` bodies are identical. Diego chose a decoy Secret
+over a minimum response time, which would have slowed every mistyped password and left a
+number to tune. The chart now installs `<fullname>-basic-decoy`, and `/basic/login` reads it
+for an unknown user. It holds no credential: the login is refused whatever it contains. A
+failed read stays a `403 InvalidCredentials`, because a `500` would say the name is unknown,
+and the reason goes to the log.
+
 ## 2026-11-06 — a login no longer waits a fixed 3s for its certificate
 
 `WaitForCertificate` polled the CSR every 3s and made its first check only after the first

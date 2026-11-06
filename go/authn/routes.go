@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/krateo-platformops/authn/apis/core"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/routes"
@@ -32,6 +33,7 @@ type routeOptions struct {
 	PreviousKeys           []jwks.Key
 	JwtDuration            time.Duration
 	ServiceAccountAudience string
+	BasicDecoySecret       *core.SecretKeySelector
 	SelfUsername           string
 	SnowplowURL            string
 	Healthy                *int32
@@ -53,6 +55,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 		JwtDuration:         o.JwtDuration,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
+		DecoySecret:         o.BasicDecoySecret,
 	}))
 
 	// Kubernetes intra-service auth: backend services exchange their own (audience-bound)

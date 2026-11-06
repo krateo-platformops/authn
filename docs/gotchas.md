@@ -191,9 +191,12 @@ the read-only access the other paths need (the chart's Role grants it).
 The User's `passwordRef` Secret holds the password itself, not a hash. The comparison
 is constant-time: both sides are hashed to SHA-256 and compared with
 `subtle.ConstantTimeCompare` (`comparePassword`, `basic/login.go`), so neither the
-content nor the length leaks. An unknown user costs the same comparison against a fixed
-value. One timing difference remains: a known user costs a Secret read, which an
-unknown user doesn't. Closing it would mean reading a Secret for every unknown name.
+content nor the length leaks. An unknown user costs the same work as a known one: a
+Secret read and a comparison, against the chart's `<fullname>-basic-decoy` Secret
+(`AUTHN_BASIC_DECOY_SECRET`). That Secret holds no credential, and the login is refused
+whatever it contains. If it can't be read, the caller still gets `403
+InvalidCredentials`, the reason goes to the log, and the timing difference returns until
+it's fixed. A very different Secret size could still differ slightly.
 
 ## snowplow URL resolution has a quirk
 The snowplow URL is built eagerly from `SNOWPLOW_SERVICE_HOST`/`PORT` **before**

@@ -8,6 +8,7 @@ data:
   AUTHN_PORT: "{{ .Values.service.port }}"
   AUTHN_NAMESPACE: {{ .Release.Namespace }}
   POD_NAMESPACE: {{ .Release.Namespace }}
+  AUTHN_BASIC_DECOY_SECRET: {{ include "authn.fullname" . }}-basic-decoy
   {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
