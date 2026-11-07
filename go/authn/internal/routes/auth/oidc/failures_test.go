@@ -82,6 +82,7 @@ func answer(t *testing.T, rc *rest.Config, stepUp bool, query string, code strin
 	if code != "" {
 		req.Header.Set("X-Auth-Code", code)
 	}
+	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec, gen

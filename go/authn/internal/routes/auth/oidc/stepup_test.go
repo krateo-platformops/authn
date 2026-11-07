@@ -217,6 +217,7 @@ func stepUpRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptes
 
 	req := httptest.NewRequest(http.MethodPost, StepUpPath+"?name=kc", nil)
 	req.Header.Set("X-Auth-Code", "code")
+	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
 	route.Handler().ServeHTTP(rec, req)
 	return rec
@@ -325,6 +326,7 @@ func TestStepUpLogLevels(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, StepUpPath+"?name=kc", nil)
 			req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
 			req.Header.Set("X-Auth-Code", "code")
+			req.Header.Set("X-Code-Verifier", testCodeVerifier)
 			route.Handler().ServeHTTP(httptest.NewRecorder(), req)
 
 			line := logLine(t, &buf, tc.msg)
