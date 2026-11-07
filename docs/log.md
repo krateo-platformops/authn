@@ -14,6 +14,21 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-07 — an OIDCConfig can be a public client
+
+Gate 1 signs each child portal in through the parent's Keycloak, and its rule is that no
+child stores a credential. A confidential client needs its secret in the child, so each
+child's Keycloak client is public, with PKCE. authn couldn't use one: the CRD required
+`clientSecret`, and the token exchange always sent `client_secret`, empty when the
+Secret had no value. Diego chose to make the secret optional over an explicit
+`publicClient` flag. Omitting `clientSecret` makes the client public: authn sends no
+`client_secret`, and refuses a login without a PKCE verifier (`400`
+`MissingCodeVerifier`) before calling the IdP, since without a secret the verifier is
+the only proof that the caller started the sign-in. A named Secret with no value under
+its key now fails `500` `ClientSecretLookupFailed` instead of sending an empty secret, so
+a broken reference never turns a confidential client into a public one. Frontend
+1.8.23 and later send the verifier.
+
 ## 2026-11-06 — debug is off by default, and the environment dump is gone
 
 The chart shipped `AUTHN_DEBUG=true` and `AUTHN_DUMP_ENV=true`, so production wrote its

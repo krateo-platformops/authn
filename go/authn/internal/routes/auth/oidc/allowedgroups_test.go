@@ -45,6 +45,7 @@ func loginRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptest
 
 	req := httptest.NewRequest(http.MethodGet, Path+"?name=kc", nil)
 	req.Header.Set("X-Auth-Code", "code")
+	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
 	route.Handler().ServeHTTP(rec, req)
 	return rec

@@ -209,9 +209,10 @@ warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
   `issuer` when `discoveryURL` is set (a different `spec.issuer` is a conflict),
   otherwise `spec.issuer`. With neither, every login is refused with `500`
   `IssuerUnknown`, and authn logs a warning naming the config at startup. The signature
-  is **not** checked: the token comes back-channel from the configured token endpoint,
-  authenticated with the client secret over TLS, which OIDC Core §3.1.3.7 accepts in
-  place of it. A non-`200` from the token endpoint is classified like oauth's
+  is **not** checked: the token comes back-channel, directly from the configured token
+  endpoint over TLS, which OIDC Core §3.1.3.7 accepts in place of it. A confidential
+  client authenticates that exchange with its secret; a public one binds it to the
+  sign-in with the PKCE verifier, which it must send. A non-`200` from the token endpoint is classified like oauth's
   (`codeexchange.Refusal` on its JSON `error`), and `getConfig` (`oidc/support.go`)
   gives every config failure its cause: `404` `OIDCConfigNotFound`, `500`
   `OIDCConfigLookupFailed`, `OIDCDiscoveryFailed` (`resolvers.ErrDiscoveryFailed`),
@@ -256,7 +257,13 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.graphics` (optional).
 
 ### `OIDCConfig` (`oidc.authn.krateo.io`) — `apis/authn/oidc/v1alpha1/types.go`
-- `spec.clientID`, `spec.clientSecret` (`SecretKeySelector`), `spec.redirectURI`.
+- `spec.clientID`, `spec.redirectURI`.
+- `spec.clientSecret` (optional `SecretKeySelector`). Set, the client is confidential:
+  the Secret must hold a non-empty value under the key, or every login fails `500`
+  `ClientSecretLookupFailed`, and the token exchange sends it as `client_secret`.
+  Omitted, the client is public (`oidcConfig.Public`, `oidc/support.go`): no
+  `client_secret` is sent, and a login without `X-Code-Verifier` is refused `400`
+  `MissingCodeVerifier` before the IdP is called (`doLogin`), for `/oidc/stepup` too.
 - `spec.discoveryURL`, `spec.authorizationURL`, `spec.tokenURL`, `spec.userInfoURL`,
   `spec.additionalScopes`. With `discoveryURL` the document is read on every login
   (it supplies the issuer); its endpoints are applied only when some endpoint is unset.
@@ -311,8 +318,8 @@ TokenReview call.
 
 ### Outbound calls refuse redirects
 Every call authn makes to another service goes through `outbound.Client()`
-(`internal/helpers/outbound`): the IdP's token endpoint (the client secret, code and
-PKCE verifier in the body), UserInfo (the user's token), discovery, and snowplow
+(`internal/helpers/outbound`): the IdP's token endpoint (the code, the PKCE verifier and a
+confidential client's secret in the body), UserInfo (the user's token), discovery, and snowplow
 (authn's JWT, plus the user's token in the body). It refuses every redirect
 (`ErrRedirectRefused`). net/http alone isn't enough: it keeps `Authorization` on a hop to
 a subdomain or another port, and a 307/308 resends the body to wherever `Location`

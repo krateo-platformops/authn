@@ -25,8 +25,14 @@ type OIDCConfigSpec struct {
 
 	RedirectURI string `json:"redirectURI"`
 
-	ClientID     string                  `json:"clientID"`
-	ClientSecret *core.SecretKeySelector `json:"clientSecret"`
+	ClientID string `json:"clientID"`
+
+	// ClientSecret is the client's secret at the provider. Omit it for a
+	// public client: authn then sends no client_secret, and refuses a login
+	// that carries no PKCE verifier (400 MissingCodeVerifier). When set, the
+	// Secret and its key must exist.
+	//+optional
+	ClientSecret *core.SecretKeySelector `json:"clientSecret,omitempty"`
 
 	//+optional
 	AdditionalScopes string `json:"additionalScopes"`

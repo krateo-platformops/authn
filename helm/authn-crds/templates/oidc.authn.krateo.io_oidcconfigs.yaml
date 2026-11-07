@@ -61,8 +61,11 @@ spec:
               clientID:
                 type: string
               clientSecret:
-                description: A SecretKeySelector is a reference to a secret key in
-                  an arbitrary namespace.
+                description: |-
+                  ClientSecret is the client's secret at the provider. Omit it for a
+                  public client: authn then sends no client_secret, and refuses a login
+                  that carries no PKCE verifier (400 MissingCodeVerifier). When set, the
+                  Secret and its key must exist.
                 properties:
                   key:
                     description: The key to select.
@@ -162,7 +165,6 @@ spec:
                 type: string
             required:
             - clientID
-            - clientSecret
             - redirectURI
             type: object
         required:

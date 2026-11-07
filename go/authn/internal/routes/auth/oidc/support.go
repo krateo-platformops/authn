@@ -24,15 +24,18 @@ import (
 
 type oidcConfig struct {
 	// StepUp is nil when the OIDCConfig doesn't enable step-up.
-	StepUp           *stepUpConfig
-	AllowedGroups    []string
-	DiscoveryURL     string
-	Issuer           string
-	AuthorizeURL     string
-	TokenURL         string
-	UserInfoURL      string
-	RedirectURI      string
-	ClientID         string
+	StepUp        *stepUpConfig
+	AllowedGroups []string
+	DiscoveryURL  string
+	Issuer        string
+	AuthorizeURL  string
+	TokenURL      string
+	UserInfoURL   string
+	RedirectURI   string
+	ClientID      string
+	// Public is true when the OIDCConfig names no clientSecret: no
+	// client_secret is sent, and a login must carry a PKCE verifier.
+	Public           bool
 	ClientSecret     string
 	AdditionalScopes string
 	RESTActionRef    *core.ObjectRef
@@ -96,15 +99,22 @@ func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, 
 		AllowedGroups:    cfg.Spec.AllowedGroups,
 	}
 
-	if ref := cfg.Spec.ClientSecret; ref != nil {
-		sec, err := secrets.Get(context.Background(), rc, ref)
-		if err != nil {
-			return res, status.Failed(CauseClientSecretLookupFailed, fmt.Errorf("unable to read the client secret: %w", err))
-		}
-		if val, ok := sec.Data[ref.Key]; ok {
-			res.ClientSecret = string(val)
-		}
+	ref := cfg.Spec.ClientSecret
+	if ref == nil {
+		res.Public = true
+		return res, nil
 	}
+	sec, err := secrets.Get(context.Background(), rc, ref)
+	if err != nil {
+		return res, status.Failed(CauseClientSecretLookupFailed, fmt.Errorf("unable to read the client secret: %w", err))
+	}
+	// A named secret that resolves to nothing must not turn the client into
+	// a public one, or send an empty client_secret.
+	val, ok := sec.Data[ref.Key]
+	if !ok || len(val) == 0 {
+		return res, status.Failed(CauseClientSecretLookupFailed, fmt.Errorf("the client secret %s/%s has no value under key %q", ref.Namespace, ref.Name, ref.Key))
+	}
+	res.ClientSecret = string(val)
 
 	return res, nil
 }
@@ -113,11 +123,19 @@ func getConfig(ctx context.Context, rc *rest.Config, name string) (*oidcConfig, 
 // validated identity. codeVerifier is the PKCE verifier (RFC 7636) the client
 // generated for this authorization request; it is forwarded when present, so
 // an IdP that requires PKCE accepts the exchange. Empty means the request used
-// no PKCE.
+// no PKCE, which a public client (cfg.Public) refuses before calling the IdP:
+// with no secret, the verifier is the only proof that the caller started the
+// sign-in.
 func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (idToken, error) {
+	if cfg.Public && codeVerifier == "" {
+		return idToken{}, status.BadRequest(CauseMissingCodeVerifier,
+			fmt.Errorf("this OIDCConfig is a public client: the %s header must carry the PKCE verifier", codeVerifierKey))
+	}
 	data := url.Values{}
 	data.Set("client_id", cfg.ClientID)
-	data.Set("client_secret", cfg.ClientSecret)
+	if !cfg.Public {
+		data.Set("client_secret", cfg.ClientSecret)
+	}
 	data.Set("code", code)
 	if codeVerifier != "" {
 		data.Set("code_verifier", codeVerifier)

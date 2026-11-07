@@ -145,7 +145,8 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 	log.Debug().Str("name", name).Msg("starting oidc login")
 	tok, err = doLogin(callCtx, code, req.Header.Get(codeVerifierKey), cfg)
 	if err != nil {
-		// A rejected code or ID token is a 403 with its cause; anything else
+		// A public client's login without a PKCE verifier is a 400, a
+		// rejected code or ID token a 403, each with its cause; anything else
 		// is authn's (or its IdP's) failure, a 500.
 		status.LogFailure(log, err).Str("name", name).Msg("unable to complete login")
 		encode.Failure(wri, status.FromError(err))
@@ -207,7 +208,10 @@ const CauseGroupNotAllowed status.CauseType = "GroupNotAllowed"
 // (docs/api.md). They are added, never renamed.
 const (
 	// Refusals of the caller.
-	CauseOIDCConfigNotFound        status.CauseType = "OIDCConfigNotFound" // 404
+	CauseOIDCConfigNotFound status.CauseType = "OIDCConfigNotFound" // 404
+	// CauseMissingCodeVerifier: the OIDCConfig is a public client (no
+	// clientSecret) and the X-Code-Verifier header is missing or empty (400).
+	CauseMissingCodeVerifier       status.CauseType = "MissingCodeVerifier"
 	CauseAuthorizationCodeRejected                  = codeexchange.CauseAuthorizationCodeRejected
 
 	// Failures of authn or its IdP (500).
