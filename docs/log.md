@@ -48,6 +48,10 @@ certificate, so the separate read is gone, and a denied or failed CSR ends the w
 instead of after the 5-minute timeout. The chart's ClusterRole already granted `list` and
 `watch`, so there is no RBAC change.
 
+Measured on krateo-057 on 2026-11-07: one basic login through the portal answered 200 in
+393 ms on 0.35.5, timed by the browser. Every successful login issues a CSR, and the old
+poll's floor was 3s. One sample, not a benchmark.
+
 ## 2026-11-05 — the login response names its strategy
 
 The portal has to decide whether to offer a step-up before it redirects anyone, and it
