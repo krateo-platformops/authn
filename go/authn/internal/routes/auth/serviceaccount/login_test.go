@@ -57,19 +57,19 @@ func TestBearerToken(t *testing.T) {
 		}
 		return r
 	}
-	if tok, ok := bearerToken(mk("Bearer abc.def")); !ok || tok != "abc.def" {
+	if tok, ok := BearerToken(mk("Bearer abc.def")); !ok || tok != "abc.def" {
 		t.Errorf("valid bearer: tok=%q ok=%v", tok, ok)
 	}
-	if tok, ok := bearerToken(mk("bearer xyz")); !ok || tok != "xyz" { // case-insensitive scheme
+	if tok, ok := BearerToken(mk("bearer xyz")); !ok || tok != "xyz" { // case-insensitive scheme
 		t.Errorf("lowercase scheme: tok=%q ok=%v", tok, ok)
 	}
-	if _, ok := bearerToken(mk("Basic abc")); ok {
+	if _, ok := BearerToken(mk("Basic abc")); ok {
 		t.Error("Basic must not parse as Bearer")
 	}
-	if _, ok := bearerToken(mk("")); ok {
+	if _, ok := BearerToken(mk("")); ok {
 		t.Error("missing header must not parse")
 	}
-	if _, ok := bearerToken(mk("Bearer ")); ok {
+	if _, ok := BearerToken(mk("Bearer ")); ok {
 		t.Error("empty token must not parse")
 	}
 }

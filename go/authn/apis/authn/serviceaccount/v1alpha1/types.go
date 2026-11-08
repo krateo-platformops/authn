@@ -23,6 +23,28 @@ type ServiceAccountSpec struct {
 	// DisplayName is a human-friendly name for the service identity.
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
+
+	// Delegation lets this service act for a signed-in person through
+	// POST /delegate: it exchanges that person's authn JWT for a short-lived
+	// one that names the person as subject and this service as actor (RFC 8693
+	// "act"). Omitted, or allowed false: the service can't delegate.
+	// See docs/design/agent-delegation.md.
+	// +optional
+	Delegation *Delegation `json:"delegation,omitempty"`
+}
+
+// Delegation is a service's opt-in to act for people.
+type Delegation struct {
+	// Allowed opts the service in.
+	Allowed bool `json:"allowed"`
+
+	// MaxDepth caps the actor chain of a token this service obtains, its own
+	// link included: 1 means it may act only for a person directly, 3 that up
+	// to two other services may stand between them. Default 3.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=8
+	MaxDepth *int32 `json:"maxDepth,omitempty"`
 }
 
 // +kubebuilder:object:root=true
