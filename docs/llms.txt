@@ -21,6 +21,7 @@ docs/architecture.md: how the service is built — main.go boot, route table, Ro
 docs/behavior.md: the served endpoints, the five CRDs it reads, per-strategy validation, integration contracts
 docs/gotchas.md: real runtime pitfalls — RBAC traps, exact-match routing, OIDC token handling, snowplow URL quirk
 docs/design/kubernetes-intra-service-auth.md: decision record (status: implemented, 0.23.0) — SA token → TokenReview → allowlist → JWT/clientconfig
+docs/design/agent-delegation.md: proposal (status: proposed, AUDIT-6) — delegated JWT naming the agent (act) and the human (sub) via RFC 8693 token exchange
 # Source of truth beyond the docs:
 go/authn/main.go: server wiring — flags/env, route registration, telemetry, CORS, graceful shutdown
 go/authn/apis/: the Go types behind the five CRDs (User, ServiceAccount, LDAPConfig, OAuthConfig, OIDCConfig)
