@@ -13,7 +13,7 @@ timestamp: 2026-11-08T00:00:00Z
 > Status: **proposed**. Nothing here is implemented. It answers
 > [installer#412](https://github.com/krateo-platformops/installer/issues/412) (AUDIT-6):
 > authn defines the identity and issues it, and snowplow writes it into its server-side
-> AuditEvent. Diego's decisions are recorded in §4; one remains open.
+> AuditEvent. Diego's decisions are recorded in §4.
 
 ## 1. The problem
 
@@ -108,7 +108,7 @@ meets #412's "a hop that cannot establish the human records that fact explicitly
 
 ## 3. Out of scope for the first step
 
-- **Apiserver audit.** The token is a JWT for Krateo's own APIs. A write that reaches
+- **Apiserver audit** (Diego, 2026-11-08: not in step one). The token is a JWT for Krateo's own APIs. A write that reaches
   the apiserver through the human's `<user>-clientconfig` still shows the human there,
   not the agent. Carrying the actor into the apiserver's audit log, for example through
   impersonation extras, is a separate step.
@@ -116,16 +116,21 @@ meets #412's "a hop that cannot establish the human records that fact explicitly
   has to exchange again when the work runs, or record the chain at enqueue time. That's
   the tool's design, and it needs this contract first.
 
+snowplow's AuditEvent is the authoritative trail. Field names there follow the shared
+audit vocabulary (installer#716), so `user`, `on_behalf_of` and `delegation` in §2.4 are
+meanings, not final names.
+
 ## 4. Decisions
 
-Diego decided three of the four on 2026-11-08:
+Diego decided all four on 2026-11-08:
 
 1. **Claim shape: RFC 8693 `act`.** `sub` is the human, `act.sub` is the agent, and a
    chain nests.
 2. **Authorization: the human's groups,** as under `TOKEN_PASSTHROUGH`, minus reserved
    `krateo:loa:` groups. Only the audit gains the agent.
-3. **Opt-in and limits: still open.** The proposal is `spec.delegation.allowed` on the
-   mapping, with a 15m TTL and depth 3 by default.
+3. **Opt-in and limits: per-mapping.** An agent may delegate only if its
+   `ServiceAccount` mapping sets `spec.delegation.allowed: true`. `maxDepth` defaults
+   to 3 and the token lifetime is 15m.
 4. **Unverified hops: flag it, with the hint.** snowplow records the agent as `user`,
    no `on_behalf_of`, `delegation_verified: false`, and the baggage value as a labelled,
    unverified hint.
