@@ -27,8 +27,9 @@ groups (minus `krateo:loa:`) over an intersection with the agent's, a per-mappin
 opt-in (`spec.delegation.allowed`, `maxDepth` 3), and an explicit
 `delegation_verified: false` for a hop that can't prove the person. Kubernetes' own
 audit log is out of scope for this step: snowplow still dials as the person, so the
-apiserver sees only them. The claim needed `plumbing` v1.30.0, which also moved
-authn to Go 1.26. Design: [agent-delegation](./design/agent-delegation.md).
+apiserver sees only them. The claim needed `plumbing` v1.30.0, and reading the
+subject token's expiry from a verified parse needed v1.31.0's
+`ValidateClaimsWithKeySource`. The bump moved authn to Go 1.26. Design: [agent-delegation](./design/agent-delegation.md).
 
 ## 2026-11-07 — an OIDCConfig can be a public client
 

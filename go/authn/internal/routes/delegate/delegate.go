@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
@@ -215,24 +214,19 @@ func delegationDepth(actor *sav1alpha1.ServiceAccount) (int, error) {
 // key or a previous one, and that it hasn't expired. It returns the token's
 // identity and expiry.
 func (r *route) verifySubject(token string) (jwtutil.UserInfo, time.Time, error) {
-	nfo, err := jwtutil.ValidateWithKeySource(r.keys, token)
+	claims, err := jwtutil.ValidateClaimsWithKeySource(r.keys, token)
 	if err != nil {
 		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(
 			fmt.Errorf("the subject token isn't a valid authn token: %w", err))
 	}
-	// The signature was just verified, so reading the expiry unverified is
-	// safe: jwtutil returns the identity but not the registered claims.
-	var claims jwtutil.KrateoClaims
-	if _, _, err := jwt.NewParser().ParseUnverified(token, &claims); err != nil || claims.ExpiresAt == nil {
-		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(
-			errors.New("the subject token has no expiry"))
+	if claims.ExpiresAt == nil {
+		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(errors.New("the subject token has no expiry"))
 	}
 	exp := claims.ExpiresAt.Time
 	if time.Until(exp) < time.Second {
-		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(
-			errors.New("the subject token is about to expire"))
+		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(errors.New("the subject token is about to expire"))
 	}
-	return nfo, exp, nil
+	return claims.UserInfo, exp, nil
 }
 
 // withoutReserved drops reserved groups: a krateo:loa: step-up group proves a
