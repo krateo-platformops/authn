@@ -72,8 +72,9 @@ and the reason goes to the log.
 
 `WaitForCertificate` polled the CSR every 3s and made its first check only after the first
 interval, so every login that issues a clientconfig, on any strategy, waited at least 3s
-after approving the CSR. snowplow's run 6 measured a basic login at a 3.2s median, which
-that wait fits, though the steps weren't timed separately. Diego chose a watch over a
+after approving the CSR. A basic login was reported at a 3.2s median, credited to
+snowplow's run 6, which that wait fits. There's no evidence file for that figure on
+record, and the steps weren't timed separately. Diego chose a watch over a
 faster poll: `WaitForCertificate` now uses client-go's `csr.WaitForCertificate`, which lists
 then watches, so a certificate issued before the watch starts isn't missed. It returns the
 certificate, so the separate read is gone, and a denied or failed CSR ends the wait at once
@@ -83,6 +84,14 @@ instead of after the 5-minute timeout. The chart's ClusterRole already granted `
 Measured on krateo-057 on 2026-11-07: one basic login through the portal answered 200 in
 393 ms on 0.35.5, timed by the browser. Every successful login issues a CSR, and the old
 poll's floor was 3s. One sample, not a benchmark.
+
+Snowplow's run 22 (2026-11-08, authn 0.35.7 via installer 0.3.519) measured basic
+browser sign-in, k6 `browser.js` `browser_signin_ms`, at p50 0.31–0.33s and p95
+0.62–0.69s across its two snowplow arms, plus a 1000-user login curve with no failures.
+The bench, snowplow, frontend and cluster all changed since the 3.2s figure, so the two
+aren't a before and after: the drop can't be credited to this change from that pair. An
+authn A/B under one bench (0.35.4 against 0.35.5 or later) is planned for a later
+paired run.
 
 ## 2026-11-05 — the login response names its strategy
 
