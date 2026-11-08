@@ -3,14 +3,14 @@ type: Decision
 title: Carrying the requesting human through agent delegation (AUDIT-6)
 description: Proposal — authn issues a delegated JWT that names both the acting agent and the human it acts for, via RFC 8693 token exchange, so snowplow's AuditEvent can record on_behalf_of from a verified token instead of client-set baggage.
 resource: serviceaccounts.serviceaccount.authn.krateo.io
-status: proposed
+status: accepted
 tags: [decision, audit, delegation, jwt, token-exchange]
 timestamp: 2026-11-08T00:00:00Z
 ---
 
 # Design: carrying the requesting human through agent delegation (AUDIT-6)
 
-> Status: **proposed**. Nothing here is implemented. It answers
+> Status: **accepted** (Diego, 2026-11-08). Nothing here is implemented yet. It answers
 > [installer#412](https://github.com/krateo-platformops/installer/issues/412) (AUDIT-6):
 > authn defines the identity and issues it, and snowplow writes it into its server-side
 > AuditEvent. Diego's decisions are recorded in §4.
