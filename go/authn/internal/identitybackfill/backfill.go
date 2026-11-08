@@ -26,13 +26,12 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
+	"github.com/krateo-platformops/plumbing/endpoints"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 )
-
-const clientConfigSuffix = "-clientconfig"
 
 // Lookup answers whether an identity with a given username exists for the
 // strategies whose identities are declared as Kubernetes objects.
@@ -85,7 +84,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 
 		for i := range list.Items {
 			sec := &list.Items[i]
-			if !strings.HasSuffix(sec.Name, clientConfigSuffix) {
+			if !strings.HasSuffix(sec.Name, endpoints.ClientConfigSuffix) {
 				continue
 			}
 			res.Scanned++
