@@ -34,6 +34,7 @@ var publicSurface = []string{
 	"GET /oauth/login",
 	"GET /oidc/login",
 	"GET /strategies",
+	"POST /delegate",
 	"POST /ldap/login",
 	"POST /oidc/stepup",
 	"POST /serviceaccount/login",
@@ -230,7 +231,7 @@ func probe(handler http.Handler) ([]string, int) {
 	leaks := []string{canaryKey, canaryCert, canarySecret, "CANARY", "PRIVATE KEY",
 		b64(canaryKey), b64(canaryCert), b64(canarySecret), storage.ClientKeyLabel}
 	paths := []string{"/strategies", "/health", "/.well-known/jwks.json", "/basic/login", "/ldap/login",
-		"/oauth/login", "/oidc/login", "/oidc/stepup", "/serviceaccount/login", "/info", "/leaky"}
+		"/oauth/login", "/oidc/login", "/oidc/stepup", "/serviceaccount/login", "/delegate", "/info", "/leaky"}
 	queries := []string{"", "?name=kc", "?name=admin", "?name=authn", "?name=admin&d", "?d"}
 	headers := []map[string]string{
 		{},

@@ -14,6 +14,22 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-08 — a service can act for a person, and say so (AUDIT-6)
+
+When an agent acted for a person, the record named whichever credential it presented:
+its own, losing the person, or the person's replayed JWT, losing the agent. Baggage
+could carry a name, but any caller can set baggage. `POST /delegate` exchanges a
+person's authn JWT, together with the service's own projected ServiceAccount token, for
+a short-lived JWT that keeps the person as `sub` and names the service in RFC 8693's
+`act`, nested for a chain. Snowplow derives `user`, `on_behalf_of` and `delegation`
+from that verified token. Diego chose RFC 8693 `act` over a custom claim, the person's
+groups (minus `krateo:loa:`) over an intersection with the agent's, a per-mapping
+opt-in (`spec.delegation.allowed`, `maxDepth` 3), and an explicit
+`delegation_verified: false` for a hop that can't prove the person. Kubernetes' own
+audit log is out of scope for this step: snowplow still dials as the person, so the
+apiserver sees only them. The claim needed `plumbing` v1.30.0, which also moved
+authn to Go 1.26. Design: [agent-delegation](./design/agent-delegation.md).
+
 ## 2026-11-07 — an OIDCConfig can be a public client
 
 Gate 1 signs each child portal in through the parent's Keycloak, and its rule is that no

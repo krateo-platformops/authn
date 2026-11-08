@@ -25,7 +25,7 @@ operator namespace** (`POD_NAMESPACE`).
 | CRD | Kind | Configures |
 |---|---|---|
 | `users.basic.authn.krateo.io` | `User` | A basic-auth user: `spec.passwordRef` (Secret selector, required), `displayName`, `avatarURL`, `groups[]`. `metadata.name` is the username. |
-| `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`. `metadata.name` is the issued username. |
+| `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`, optional `delegation` {`allowed`, `maxDepth` (3, 1–8)} lets the service use `POST /delegate`. `metadata.name` is the issued username. |
 | `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`; optional `groupSearch` {`baseDN` (`spec.baseDN`), `filter` (`(\|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute` (`cn`)} finds the user's groups (#72, [below](#ldap-group-search)). |
 | `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. |
 | `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `redirectURI`, optional `clientSecret` (omitted: a public client, which sends no `client_secret` and must send a PKCE verifier), plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `allowedGroups[]` admits only users holding at least one of those groups (others get `403 GroupNotAllowed`); optional `additionalScopes`, `restActionRef`, `graphics`. |
@@ -53,6 +53,7 @@ material, a stored credential or a secret, or if authn mints a credential.
 | GET | `/oidc/login?name=<OIDCConfig>` | `X-Auth-Code: <code>` header, plus `X-Code-Verifier: <verifier>` when the authorization request used PKCE, which a public client (no `clientSecret`) always must → code exchange → ID-token claims (UserInfo fallback) → login response. |
 | POST | `/oidc/stepup?name=<OIDCConfig>` | Step-up (#49). Same input as `/oidc/login`, from an authorization request with `acr_values`. If the ID token's `acr` is in `spec.stepUp.acrValues` and its `auth_time` is within `maxAge`, authn mints a `krateo:loa:2` credential into `<user>-clientconfig-stepup` and returns `accessToken` (groups include `krateo:loa:2`, expiry ≤ the certificate's), `user` and `groups`, with no `data`. The session credential is untouched. |
 | POST | `/serviceaccount/login` | `Authorization: Bearer <projected SA token, audience authn>` → TokenReview → allowlist mapping → login response. |
+| POST | `/delegate` | Agent delegation ([design](./design/agent-delegation.md)), shaped like RFC 8693 token exchange. `Authorization: Bearer <the service's projected SA token, audience authn>`, and a form body with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token_type=urn:ietf:params:oauth:token-type:jwt` and `subject_token=<a person's authn JWT>`. The service must be mapped with `spec.delegation.allowed`. The answer is `{access_token, issued_token_type, token_type: "Bearer", expires_in}`: a JWT with the person's `sub`, `username` and `groups`, minus reserved `krateo:loa:` groups, and RFC 8693 `act: {sub: <service>}`, nested for a chain. It lives at most 15 minutes and never past the subject token. No kubeconfig is minted. |
 | GET | `/health` | `{name,version}` once serving, `503` otherwise (process lifecycle only). |
 
 ### The login response contract
@@ -151,6 +152,23 @@ mirroring Kubernetes `StatusDetails`:
 
 Values are added, never renamed, and a cause never changes its code. "authn was
 unreachable" is the remaining case: no response at all.
+
+### `/delegate` failures
+
+The calling service authenticates exactly as on `/serviceaccount/login`, so every
+`/serviceaccount/login` cause above applies to it, with the same code. The request's
+form is checked before authn calls the apiserver. On top of those:
+
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `InvalidRequestBody` | 400 | The body can't be parsed as a form | Fix the client |
+| `UnsupportedGrantType` | 400 | `grant_type` isn't `urn:ietf:params:oauth:grant-type:token-exchange` | Fix the client |
+| `UnsupportedSubjectToken` | 400 | `subject_token_type` isn't `urn:ietf:params:oauth:token-type:jwt` | Fix the client |
+| `MissingSubjectToken` | 400 | No `subject_token`, or an empty one | Fix the client |
+| `DelegationNotAllowed` | 403 | The service's `ServiceAccount` mapping doesn't set `spec.delegation.allowed: true` | Ask for access |
+| `SubjectTokenInvalid` | 401 | The subject token isn't a JWT authn signed with its current or a previous key, or it has expired | Send credentials |
+| `DelegationTooDeep` | 403 | The actor chain, this service included, would be deeper than the mapping's `spec.delegation.maxDepth` (default 3) | Fix the client |
+| `IssuanceFailed` | 500 | authn could not sign the delegated token | Retry later |
 
 ### `/oidc/login` failures
 

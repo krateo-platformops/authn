@@ -25,6 +25,7 @@ Every route is registered in `main.go:169-233` and implements `routes.Route`.
 | GET    | `/.well-known/jwks.json` | Public key set for verifying authn's RS256 JWTs ([jwt-jwks](./jwt-jwks.md)) | `internal/routes/jwks/jwks.go` |
 | GET    | `/basic/login`  | HTTP Basic login → kubeconfig (+JWT) | `internal/routes/auth/basic/login.go` |
 | POST   | `/serviceaccount/login` | Kubernetes intra-service auth: SA token (TokenReview) → kubeconfig (+JWT) | `internal/routes/auth/serviceaccount/login.go` |
+| POST   | `/delegate`     | Agent delegation: a mapped service's SA token plus a person's authn JWT → a short-lived JWT naming the person (`sub`) and the service (`act`) | `internal/routes/delegate/delegate.go` |
 | POST   | `/ldap/login`   | LDAP login (JSON body) → kubeconfig (+JWT) | `internal/routes/auth/ldap/login.go` |
 | GET    | `/oauth/login`  | OAuth2 code exchange → kubeconfig (+JWT) | `internal/routes/auth/oauth/login.go` |
 | GET    | `/oidc/login`   | OIDC code exchange → kubeconfig (+JWT) | `internal/routes/auth/oidc/login.go` |
@@ -239,6 +240,13 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.groups[]` (optional) — become the issued cert's `O=`, so standard Kubernetes
   RBAC bound to these groups scopes the identity; authn never authors RBAC.
 - `spec.displayName` (optional).
+- `spec.delegation` (optional) — `allowed: true` lets the service exchange a person's
+  authn JWT at `POST /delegate`, and `maxDepth` (default 3, 1–8) caps the actor chain,
+  its own link included. Omitted or `allowed: false`: `403 DelegationNotAllowed`.
+  The subject token is verified against authn's current and previous keys
+  (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
+  minus reserved ones, adds `act` (`plumbing/jwtutil.Actor`), and lives
+  `min(15m, subject exp)`. It mints no kubeconfig.
 
   authn looks these up by **listing the operator namespace** and matching
   `serviceAccountRef` (`resolvers.ServiceAccountForSA`), not by name — a mapping's

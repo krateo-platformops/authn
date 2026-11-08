@@ -16,6 +16,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes/auth/oidc"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/routes/auth/strategies"
+	"github.com/krateo-platformops/authn/internal/routes/delegate"
 	"github.com/krateo-platformops/authn/internal/routes/health"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	xcontext "github.com/krateo-platformops/plumbing/context"
@@ -66,6 +67,16 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
 		Audience:            o.ServiceAccountAudience,
+	}))
+
+	// Agent delegation (AUDIT-6): a service that opted in exchanges a person's
+	// authn JWT for a short-lived one naming the person as subject and itself
+	// as actor (RFC 8693). docs/design/agent-delegation.md.
+	all = append(all, delegate.Route(o.RestConfig, delegate.Options{
+		Audience:     o.ServiceAccountAudience,
+		PrivateKey:   o.PrivateKey,
+		KeyID:        o.KeyID,
+		PreviousKeys: o.PreviousKeys,
 	}))
 
 	all = append(all, ldap.Login(o.RestConfig, ldap.LoginOptions{

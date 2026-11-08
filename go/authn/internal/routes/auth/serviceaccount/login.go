@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
@@ -80,7 +81,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 	return func(wri http.ResponseWriter, req *http.Request) {
 		log := zerolog.Ctx(req.Context())
 
-		token, ok := bearerToken(req)
+		token, ok := BearerToken(req)
 		if !ok {
 			wri.Header().Set("WWW-Authenticate", `Bearer realm="krateo"`)
 			encode.Failure(wri, status.New(http.StatusUnauthorized, errMissingBearer).
@@ -128,11 +129,28 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 	}
 }
 
-// validate verifies the SA token via the Kubernetes TokenReview API (audience-bound), maps
-// the authenticated ServiceAccount to a ServiceAccount mapping (the allowlist), and builds
-// the issued identity (username = mapping name, groups = mapping spec.groups).
+// validate authenticates the SA token (Authenticate) and builds the issued
+// identity (username = mapping name, groups = mapping spec.groups).
 func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, error) {
-	clientset, err := kubernetes.NewForConfig(r.rc)
+	mapping, err := Authenticate(ctx, r.rc, r.audience, token)
+	if err != nil {
+		return nil, err
+	}
+
+	exts := userinfo.Extensions{}
+	exts.Add("name", mapping.Spec.DisplayName)
+
+	uid, _ := shortid.Generate()
+	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), nil
+}
+
+// Authenticate verifies a projected ServiceAccount token through the
+// Kubernetes TokenReview API, bound to audience, and returns the one
+// ServiceAccount mapping (the allowlist) that names its ServiceAccount. Its
+// errors carry this package's causes: a refusal of the caller, or authn's own
+// failure to check.
+func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) (*sav1alpha1.ServiceAccount, error) {
+	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
 		return nil, status.Failed(CauseTokenReviewFailed, fmt.Errorf("token review: building the client: %w", err))
 	}
@@ -140,7 +158,7 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 	tr := &authnv1.TokenReview{
 		Spec: authnv1.TokenReviewSpec{
 			Token:     token,
-			Audiences: []string{r.audience},
+			Audiences: []string{audience},
 		},
 	}
 	tr, err = clientset.AuthenticationV1().TokenReviews().Create(ctx, tr, metav1.CreateOptions{})
@@ -157,8 +175,8 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 		}
 		return nil, status.Refused(CauseTokenNotAuthenticated, errors.New(msg))
 	}
-	if !containsAudience(tr.Status.Audiences, r.audience) {
-		return nil, status.Refused(CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", r.audience))
+	if !containsAudience(tr.Status.Audiences, audience) {
+		return nil, status.Refused(CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", audience))
 	}
 
 	saNamespace, saName, err := parseServiceAccountUsername(tr.Status.User.Username)
@@ -166,7 +184,7 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 		return nil, status.Refused(CauseNotAServiceAccount, err)
 	}
 
-	mapping, err := resolvers.ServiceAccountForSA(r.rc, saNamespace, saName)
+	mapping, err := resolvers.ServiceAccountForSA(rc, saNamespace, saName)
 	switch {
 	case errors.Is(err, resolvers.ErrNoMapping):
 		return nil, status.Refused(CauseNoMapping, err)
@@ -175,15 +193,11 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 	case err != nil:
 		return nil, status.Failed(CauseMappingLookupFailed, err)
 	}
-
-	exts := userinfo.Extensions{}
-	exts.Add("name", mapping.Spec.DisplayName)
-
-	uid, _ := shortid.Generate()
-	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), nil
+	return mapping, nil
 }
 
-func bearerToken(req *http.Request) (string, bool) {
+// BearerToken returns the request's Authorization: Bearer token.
+func BearerToken(req *http.Request) (string, bool) {
 	const prefix = "Bearer "
 	h := req.Header.Get("Authorization")
 	if len(h) <= len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
