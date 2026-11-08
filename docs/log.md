@@ -55,7 +55,7 @@ and the reason goes to the log.
 
 `WaitForCertificate` polled the CSR every 3s and made its first check only after the first
 interval, so every login that issues a clientconfig, on any strategy, waited at least 3s
-after approving the CSR. snowplow's run 21 measured a basic login at a 3.2s median, which
+after approving the CSR. snowplow's run 6 measured a basic login at a 3.2s median, which
 that wait fits, though the steps weren't timed separately. Diego chose a watch over a
 faster poll: `WaitForCertificate` now uses client-go's `csr.WaitForCertificate`, which lists
 then watches, so a certificate issued before the watch starts isn't missed. It returns the
