@@ -14,6 +14,26 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-08 — every token names the kind of identity it's for
+
+The shared audit schema (installer#716, owned by snowplow) records whether a human, an
+agent, a controller or a service acted. Nothing on a token said so: a
+`/serviceaccount/login` token looked like a person's, and under token passthrough an
+agent presents a person's token. Diego chose that authn signs the kind into every
+token, as a plain `principal` claim (plumbing v1.34.0 `jwtutil.Principal`), with the kind
+also on each `act` link:
+
+- a person's sign-in (basic, LDAP, OAuth, OIDC, step-up) → `human`;
+- `/serviceaccount/login` → the mapping's new `spec.principal` (`agent`, `controller`,
+  `service`), `service` when it declares none;
+- `/delegate` → the subject token's own kind at the top, and the acting service's kind
+  on its `act` link, so a writer reads the acting kind from `ActorPrincipal()`;
+- authn's own token to snowplow → `service`.
+
+`encode.Success` refuses to sign without a known kind, so a login that forgets it fails
+its tests instead of issuing an unlabelled token. Validators read an absent or unknown
+kind as `""` and omit it, which covers tokens issued before 0.39.0.
+
 ## 2026-11-08 — the legacy RESTAction copy path is gone
 
 `LegacyResolve` served RESTActions written without a `${ .token }` header. It copied the

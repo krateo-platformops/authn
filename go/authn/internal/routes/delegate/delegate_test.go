@@ -25,10 +25,16 @@ const reviewOK = `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview",
 
 // mapping is the agent's ServiceAccount mapping, with delegation as given
 // (empty: none).
-func mapping(delegation string) string {
+func mapping(delegation string) string { return mappingAs(delegation, "") }
+
+// mappingAs is mapping with spec.principal set (empty: unset).
+func mappingAs(delegation, principal string) string {
 	spec := `"serviceAccountRef":{"namespace":"krateo-system","name":"agent"},"groups":["krateo:agents"]`
 	if delegation != "" {
 		spec += `,"delegation":` + delegation
+	}
+	if principal != "" {
+		spec += `,"principal":"` + principal + `"`
 	}
 	return `{"apiVersion":"serviceaccount.authn.krateo.io/v1alpha1","kind":"ServiceAccountList","items":[` +
 		`{"metadata":{"name":"kagent","namespace":"krateo-system"},"spec":{` + spec + `}}]}`
@@ -76,11 +82,18 @@ func (k keys) route(rc *rest.Config) http.Handler {
 	}).Handler()
 }
 
+// token is alice's authn token, as a person's sign-in issues it.
 func token(t *testing.T, key *rsa.PrivateKey, kid string, ttl time.Duration, act *jwtutil.Actor) string {
+	return tokenAs(t, key, kid, ttl, act, jwtutil.PrincipalHuman)
+}
+
+// tokenAs is token with the given principal claim (empty: none, as authn
+// before 0.39 issued it).
+func tokenAs(t *testing.T, key *rsa.PrivateKey, kid string, ttl time.Duration, act *jwtutil.Actor, p jwtutil.Principal) string {
 	t.Helper()
 	tok, err := jwtutil.CreateToken(jwtutil.CreateTokenOptions{
 		Username: "alice", Groups: []string{"devs", "krateo:loa:2"}, Duration: ttl,
-		KeyID: kid, PrivateKey: key, Act: act,
+		KeyID: kid, PrivateKey: key, Act: act, Principal: p,
 	})
 	require.NoError(t, err)
 	return tok
@@ -147,8 +160,27 @@ func TestDelegationIssuesActorToken(t *testing.T) {
 
 	assert.Equal(t, "alice", nfo.Username)
 	assert.Equal(t, []string{"devs"}, nfo.Groups, "a step-up group never passes through delegation")
-	assert.Equal(t, &jwtutil.Actor{Sub: "kagent"}, nfo.Act)
+	assert.Equal(t, &jwtutil.Actor{Sub: "kagent", Principal: jwtutil.PrincipalService}, nfo.Act,
+		"a mapping that declares no principal acts as a service")
 	assert.Equal(t, []string{"kagent", "alice"}, nfo.DelegationChain())
+	assert.Equal(t, jwtutil.PrincipalHuman, nfo.Principal, "the subject keeps its own kind")
+}
+
+// The actor's link carries the kind its mapping declares; the subject's
+// kind is copied from its verified token, and a subject token without one
+// (from authn before 0.39) yields a delegated token without one.
+func TestDelegationCarriesPrincipals(t *testing.T) {
+	k := newKeys(t)
+	rc, _ := apiserver(t, mappingAs(`{"allowed":true}`, "agent"))
+
+	_, nfo := issued(t, k, exchange(k.route(rc), "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil))))
+	assert.Equal(t, jwtutil.PrincipalHuman, nfo.Principal)
+	assert.Equal(t, &jwtutil.Actor{Sub: "kagent", Principal: jwtutil.PrincipalAgent}, nfo.Act)
+	assert.Equal(t, jwtutil.PrincipalAgent, nfo.ActorPrincipal())
+
+	_, nfo = issued(t, k, exchange(k.route(rc), "projected-sa-token", form(tokenAs(t, k.current, "current", time.Hour, nil, ""))))
+	assert.Equal(t, jwtutil.Principal(""), nfo.Principal, "never guessed")
+	assert.Equal(t, jwtutil.PrincipalAgent, nfo.ActorPrincipal())
 }
 
 // A delegated token never outlives the person's own token.
@@ -166,10 +198,12 @@ func TestDelegationNeverOutlivesTheSubject(t *testing.T) {
 func TestDelegationNestsAChain(t *testing.T) {
 	k := newKeys(t)
 	rc, _ := apiserver(t, mapping(`{"allowed":true}`))
-	subject := token(t, k.current, "current", time.Hour, &jwtutil.Actor{Sub: "portal-agent"})
+	subject := token(t, k.current, "current", time.Hour, &jwtutil.Actor{Sub: "portal-agent", Principal: jwtutil.PrincipalAgent})
 	_, nfo := issued(t, k, exchange(k.route(rc), "projected-sa-token", form(subject)))
 
-	assert.Equal(t, &jwtutil.Actor{Sub: "kagent", Act: &jwtutil.Actor{Sub: "portal-agent"}}, nfo.Act)
+	assert.Equal(t, &jwtutil.Actor{Sub: "kagent", Principal: jwtutil.PrincipalService,
+		Act: &jwtutil.Actor{Sub: "portal-agent", Principal: jwtutil.PrincipalAgent}}, nfo.Act,
+		"the earlier links keep their kinds")
 	assert.Equal(t, []string{"kagent", "portal-agent", "alice"}, nfo.DelegationChain())
 }
 

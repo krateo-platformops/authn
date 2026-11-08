@@ -22,6 +22,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
 	"k8s.io/client-go/rest"
 )
@@ -233,6 +234,7 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
 			CertNotAfter:  notAfter,
+			Principal:     jwtutil.PrincipalHuman,
 		})
 		if err != nil {
 			// Success has already answered with IssuanceFailed.

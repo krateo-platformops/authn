@@ -31,6 +31,14 @@ type ServiceAccountSpec struct {
 	// See docs/design/agent-delegation.md.
 	// +optional
 	Delegation *Delegation `json:"delegation,omitempty"`
+
+	// Principal is the kind of identity this service is, signed into every
+	// token it obtains as the "principal" claim, so an audit record can say
+	// what acted: agent (an AI agent), controller (a reconciler, such as a
+	// composition controller) or service (any other workload). Omitted: service.
+	// +optional
+	// +kubebuilder:validation:Enum=agent;controller;service
+	Principal string `json:"principal,omitempty"`
 }
 
 // Delegation is a service's opt-in to act for people.

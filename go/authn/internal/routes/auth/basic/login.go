@@ -23,6 +23,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
@@ -167,6 +168,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
 			CertNotAfter:  notAfter,
+			Principal:     jwtutil.PrincipalHuman,
 		}); err != nil {
 			// Success has already answered with IssuanceFailed.
 			log.Err(err).Msg("access token creation failure")
