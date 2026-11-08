@@ -13,7 +13,7 @@ timestamp: 2026-11-08T00:00:00Z
 > Status: **proposed**. Nothing here is implemented. It answers
 > [installer#412](https://github.com/krateo-platformops/installer/issues/412) (AUDIT-6):
 > authn defines the identity and issues it, and snowplow writes it into its server-side
-> AuditEvent. The decisions marked **Decision** need Diego's choice before any code.
+> AuditEvent. Diego's decisions are recorded in §4; one remains open.
 
 ## 1. The problem
 
@@ -116,14 +116,16 @@ meets #412's "a hop that cannot establish the human records that fact explicitly
   has to exchange again when the work runs, or record the chain at enqueue time. That's
   the tool's design, and it needs this contract first.
 
-## 4. Decisions for Diego
+## 4. Decisions
 
-1. **Claim shape.** RFC 8693 `act` (recommended: standard, chains naturally, and other
-   validators already understand it), or a custom `on_behalf_of` claim.
-2. **Authorization of the delegated token.** The human's groups, as `TOKEN_PASSTHROUGH`
-   does today (recommended for step one: no behaviour change), or the intersection of
-   the human's and the agent's groups (stricter, and agents' groups would need defining).
-3. **Opt-in and limits.** `spec.delegation.allowed` on the mapping, with a 15m TTL and
-   depth 3 by default.
-4. **Unverified hops.** snowplow records `delegation_verified: false` plus the baggage
-   hint, or records nothing about the human at all.
+Diego decided three of the four on 2026-11-08:
+
+1. **Claim shape: RFC 8693 `act`.** `sub` is the human, `act.sub` is the agent, and a
+   chain nests.
+2. **Authorization: the human's groups,** as under `TOKEN_PASSTHROUGH`, minus reserved
+   `krateo:loa:` groups. Only the audit gains the agent.
+3. **Opt-in and limits: still open.** The proposal is `spec.delegation.allowed` on the
+   mapping, with a 15m TTL and depth 3 by default.
+4. **Unverified hops: flag it, with the hint.** snowplow records the agent as `user`,
+   no `on_behalf_of`, `delegation_verified: false`, and the baggage value as a labelled,
+   unverified hint.
