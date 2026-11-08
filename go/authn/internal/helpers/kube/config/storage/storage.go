@@ -9,7 +9,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
-	"github.com/krateo-platformops/plumbing/kubeutil"
+	"github.com/krateo-platformops/plumbing/endpoints"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
@@ -47,9 +47,10 @@ func CertValidityAnnotations(certData string) map[string]string {
 }
 
 // ClientConfigSecretName names the Secret holding username's session
-// credential.
+// credential. The name is plumbing's endpoints.SecretName, its one
+// definition, which consumers such as snowplow and core-provider share.
 func ClientConfigSecretName(username string) string {
-	return kubeutil.MakeDNS1123Compatible(username) + "-clientconfig"
+	return endpoints.SecretName(username)
 }
 
 // StepUpSecretName names the Secret holding username's short-lived step-up
@@ -63,7 +64,7 @@ func StepUpSecretName(username string) string {
 }
 
 // stepUpSuffix ends every StepUpSecretName and no session Secret name.
-const stepUpSuffix = "-clientconfig-stepup"
+const stepUpSuffix = endpoints.ClientConfigSuffix + "-stepup"
 
 // IsStepUpSecretName reports whether a Secret name is a step-up credential's.
 func IsStepUpSecretName(name string) bool {
