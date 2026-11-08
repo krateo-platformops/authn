@@ -14,6 +14,23 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-08 — the legacy RESTAction copy path is gone
+
+`LegacyResolve` served RESTActions written without a `${ .token }` header. It copied the
+RESTAction and its endpoint Secrets per user, wrote the user's IdP token into each Secret
+copy, called the copy and deleted it. On demo, every GitHub sign-in went that way: its
+`github-oauth-restaction` was applied by hand, not from krateo-saas, whose #44 had already
+added the header. With Diego's approval authn added that one header on demo. The GitHub
+sign-ins that followed, at 19:59Z and 20:00Z, logged `user info successfully fetched` and
+no `restaction fell back to the legacy copy path` warn. 057 has no OAuth or OIDC configs,
+and acmp's GitHub RESTAction and child configs need no fallback. So authn dropped:
+
+- the path itself, so a RESTAction without the header now fails sign-in with `500`
+  `RESTActionFailed`, logged as `unable to resolve restaction`;
+- the Role's `restactions` create/update/delete rule;
+- `checkKeys`, whose only effect was to send a RESTAction with extra status fields down
+  the copy path. Extra fields are now ignored.
+
 ## 2026-11-08 — a service can act for a person, and say so (AUDIT-6)
 
 When an agent acted for a person, the record named whichever credential it presented:

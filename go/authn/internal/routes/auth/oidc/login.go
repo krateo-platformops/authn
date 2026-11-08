@@ -157,23 +157,11 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 	if cfg.RESTActionRef != nil {
 		ref := cfg.RESTActionRef
 		additionalFieldstoReplace, err := restaction.Resolve(callCtx, ref, tok.bearerToken)
-		if err == nil {
-			if _, kerr := checkKeys(additionalFieldstoReplace); kerr != nil {
-				err = fmt.Errorf("the RESTAction's answer is unusable: %w", kerr)
-			}
-		}
 		if err != nil {
-			// The RESTAction may be written for the old shape, without a
-			// ${ .token } header: only the legacy copy path serves it.
-			log.Warn().Err(err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).
-				Msg("restaction fell back to the legacy copy path")
-			additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, rc, ref, tok.email, tok.bearerToken)
-			if err != nil {
-				err = restaction.Failed(err)
-				status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction, stopping")
-				encode.Failure(wri, status.FromError(err))
-				return nil, tok, nil, false
-			}
+			err = restaction.Failed(err)
+			status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction")
+			encode.Failure(wri, status.FromError(err))
+			return nil, tok, nil, false
 		}
 		log.Debug().Str("name", name).Msg("updating oidc idtoken")
 		log.Debug().Str("name", name).Msgf("old idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", tok.name, tok.preferredUsername, tok.email, tok.groups, tok.avatarURL)

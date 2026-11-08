@@ -351,18 +351,18 @@ authenticating with the long-lived `authn` service JWT. Two resolution paths:
   a `SnowplowError` (its code, `reason` and `message`). The caller gets `500`
   `RESTActionFailed` with the code and reason; the message stays in authn's log
   (`restaction.Failed`).
-- **`LegacyResolve`** — the fallback for RESTActions written for the old shape, whose
-  stages carry no `${ .token }` header. It runs when `Resolve` fails, or its answer is
-  unusable (oidc: `checkKeys`; oauth: no `name`). It copies the RESTAction and its
-  endpoint Secrets per user, with the user's token written into each Secret copy under
-  `token` (unless the Secret already has one), calls `GET /call` on the copy, then
-  deletes the copies. **Every use logs a warn**, `restaction fell back to the legacy copy
-  path`, naming the RESTAction. It is deleted once no live RESTAction needs it: the
-  krateo-saas `github-oauth-restaction` is the known one (no `.token` header).
+- **No fallback.** Through 0.37, `LegacyResolve` served RESTActions without a
+  `${ .token }` header: it copied the RESTAction and its endpoint Secrets per user, with
+  the user's token written in. krateo-saas#44 gave its `github-oauth-restaction` the
+  header, and demo's hand-applied copy got it on 2026-11-08; GitHub sign-ins there then
+  logged no fallback, so the path was deleted. A RESTAction must now read the token as
+  `${ .token }`, or sign-in fails with `500` `RESTActionFailed`. The namespaced Role lost its
+  `restactions` write rule with it. snowplow's cluster-wide `get` on `restactions` for
+  group `authn` stays: snowplow resolves the RESTAction as authn.
 
 The returned `status` map may override `name`, `email`, `preferredUsername`, `groups`,
-`avatarURL` (`updateConfig`, `oidc/support.go`). On oidc, any other key makes the
-answer unusable (`checkKeys`).
+`avatarURL` (`updateConfig`); a wrong type for one of them is `RESTActionFailed`, and
+any other key is ignored.
 
 The snowplow base URL comes from `SNOWPLOW_SERVICE_HOST`/`SNOWPLOW_SERVICE_PORT` or
 `URL_SNOWPLOW` (default `http://snowplow.krateo-system.svc.cluster.local:8081`,

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/krateo-platformops/authn/internal/helpers/codeexchange"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
@@ -161,17 +160,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 				}
 			}
 			if err != nil {
-				// The RESTAction may be written for the old shape, without a
-				// ${ .token } header: only the legacy copy path serves it.
-				log.Warn().Err(err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).
-					Msg("restaction fell back to the legacy copy path")
-				additionalFieldstoReplace, err = restaction.LegacyResolve(callCtx, r.rc, ref, uuid.New().String(), tok.AccessToken)
-				if err != nil {
-					err = restaction.Failed(err)
-					status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction, stopping")
-					encode.Failure(wri, status.FromError(err))
-					return
-				}
+				err = restaction.Failed(err)
+				status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction")
+				encode.Failure(wri, status.FromError(err))
+				return
 			}
 			log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
 			userinfo, err = updateConfig(userinfo, additionalFieldstoReplace)
