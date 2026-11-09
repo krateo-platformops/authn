@@ -23,6 +23,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/shortid"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
 	authnv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -89,7 +90,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		user, err := r.validate(req.Context(), token)
+		user, principal, err := r.validate(req.Context(), token)
 		if err != nil {
 			status.LogFailure(*log, err).Msg("serviceaccount auth failed")
 			encode.Failure(wri, status.FromError(err))
@@ -121,6 +122,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
 			CertNotAfter:  notAfter,
+			Principal:     principal,
 		})
 		if err != nil {
 			// Success has already answered with IssuanceFailed.
@@ -131,17 +133,26 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 // validate authenticates the SA token (Authenticate) and builds the issued
 // identity (username = mapping name, groups = mapping spec.groups).
-func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, error) {
+func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, jwtutil.Principal, error) {
 	mapping, err := Authenticate(ctx, r.rc, r.audience, token)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	exts := userinfo.Extensions{}
 	exts.Add("name", mapping.Spec.DisplayName)
 
 	uid, _ := shortid.Generate()
-	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), nil
+	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), Principal(mapping), nil
+}
+
+// Principal is the kind of identity a ServiceAccount mapping declares in
+// spec.principal: agent, controller, or service when it declares none.
+func Principal(mapping *sav1alpha1.ServiceAccount) jwtutil.Principal {
+	if p := jwtutil.Principal(mapping.Spec.Principal); p.Known() && p != jwtutil.PrincipalHuman {
+		return p
+	}
+	return jwtutil.PrincipalService
 }
 
 // Authenticate verifies a projected ServiceAccount token through the

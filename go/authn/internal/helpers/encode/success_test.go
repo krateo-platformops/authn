@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,6 +82,7 @@ func TestSuccessClampsTokenToCertificate(t *testing.T) {
 		JwtPrivateKey: key,
 		JwtKeyID:      "test-key",
 		CertNotAfter:  notAfter,
+		Principal:     jwtutil.PrincipalHuman,
 	}))
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -113,6 +115,7 @@ func TestSuccessAnswersIssuanceFailedWhenSigningFails(t *testing.T) {
 		JwtDuration:   time.Hour,
 		JwtPrivateKey: key,
 		JwtKeyID:      "", // the signer refuses an empty key ID
+		Principal:     jwtutil.PrincipalService,
 	})
 	require.Error(t, err)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -135,6 +138,45 @@ func TestSuccessAnswersIssuanceFailedWhenSigningFails(t *testing.T) {
 	assert.Equal(t, "IssuanceFailed", out.Details.Causes[0].Reason)
 	assert.Contains(t, out.Details.Causes[0].Message, "issuing access token")
 	assert.NotContains(t, rec.Body.String(), "Config", "no kubeconfig in a failure")
+}
+
+// Every token carries the kind of identity its login set, as "principal",
+// and a login that set none, or an unknown one, gets IssuanceFailed rather
+// than a token without it.
+func TestSuccessSignsThePrincipal(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	extras := func(p jwtutil.Principal) *Extras {
+		return &Extras{
+			UserInfo:      userinfo.NewDefaultUser("alice", "1", []string{"devs"}, userinfo.Extensions{}),
+			JwtDuration:   time.Hour,
+			JwtPrivateKey: key,
+			JwtKeyID:      "k",
+			Principal:     p,
+		}
+	}
+
+	for _, p := range []jwtutil.Principal{jwtutil.PrincipalHuman, jwtutil.PrincipalAgent, jwtutil.PrincipalController, jwtutil.PrincipalService} {
+		rec := httptest.NewRecorder()
+		require.NoError(t, Success(rec, nil, extras(p)))
+		var out struct {
+			AccessToken string `json:"accessToken"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		nfo, err := jwtutil.Validate(&key.PublicKey, out.AccessToken)
+		require.NoError(t, err)
+		assert.Equal(t, p, nfo.Principal)
+	}
+
+	for _, p := range []jwtutil.Principal{"", "robot"} {
+		rec := httptest.NewRecorder()
+		err := Success(rec, nil, extras(p))
+		require.Error(t, err)
+		assert.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "IssuanceFailed")
+		assert.Contains(t, rec.Body.String(), "principal")
+		assert.NotContains(t, rec.Body.String(), "accessToken")
+	}
 }
 
 // The strategy is what a login says about itself. Without one (a step-up) the

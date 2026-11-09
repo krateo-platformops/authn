@@ -89,6 +89,10 @@ return:
   duration is the cert-duration knob (8h default if none is given), **clamped to the issued
   certificate's real `NotAfter`**, so a token never outlives the credential minted with it
   (`tokenDuration`, `success.go:37`; [certificate-renewal](./certificate-renewal.md)).
+  It carries `principal`, the kind of identity, which each login sets in
+  `encode.Extras.Principal`: `human` for basic, LDAP, OAuth, OIDC and step-up, and the
+  mapping's kind for a service. `successBody` refuses to sign without a known one
+  (`500 IssuanceFailed`), so a login can't issue a token that omits it.
 - `/basic/login?d` instead returns the kubeconfig as a file download
   (`Content-Disposition`, `basic/login.go:94-96` → `encode/attach.go`).
 
@@ -245,8 +249,11 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   its own link included. Omitted or `allowed: false`: `403 DelegationNotAllowed`.
   The subject token is verified against authn's current and previous keys
   (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
-  minus reserved ones, adds `act` (`plumbing/jwtutil.Actor`), and lives
-  `min(15m, subject exp)`. It mints no kubeconfig.
+  minus reserved ones, and its `principal`, adds `act` (`plumbing/jwtutil.Actor`) with
+  this service's `principal`, and lives `min(15m, subject exp)`. It mints no kubeconfig.
+- `spec.principal` (optional, `agent` | `controller` | `service`) — the kind of identity
+  this service is, signed into its tokens as the `principal` claim
+  (`serviceaccount.Principal`). Omitted: `service`.
 
   authn looks these up by **listing the operator namespace** and matching
   `serviceAccountRef` (`resolvers.ServiceAccountForSA`), not by name — a mapping's

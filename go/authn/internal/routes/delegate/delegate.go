@@ -131,7 +131,7 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
-		act := &jwtutil.Actor{Sub: actor.Name, Act: subject.Act}
+		act := &jwtutil.Actor{Sub: actor.Name, Act: subject.Act, Principal: serviceaccount.Principal(actor)}
 		depth := chainDepth(act)
 		if depth > maxDepth {
 			fail(status.Refused(CauseDelegationTooDeep,
@@ -148,6 +148,7 @@ func (r *route) Handler() http.HandlerFunc {
 			KeyID:      r.opts.KeyID,
 			PrivateKey: r.opts.PrivateKey,
 			Act:        act,
+			Principal:  subject.Principal,
 		})
 		if err != nil {
 			fail(status.Failed(CauseIssuanceFailed, fmt.Errorf("signing the delegated token: %w", err)), "delegation failed")

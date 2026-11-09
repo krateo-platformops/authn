@@ -92,6 +92,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 		KeyID:      o.KeyID,
 		PrivateKey: o.PrivateKey,
 		Duration:   time.Hour * 8760, // 1 year,
+		Principal:  jwtutil.PrincipalService,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("cannot create jwt token for %s: %w", o.SelfUsername, err)

@@ -17,7 +17,16 @@ sharing a secret.
 
 - **Algorithm:** `RS256` (asymmetric). Symmetric `HS256` is no longer used.
 - **Header:** carries a `kid` identifying the signing key (required by agentgateway).
-- **Claims:** `username`, `groups`, `iss: "krateo.io"`, `sub`, `exp`, `iat`, `nbf`.
+- **Claims:** `username`, `groups`, `principal`, `iss: "krateo.io"`, `sub`, `exp`, `iat`, `nbf`,
+  and `act` on a delegated token.
+- **`principal`** is the kind of identity the token names, set from how it was obtained,
+  never from the request: `human` for a person's sign-in (basic, LDAP, OAuth, OIDC,
+  step-up), the `ServiceAccount` mapping's `spec.principal` for `/serviceaccount/login`
+  (`agent`, `controller`, or `service` when it declares none), and `service` for authn's
+  own token to snowplow. A delegated token keeps its subject's `principal`, and each
+  `act` link carries its actor's. Validators read it with plumbing ≥ v1.34.0
+  (`jwtutil.UserInfo.Principal`, and `ActorPrincipal()` for whoever is acting). A token
+  from authn before 0.39.0 has none, which reads as `""`.
   No `aud`.
 
 The signing itself lives in the shared `plumbing/jwtutil` library

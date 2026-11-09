@@ -34,6 +34,11 @@ type Extras struct {
 	// CertNotAfter is the real expiry of the client certificate carried in the
 	// same response. The token is clamped to it. Zero leaves it unclamped.
 	CertNotAfter time.Time
+	// Principal is the kind of identity signing in, signed into the token as
+	// its "principal" claim. Each login sets it from how the person or
+	// service authenticated, never from the request; a token is never signed
+	// without one.
+	Principal jwtutil.Principal
 }
 
 // tokenDuration resolves the lifetime of the issued token: the requested
@@ -100,12 +105,16 @@ func successBody(dat []byte, extras *Extras) (_ []byte, err error) {
 			out.Groups = nfo.GetGroups()
 
 			if extras.JwtPrivateKey != nil {
+				if !extras.Principal.Known() {
+					return nil, fmt.Errorf("the login set no principal kind (got %q)", extras.Principal)
+				}
 				out.AccessToken, err = jwtutil.CreateToken(jwtutil.CreateTokenOptions{
 					Username:   nfo.GetUserName(),
 					Groups:     nfo.GetGroups(),
 					Duration:   tokenDuration(extras.JwtDuration, extras.CertNotAfter),
 					KeyID:      extras.JwtKeyID,
 					PrivateKey: extras.JwtPrivateKey,
+					Principal:  extras.Principal,
 				})
 				if err != nil {
 					return nil, err
