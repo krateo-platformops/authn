@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/rs/zerolog"
@@ -26,7 +27,7 @@ type fakeGenerator struct {
 	err   error
 }
 
-func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info, ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.calls++
 	if g.err != nil {
 		return nil, time.Time{}, g.err

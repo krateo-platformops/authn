@@ -19,12 +19,14 @@ import (
 	"testing"
 	"time"
 
+	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 )
 
@@ -36,11 +38,14 @@ type fakeLookup struct {
 	failFor  string
 }
 
-func (f fakeLookup) ServiceAccountMappingExists(_ context.Context, u string) (bool, error) {
+func (f fakeLookup) ServiceAccountMapping(_ context.Context, u string) (*sav1alpha1.ServiceAccount, error) {
 	if u == f.failFor {
-		return false, errors.New("apiserver unavailable")
+		return nil, errors.New("apiserver unavailable")
 	}
-	return f.mappings[u], nil
+	if !f.mappings[u] {
+		return nil, nil
+	}
+	return &sav1alpha1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: u, Namespace: ns, UID: types.UID("uid-" + u)}}, nil
 }
 
 func (f fakeLookup) BasicUserExists(_ context.Context, u string) (bool, error) {
@@ -52,11 +57,12 @@ type fakeAPIServer struct {
 	*httptest.Server
 	mu      sync.Mutex
 	updates map[string]map[string]string // secret name -> annotations written
+	owners  map[string][]metav1.OwnerReference
 }
 
 func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
 	t.Helper()
-	f := &fakeAPIServer{updates: map[string]map[string]string{}}
+	f := &fakeAPIServer{updates: map[string]map[string]string{}, owners: map[string][]metav1.OwnerReference{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		base := "/api/v1/namespaces/" + ns + "/secrets"
@@ -72,6 +78,7 @@ func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
 			require.NoError(t, json.Unmarshal(body, &sec))
 			f.mu.Lock()
 			f.updates[sec.Name] = sec.Annotations
+			f.owners[sec.Name] = sec.OwnerReferences
 			f.mu.Unlock()
 			_, _ = w.Write(body)
 		default:
@@ -143,6 +150,62 @@ func TestRun(t *testing.T) {
 	for _, name := range []string{"carol-clientconfig", "broken-clientconfig", "flaky-clientconfig", "authn-jwt-signing-key"} {
 		assert.NotContains(t, api.updates, name, "%s must not be written", name)
 	}
+	for name, owners := range api.owners {
+		assert.Empty(t, owners, "%s: no owner without a MappingNamespace", name)
+	}
+}
+
+// In the mappings' namespace, a service identity's Secret with no owner gets
+// its mapping as owner, by UID, in the same write as any missing annotation.
+// One that already has an owner, or isn't a service identity's, is not given
+// one. One whose mapping is gone is counted as an orphan and never written,
+// let alone deleted.
+func TestRunOwners(t *testing.T) {
+	svc := map[string]string{storage.StrategyAnnotation: "serviceaccount", storage.GroupsAnnotation: "krateo:cdc"}
+	owned := clientConfig(t, "svc-owned-clientconfig", cert(t, "svc-owned", []string{"krateo:cdc"}), svc)
+	owned.OwnerReferences = []metav1.OwnerReference{{APIVersion: "serviceaccount.authn.krateo.io/v1alpha1", Kind: "ServiceAccount", Name: "svc-owned", UID: "uid-older"}}
+	items := []corev1.Secret{
+		clientConfig(t, "svc-new-clientconfig", cert(t, "svc-new", []string{"krateo:cdc"}), nil),
+		clientConfig(t, "svc-stamped-clientconfig", cert(t, "svc-stamped", []string{"krateo:cdc"}), svc),
+		owned,
+		clientConfig(t, "svc-gone-clientconfig", cert(t, "svc-gone", []string{"krateo:cdc"}), svc),
+		clientConfig(t, "bob-clientconfig", cert(t, "bob", []string{"devs"}), nil),
+	}
+	lookup := fakeLookup{
+		mappings: map[string]bool{"svc-new": true, "svc-stamped": true, "svc-owned": true},
+		basic:    map[string]bool{"bob": true},
+	}
+
+	api := newFakeAPIServer(t, items)
+	res, err := Run(context.Background(), Options{
+		RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns},
+		MappingNamespace: ns, SelfUsername: "authn", Lookup: lookup, Log: zerolog.Nop(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, Result{Scanned: 5, Stamped: 2, Owned: 2, Orphaned: 1}, res)
+
+	for _, name := range []string{"svc-new", "svc-stamped"} {
+		assert.Equal(t, []metav1.OwnerReference{{
+			APIVersion: "serviceaccount.authn.krateo.io/v1alpha1", Kind: "ServiceAccount",
+			Name: name, UID: types.UID("uid-" + name),
+		}}, api.owners[name+"-clientconfig"], name)
+	}
+	assert.Equal(t, "serviceaccount", api.updates["svc-new-clientconfig"][storage.StrategyAnnotation],
+		"the owner and the missing annotations go in one write")
+	assert.Empty(t, api.owners["bob-clientconfig"], "a person's credential gets no owner")
+	assert.NotContains(t, api.updates, "svc-owned-clientconfig", "an existing owner is never replaced")
+	assert.NotContains(t, api.updates, "svc-gone-clientconfig", "an orphan is reported, never written")
+
+	// Outside the mappings' namespace no owner is added: an ownerReference
+	// can't cross namespaces.
+	api = newFakeAPIServer(t, items)
+	res, err = Run(context.Background(), Options{
+		RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns},
+		MappingNamespace: "elsewhere", SelfUsername: "authn", Lookup: lookup, Log: zerolog.Nop(),
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Owned)
+	assert.Zero(t, res.Orphaned)
 }
 
 func clientConfig(t *testing.T, name, certData string, annotations map[string]string) corev1.Secret {

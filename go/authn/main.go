@@ -340,16 +340,20 @@ func main() {
 
 		// Stamp the identity annotations (strategy, groups) onto clientconfig
 		// Secrets written before authn recorded them, so policy deciding from
-		// them also covers identities that never log in again.
+		// them also covers identities that never log in again. In the
+		// operator namespace, also give each service identity's Secret its
+		// ServiceAccount mapping as owner, so retiring the mapping retires the
+		// credential; orphans are only reported.
 		operatorNamespace, err := util.GetOperatorNamespace()
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill: resolving the operator namespace")
 		}
 		res, err := identitybackfill.Run(lctx, identitybackfill.Options{
-			RestConfig:   cfg,
-			Namespaces:   []string{operatorNamespace, *storageNamespace},
-			SelfUsername: *authnUsername,
-			Log:          log,
+			RestConfig:       cfg,
+			Namespaces:       []string{operatorNamespace, *storageNamespace},
+			SelfUsername:     *authnUsername,
+			MappingNamespace: operatorNamespace,
+			Log:              log,
 		})
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")
@@ -358,6 +362,8 @@ func main() {
 				Int("scanned", res.Scanned).
 				Int("stamped", res.Stamped).
 				Int("skipped", res.Skipped).
+				Int("owned", res.Owned).
+				Int("orphaned", res.Orphaned).
 				Msg("identity annotation backfill done")
 		}
 

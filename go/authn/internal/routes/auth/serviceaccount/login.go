@@ -90,7 +90,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		user, principal, err := r.validate(req.Context(), token)
+		user, principal, owner, err := r.validate(req.Context(), token)
 		if err != nil {
 			status.LogFailure(*log, err).Msg("serviceaccount auth failed")
 			encode.Failure(wri, status.FromError(err))
@@ -108,7 +108,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// service caller reads it; they all use accessToken alone. Keeping it
 		// out of the body means printing or logging a successful response can't
 		// leak the key (#36).
-		_, notAfter, err := r.gen.Generate(storage.StrategyServiceAccount, user)
+		// The Secret is owned by the mapping, so whoever retires the mapping
+		// (core-provider, on Undeploy) retires the credential with it, through
+		// the garbage collector, without needing delete rights on Secrets.
+		_, notAfter, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner))
 		if err != nil {
 			log.Err(err).Msg("kubeconfig creation failure")
 			encode.Failure(wri, status.FromError(status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))))
@@ -133,17 +136,17 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 // validate authenticates the SA token (Authenticate) and builds the issued
 // identity (username = mapping name, groups = mapping spec.groups).
-func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, jwtutil.Principal, error) {
+func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, jwtutil.Principal, metav1.OwnerReference, error) {
 	mapping, err := Authenticate(ctx, r.rc, r.audience, token)
 	if err != nil {
-		return nil, "", err
+		return nil, "", metav1.OwnerReference{}, err
 	}
 
 	exts := userinfo.Extensions{}
 	exts.Add("name", mapping.Spec.DisplayName)
 
 	uid, _ := shortid.Generate()
-	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), Principal(mapping), nil
+	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), Principal(mapping), mapping.OwnerReference(), nil
 }
 
 // Principal is the kind of identity a ServiceAccount mapping declares in

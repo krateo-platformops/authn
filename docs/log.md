@@ -14,6 +14,23 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-09 — a service identity's Secret goes away with its mapping
+
+core-provider 2.13.77 deleted a retired composition controller's `cdc-…-clientconfig`
+Secret itself, on every Undeploy, without the RBAC to do it, so retirements and
+definition deletes wedged. Diego chose that core-provider (2.13.78) stops deleting
+authn's Secret, and that authn owns its lifecycle instead. Nothing else did: authn set no
+owner and ran no pruning, so each retired controller would have left a Secret holding a
+certificate for `krateo:cdc:<sa>`, valid until it expired (about 30 days as GKE grants
+it).
+
+`/serviceaccount/login` now writes the Secret with its `ServiceAccount` mapping as
+ownerReference, by UID, and the startup backfill adds it to existing Secrets that have no
+owner. Deleting the mapping, which core-provider still does, lets the garbage collector
+delete the Secret. Orphans whose mapping is already gone are reported, not deleted. 057's
+one (`cdc-demo-system-eventsites-v0-1-0-clientconfig`, certificate expired 2026-11-05)
+was deleted by name on Diego's go before this shipped.
+
 ## 2026-11-08 — every token names the kind of identity it's for
 
 The shared audit schema (installer#716, owned by snowplow) records whether a human, an

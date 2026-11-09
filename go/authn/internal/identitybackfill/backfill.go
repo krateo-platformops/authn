@@ -15,6 +15,15 @@
 //
 // Existing annotations are never overwritten: whatever a login wrote is newer
 // and better informed than anything derived here.
+//
+// It also gives an existing service identity's Secret the owner a login now
+// sets: its ServiceAccount mapping, by UID, so the garbage collector deletes the
+// credential once the mapping is retired. That applies only to Secrets in the
+// mappings' namespace (an ownerReference can't cross namespaces), and only to
+// those with no owner yet, so a Secret issued under an earlier mapping of the
+// same name is never re-attached to a newer one. A service Secret whose mapping
+// is gone is reported as an orphan and left in place: deleting a credential is
+// an operator's decision, never this pass's.
 package identitybackfill
 
 import (
@@ -22,6 +31,7 @@ import (
 	"fmt"
 	"strings"
 
+	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
@@ -30,13 +40,16 @@ import (
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
 // Lookup answers whether an identity with a given username exists for the
 // strategies whose identities are declared as Kubernetes objects.
 type Lookup interface {
-	ServiceAccountMappingExists(ctx context.Context, username string) (bool, error)
+	// ServiceAccountMapping returns the mapping named username, or nil when
+	// there is none.
+	ServiceAccountMapping(ctx context.Context, username string) (*sav1alpha1.ServiceAccount, error)
 	BasicUserExists(ctx context.Context, username string) (bool, error)
 }
 
@@ -46,6 +59,9 @@ type Options struct {
 	Namespaces []string
 	// SelfUsername is authn's own identity (AUTHN_USERNAME).
 	SelfUsername string
+	// MappingNamespace holds the ServiceAccount mappings (the operator
+	// namespace). Only Secrets there are given a mapping owner.
+	MappingNamespace string
 	// Lookup defaults to the cluster resolvers.
 	Lookup Lookup
 	Log    zerolog.Logger
@@ -56,6 +72,10 @@ type Result struct {
 	Scanned int
 	Stamped int
 	Skipped int
+	// Owned counts service Secrets given their mapping as owner.
+	Owned int
+	// Orphaned counts service Secrets whose mapping is gone, left in place.
+	Orphaned int
 }
 
 // Run scans the clientconfig Secrets and stamps missing identity annotations.
@@ -96,9 +116,6 @@ func Run(ctx context.Context, o Options) (Result, error) {
 					Msg("identity annotations not backfilled")
 				continue
 			}
-			if len(missing) == 0 {
-				continue
-			}
 
 			merged := map[string]string{}
 			for k, v := range sec.GetAnnotations() {
@@ -107,7 +124,26 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			for k, v := range missing {
 				merged[k] = v
 			}
+
+			owner, orphan, err := missingOwner(ctx, sec, merged, o.MappingNamespace, lookup)
+			if err != nil {
+				o.Log.Warn().Err(err).Str("secret", sec.Name).Str("namespace", ns).
+					Msg("clientconfig owner not backfilled")
+			}
+			if orphan {
+				res.Orphaned++
+				o.Log.Warn().Str("secret", sec.Name).Str("namespace", ns).
+					Str("notAfter", merged[storage.NotAfterAnnotation]).
+					Msg("service clientconfig has no ServiceAccount mapping; left in place")
+			}
+
+			if len(missing) == 0 && owner == nil {
+				continue
+			}
 			sec.SetAnnotations(merged)
+			if owner != nil {
+				sec.SetOwnerReferences([]metav1.OwnerReference{*owner})
+			}
 
 			// sec carries the resourceVersion from the list, so a concurrent
 			// writer (a login rewriting the Secret) wins with a conflict
@@ -118,10 +154,17 @@ func Run(ctx context.Context, o Options) (Result, error) {
 					Msg("identity annotations not backfilled")
 				continue
 			}
-			res.Stamped++
-			o.Log.Info().Str("secret", sec.Name).Str("namespace", ns).
-				Str("strategy", merged[storage.StrategyAnnotation]).
-				Msg("identity annotations backfilled")
+			if len(missing) > 0 {
+				res.Stamped++
+				o.Log.Info().Str("secret", sec.Name).Str("namespace", ns).
+					Str("strategy", merged[storage.StrategyAnnotation]).
+					Msg("identity annotations backfilled")
+			}
+			if owner != nil {
+				res.Owned++
+				o.Log.Info().Str("secret", sec.Name).Str("namespace", ns).
+					Str("mapping", owner.Name).Msg("clientconfig owner backfilled")
+			}
 		}
 	}
 
@@ -163,6 +206,36 @@ func missingAnnotations(ctx context.Context, sec *corev1.Secret, self string, lo
 	return missing, nil
 }
 
+// missingOwner returns the ownerReference a service identity's Secret lacks: its
+// ServiceAccount mapping, by UID. It returns nil for a Secret outside the
+// mappings' namespace, one that isn't a service identity's, or one that already
+// has an owner; and orphan=true when the mapping is gone.
+func missingOwner(ctx context.Context, sec *corev1.Secret, annotations map[string]string, mappingNS string, lookup Lookup) (_ *metav1.OwnerReference, orphan bool, _ error) {
+	if mappingNS == "" || sec.Namespace != mappingNS {
+		return nil, false, nil
+	}
+	if storage.Strategy(annotations[storage.StrategyAnnotation]) != storage.StrategyServiceAccount {
+		return nil, false, nil
+	}
+	if len(sec.GetOwnerReferences()) > 0 {
+		return nil, false, nil
+	}
+
+	crt, err := kube.ParseCertificateBase64(string(sec.Data[storage.ClientCertLabel]))
+	if err != nil {
+		return nil, false, fmt.Errorf("reading the stored certificate: %w", err)
+	}
+	mapping, err := lookup.ServiceAccountMapping(ctx, crt.Subject.CommonName)
+	if err != nil {
+		return nil, false, fmt.Errorf("looking up a ServiceAccount mapping for %q: %w", crt.Subject.CommonName, err)
+	}
+	if mapping == nil {
+		return nil, true, nil
+	}
+	ref := mapping.OwnerReference()
+	return &ref, false, nil
+}
+
 // strategyOf proves which strategy issued username's credential, or reports
 // StrategyUnknown when it cannot.
 func strategyOf(ctx context.Context, username, self string, lookup Lookup) (storage.Strategy, error) {
@@ -170,7 +243,8 @@ func strategyOf(ctx context.Context, username, self string, lookup Lookup) (stor
 		return storage.StrategySelf, nil
 	}
 
-	sa, err := lookup.ServiceAccountMappingExists(ctx, username)
+	mapping, err := lookup.ServiceAccountMapping(ctx, username)
+	sa := mapping != nil
 	if err != nil {
 		return "", fmt.Errorf("looking up a ServiceAccount mapping for %q: %w", username, err)
 	}
@@ -192,9 +266,15 @@ func strategyOf(ctx context.Context, username, self string, lookup Lookup) (stor
 
 type clusterLookup struct{ rc *rest.Config }
 
-func (c clusterLookup) ServiceAccountMappingExists(_ context.Context, username string) (bool, error) {
-	_, err := resolvers.ServiceAccountMappingGet(c.rc, username)
-	return exists(err)
+func (c clusterLookup) ServiceAccountMapping(_ context.Context, username string) (*sav1alpha1.ServiceAccount, error) {
+	mapping, err := resolvers.ServiceAccountMappingGet(c.rc, username)
+	if apierrors.IsNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return mapping, nil
 }
 
 func (c clusterLookup) BasicUserExists(_ context.Context, username string) (bool, error) {

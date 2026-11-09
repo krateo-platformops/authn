@@ -16,6 +16,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	oidcv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oidc/v1alpha1"
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
@@ -148,7 +149,7 @@ type stepUpGenerator struct {
 	notAfter time.Time
 }
 
-func (g *stepUpGenerator) Generate(_ storage.Strategy, u userinfo.Info) ([]byte, time.Time, error) {
+func (g *stepUpGenerator) Generate(_ storage.Strategy, u userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.sessions = append(g.sessions, u)
 	return []byte(`{}`), g.notAfter, nil
 }

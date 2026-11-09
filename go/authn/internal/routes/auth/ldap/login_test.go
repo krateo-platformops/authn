@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/rs/zerolog"
@@ -31,7 +32,7 @@ type fakeGenerator struct {
 	info  userinfo.Info // the identity of the last Generate
 }
 
-func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.calls++
 	g.info = nfo
 	if g.err != nil {

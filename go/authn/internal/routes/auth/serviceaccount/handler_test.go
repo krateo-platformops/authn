@@ -12,11 +12,13 @@ import (
 	"testing"
 	"time"
 
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -26,11 +28,13 @@ import (
 type fakeGenerator struct {
 	calls      []string
 	strategies []storage.Strategy
+	owners     []*metav1.OwnerReference
 	err        error
 }
 
-func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, opts ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.strategies = append(g.strategies, strategy)
+	g.owners = append(g.owners, kubeconfig.NewIssueOptions(opts...).Owner)
 	g.calls = append(g.calls, user.GetUserName())
 	if g.err != nil {
 		return nil, time.Time{}, g.err
@@ -55,7 +59,7 @@ const (
 	reviewOK = `{"apiVersion":"authentication.k8s.io/v1","kind":"TokenReview",
 		"status":{"authenticated":true,"audiences":["authn"],
 		"user":{"username":"system:serviceaccount:krateo-system:cdc"}}}`
-	mappingCdc = `{"metadata":{"name":"cdc-identity","namespace":"krateo-system"},
+	mappingCdc = `{"metadata":{"name":"cdc-identity","namespace":"krateo-system","uid":"0b1f6c1e-2d6a-4b8e-9c3f-5a7e8d9f0a1b"},
 		"spec":{"serviceAccountRef":{"namespace":"krateo-system","name":"cdc"},"groups":["krateo:cdc"]}}`
 )
 
@@ -124,6 +128,13 @@ func TestHandlerOmitsKubeconfigFromResponse(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, []string{"cdc-identity"}, gen.calls, "the clientconfig Secret must still be minted")
 	assert.Equal(t, []storage.Strategy{storage.StrategyServiceAccount}, gen.strategies, "issued as the serviceaccount strategy")
+	require.Len(t, gen.owners, 1)
+	assert.Equal(t, &metav1.OwnerReference{
+		APIVersion: "serviceaccount.authn.krateo.io/v1alpha1",
+		Kind:       "ServiceAccount",
+		Name:       "cdc-identity",
+		UID:        "0b1f6c1e-2d6a-4b8e-9c3f-5a7e8d9f0a1b",
+	}, gen.owners[0], "the Secret is owned by the mapping that authenticated, by its UID, so retiring the mapping retires the credential")
 
 	var out map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
