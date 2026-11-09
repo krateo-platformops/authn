@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
@@ -53,7 +54,7 @@ const (
 // without a successful login may issue a credential.
 type mintCounter struct{ calls atomic.Int32 }
 
-func (g *mintCounter) Generate(_ storage.Strategy, _ userinfo.Info) ([]byte, time.Time, error) {
+func (g *mintCounter) Generate(_ storage.Strategy, _ userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.calls.Add(1)
 	return []byte(`{}`), time.Now().Add(time.Hour), nil
 }

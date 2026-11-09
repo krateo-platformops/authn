@@ -60,7 +60,8 @@ API.
    - `Ensure` issues `authn-clientconfig`, so authn can call snowplow's RESTActions as
      itself. Issuing goes through `plumbing` `signup.Do` (`certrenewal/renewal.go:238`).
    - `identitybackfill.Run` stamps the identity annotations onto clientconfig Secrets
-     that predate them ([behavior](./behavior.md)).
+     that predate them, and gives service identities' Secrets their mapping as owner
+     ([behavior](./behavior.md)).
    - `renewer.Run` re-issues the certificate at a fraction of its granted lifetime
      ([certificate-renewal](./certificate-renewal.md)).
 

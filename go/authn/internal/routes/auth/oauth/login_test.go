@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
@@ -24,7 +25,7 @@ import (
 
 type fakeGenerator struct{ calls int }
 
-func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info, ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.calls++
 	return []byte(`{}`), time.Now().Add(time.Hour), nil
 }

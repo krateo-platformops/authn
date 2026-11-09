@@ -12,6 +12,7 @@ import (
 	"github.com/krateo-platformops/plumbing/endpoints"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -85,6 +86,13 @@ type AuthInfo struct {
 	// StepUp stores the credential as the user's step-up credential
 	// (StepUpSecretName) instead of their session credential.
 	StepUp bool `json:"-"`
+
+	// Owner, when set, becomes the Secret's only ownerReference, so the
+	// Kubernetes garbage collector deletes the credential once its owner is
+	// gone. A service identity's Secret is owned by its ServiceAccount mapping.
+	// It must name an object in the operator namespace by its current
+	// UID: an owner the collector can't find makes it delete the Secret.
+	Owner *metav1.OwnerReference `json:"-"`
 }
 
 // AuthInfoStorage stores issued credentials. authn never reads one back over
@@ -128,6 +136,9 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 		annotations[k] = v
 	}
 	sec.SetAnnotations(annotations)
+	if nfo.Owner != nil {
+		sec.SetOwnerReferences([]metav1.OwnerReference{*nfo.Owner})
+	}
 	sec.StringData = map[string]string{
 		CALabel:         nfo.CAData,
 		ClientCertLabel: nfo.CertData,

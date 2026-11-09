@@ -408,6 +408,25 @@ annotations, and never overwrites existing ones:
 A Secret whose certificate can't be read, or whose lookup fails, is skipped and logged,
 never stamped with a guess. The next start retries it.
 
+### A service identity's Secret is owned by its mapping
+`/serviceaccount/login` stores the identity's `<username>-clientconfig` Secret with one
+ownerReference: its `ServiceAccount` mapping (`serviceaccount.authn.krateo.io/v1alpha1`,
+by name and **UID**; not a controller reference, not blocking). When the mapping is
+deleted, for example by core-provider retiring a composition controller, the Kubernetes
+garbage collector deletes the Secret. Nobody else needs delete rights on Secrets, and
+authn runs no pruning loop (`config.OwnedBy`, `storage.AuthInfo.Owner`).
+
+- **Re-created mapping:** a mapping deleted and created again has a new UID, so the
+  collector removes the old Secret, and the next login writes a new one owned by the new
+  mapping. A mapping updated in place keeps its UID and its Secret.
+- **Backfill:** at startup, in the operator namespace, a `serviceaccount` Secret with **no
+  owner** gets its mapping as owner. A Secret that already has an owner is left alone, so
+  a credential issued under an earlier mapping of the same name is never re-attached to a
+  newer one. A `serviceaccount` Secret whose mapping is gone is logged as `service
+  clientconfig has no ServiceAccount mapping; left in place` (with its `notAfter`) and
+  counted as `orphaned`. Deleting it is an operator's decision.
+- People's Secrets (basic, LDAP, OAuth, OIDC, step-up) and authn's own have no owner.
+
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response
 (`data` + `accessToken`) to authenticate the user. CORS is enabled by default with

@@ -12,6 +12,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/configmaps"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/rs/zerolog"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 )
@@ -26,8 +27,9 @@ type Generator interface {
 	//
 	// strategy is the login strategy issuing the credential; it is recorded on
 	// the Secret together with the certificate's groups (see
-	// storage.IdentityAnnotations).
-	Generate(strategy storage.Strategy, user userinfo.Info) (dat []byte, notAfter time.Time, err error)
+	// storage.IdentityAnnotations). opts adjust how the Secret is stored; see
+	// OwnedBy.
+	Generate(strategy storage.Strategy, user userinfo.Info, opts ...IssueOption) (dat []byte, notAfter time.Time, err error)
 
 	// GenerateStepUp mints a short-lived step-up credential (#49) for user,
 	// who must have been built by userinfo.NewStepUpUser, and stores it as
@@ -36,6 +38,32 @@ type Generator interface {
 	// lifetime. The returned notAfter is the granted one, which bounds the
 	// step-up JWT.
 	GenerateStepUp(strategy storage.Strategy, user userinfo.Info, ttl time.Duration) (notAfter time.Time, err error)
+}
+
+// IssueOption adjusts how one issued credential is stored.
+type IssueOption func(*IssueOptions)
+
+// IssueOptions is what a list of IssueOption resolves to.
+type IssueOptions struct {
+	// Owner becomes the stored Secret's ownerReference (see OwnedBy).
+	Owner *metav1.OwnerReference
+}
+
+// NewIssueOptions applies opts in order.
+func NewIssueOptions(opts ...IssueOption) IssueOptions {
+	var o IssueOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
+// OwnedBy makes owner the stored Secret's ownerReference, so the Kubernetes
+// garbage collector deletes the credential with its owner. The serviceaccount
+// login passes the identity's ServiceAccount mapping: retiring the mapping then
+// retires the credential, with no one else needing delete rights on Secrets.
+func OwnedBy(owner metav1.OwnerReference) IssueOption {
+	return func(o *IssueOptions) { o.Owner = &owner }
 }
 
 type GeneratorOption func(*kubeconfigGenerator)
@@ -111,14 +139,15 @@ type kubeconfigGenerator struct {
 	log           zerolog.Logger
 }
 
-func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info) ([]byte, time.Time, error) {
+func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) ([]byte, time.Time, error) {
 	var notAfter time.Time
 
 	if err := g.checkGroups(userInfo, false); err != nil {
 		return nil, notAfter, err
 	}
 
-	certInfo, clusterInfo, notAfter, err := g.issue(strategy, userInfo, g.certDuration, false)
+	o := NewIssueOptions(opts...)
+	certInfo, clusterInfo, notAfter, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner)
 	if err != nil {
 		return nil, notAfter, err
 	}
@@ -162,7 +191,7 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	if err := g.checkGroups(userInfo, true); err != nil {
 		return time.Time{}, err
 	}
-	_, _, notAfter, err := g.issue(strategy, userInfo, ttl, true)
+	_, _, notAfter, err := g.issue(strategy, userInfo, ttl, true, nil)
 	return notAfter, err
 }
 
@@ -204,7 +233,7 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 
 // issue mints a certificate for userInfo valid for duration and stores it as
 // the user's session or step-up credential.
-func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool) (CertInfo, ClusterInfo, time.Time, error) {
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference) (CertInfo, ClusterInfo, time.Time, error) {
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
@@ -218,12 +247,13 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 		return certInfo, clusterInfo, notAfter, err
 	}
 
-	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp)
+	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner)
 	return certInfo, clusterInfo, notAfter, err
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool) error {
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference) error {
 	nfo := storage.AuthInfo{
+		Owner:    owner,
 		StepUp:   stepUp,
 		Strategy: strategy,
 		CertData: certInfo.ClientCertificateData,
