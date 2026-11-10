@@ -14,6 +14,19 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-10 — A retired signing key signs the user out instead of failing as 503
+
+Rotating authn's key to revoke the tokens it signed left every signed-in user on an
+error page: snowplow answered a token whose key was no longer published with `503`
+(retry), and the portal offers sign-in only on `401`. A rotation planned on 2026-11-09
+was cancelled once the tokens it targeted had expired, and Diego chose to fix the status
+first. plumbing v1.36.0 (#107, closing plumbing#63) reports a `kid` missing from a
+key set fetched after the token was issued as an invalid token (`ErrKeyNotPublished`);
+an unreachable JWKS, a failed fetch and the rotation moment stay `503`. snowplow 1.12.69
+answers `401` `KeyNotPublished`, portal 1.8.36 shows "Sign-in revoked", and the installer
+chart's `authn.jwt.keyGeneration` (installer#782) makes a revoking rotation one value.
+[jwt-jwks](./jwt-jwks.md#revoking-tokens) describes the procedure.
+
 ## 2026-11-10 — A username goes only to the identity it was issued to
 
 A certificate's CN is a Kubernetes username, and the cluster grants that name whatever

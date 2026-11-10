@@ -175,9 +175,17 @@ rotation follows automatically. The mechanics, implemented once in
 - **Fail-soft.** If a refetch fails but the cache still holds the requested `kid`, the
   stale-but-known key is served: a brief authn outage does not invalidate tokens that
   were already verifiable.
-- **Correct status codes.** An unresolvable key yields `503` (ours to fix, retryable),
-  never `401` — a `401` would tell a browser to discard a good session because authn
-  happened to be restarting.
+- **Correct status codes.** A key the source couldn't check yields `503` (ours to fix,
+  retryable), never `401`: a `401` would tell a browser to discard a good session
+  because authn happened to be restarting. That covers an unreachable or empty JWKS, a
+  failed latest fetch, a token without `iat`, and a token issued after the cached set
+  (a new key at the rotation moment, while the refresh floor blocks a refetch).
+- **A retired key is `401`.** From plumbing v1.36.0, a token whose `kid` is missing
+  from a key set fetched successfully *after* the token was issued (5s leeway) is
+  `ErrTokenInvalid` and `ErrKeyNotPublished`: authn publishes a key from the moment it
+  signs with it, so that key was retired. snowplow answers it, from 1.12.69, with `401`
+  and the cause `KeyNotPublished`, and the portal asks the user to sign in again.
+  Earlier snowplow versions answer `503`.
 
 #### Rotating the signing key
 
@@ -217,10 +225,25 @@ previous-key setting makes the new pod exit at boot while the old pod keeps serv
 without waiting `helm upgrade` reports success and the rotation silently stalls.
 
 Remove a previous key only after every token it signed has expired. Validators built on
-`JWKSKeySource` look the key up before checking expiry. A token whose `kid` is no longer
-published fails as "key unavailable" (a `503` at snowplow), not as an invalid or expired
-token (`401`), even once it has expired. So a client still holding one is told to retry,
-not to sign in again.
+`JWKSKeySource` look the key up before checking expiry. From snowplow 1.12.69, a token
+whose `kid` is no longer published is refused with `401` `KeyNotPublished` once
+snowplow's cached key set (TTL 5m) is refreshed, and the client signs in again. With
+earlier snowplow versions it fails as "key unavailable" (`503`), so a client still
+holding one is told to retry, not to sign in again.
+
+#### Revoking tokens
+
+authn has no per-token revocation: the signing key is the only lever. To revoke every
+token a key signed, rotate **without** keeping the old key in `jwt.previousKeys`, so
+the old `kid` is no longer published. The installer chart's `authn.jwt.keyGeneration`
+(installer#782) generates a new key and `kid` for this; check its docs for the roll.
+Within the validators' cache TTL (5m for snowplow) the old key stops verifying.
+- With snowplow ≥ 1.12.69 and portal ≥ 1.8.36, every signed-in user is asked to sign in
+  again ("Sign-in revoked").
+- Composition controllers and core-provider cache their authn token until it expires
+  and don't re-exchange it on `401` before core-provider#425 ships. Restart them after
+  the roll: the cdc Deployments are selected by their `-group=composition.krateo.io`
+  argument, not by label.
 
 authn refuses to start when a previous key is unusable: an empty or duplicate `kid`,
 the current `kid`, an unreadable or non-RSA file, or the current key under another
