@@ -37,7 +37,7 @@ func TestLoginAcceptsTheBearerTypeInAnyCase(t *testing.T) {
 			snowplowCalled := false
 			snowplow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				snowplowCalled = true
-				_, _ = io.WriteString(w, `{"status":{"name":"Alice","preferredUsername":"alice","groups":["devs"]}}`)
+				_, _ = io.WriteString(w, `{"status":{"subject":"1001","name":"Alice","preferredUsername":"alice","groups":["devs"]}}`)
 			}))
 			t.Cleanup(snowplow.Close)
 

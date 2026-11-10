@@ -3,7 +3,6 @@ package ldap
 import (
 	"crypto/rsa"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -130,7 +129,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		dat, notAfter, err := r.gen.Generate(storage.StrategyLDAP, nfo)
 		if err != nil {
-			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
 			encode.Failure(wri, status.FromError(err))
 			return

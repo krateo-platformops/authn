@@ -18,7 +18,7 @@ import (
 func TestValidateIDToken(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	valid := func() map[string]any {
-		return map[string]any{"iss": testIssuer, "aud": "client", "exp": float64(now.Add(time.Hour).Unix())}
+		return map[string]any{"iss": testIssuer, "sub": "idp-user-1", "aud": "client", "exp": float64(now.Add(time.Hour).Unix())}
 	}
 	with := func(k string, v any) map[string]any {
 		c := valid()
@@ -79,7 +79,7 @@ func TestValidateIDToken(t *testing.T) {
 func TestDoLoginRejectsInvalidIDToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload, _ := json.Marshal(map[string]any{
-			"iss": "https://evil.example", "aud": "test-client-id", "exp": float64(time.Now().Add(time.Hour).Unix()),
+			"iss": "https://evil.example", "sub": "idp-user-1", "aud": "test-client-id", "exp": float64(time.Now().Add(time.Hour).Unix()),
 			"preferred_username": "admin", "groups": []any{"admins"},
 		})
 		_ = json.NewEncoder(w).Encode(TokenResponse{

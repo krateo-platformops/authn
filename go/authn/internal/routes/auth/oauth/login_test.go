@@ -23,10 +23,14 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-type fakeGenerator struct{ calls int }
+type fakeGenerator struct {
+	calls int
+	info  userinfo.Info // the identity of the last Generate
+}
 
-func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info, ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.calls++
+	g.info = nfo
 	return []byte(`{}`), time.Now().Add(time.Hour), nil
 }
 
@@ -41,7 +45,7 @@ func TestLoginStopsWhenTheRESTActionAnswerIsUnusable(t *testing.T) {
 
 	// snowplow resolves the RESTAction to a name and a groups that isn't a list.
 	snowplow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, `{"status":{"name":"Alice","preferredUsername":"alice","groups":"devs"}}`)
+		_, _ = io.WriteString(w, `{"status":{"subject":"1001","name":"Alice","preferredUsername":"alice","groups":"devs"}}`)
 	}))
 	t.Cleanup(snowplow.Close)
 

@@ -89,7 +89,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		log.Debug().Msg("generating secret from oidc idtoken")
 		dat, notAfter, err := r.gen.Generate(storage.StrategyOIDC, nfo)
 		if err != nil {
-			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
 			encode.Failure(wri, status.FromError(err))
 			return
@@ -236,5 +236,7 @@ func validate(idToken idToken) userinfo.Info {
 	exts.Add("email", idToken.email)
 
 	uid, _ := shortid.Generate()
-	return userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(idToken.preferredUsername), uid, idToken.groups, exts)
+	nfo := userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(idToken.preferredUsername), uid, idToken.groups, exts)
+	nfo.Subject = userinfo.Subject{Issuer: idToken.issuer, ID: idToken.subject}
+	return nfo
 }

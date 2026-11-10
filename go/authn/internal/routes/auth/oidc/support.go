@@ -56,6 +56,12 @@ type idToken struct {
 	acr      string
 	authTime time.Time
 
+	// issuer and subject are the ID token's iss and sub, which name the
+	// authenticated identity. Like acr, they come from the validated ID token
+	// only, never from the RESTAction or UserInfo.
+	issuer  string
+	subject string
+
 	bearerToken       string
 	name              string
 	email             string
@@ -196,6 +202,16 @@ func doLogin(ctx context.Context, code, codeVerifier string, cfg *oidcConfig) (i
 	if res.acr, _, err2 = stringClaim(claims, "acr"); err2 != nil {
 		return invalid("acr", err2)
 	}
+	// validateIDToken has checked iss. sub is required (OIDC Core 2): it is
+	// the only stable name of the identity.
+	res.issuer, _ = claims["iss"].(string)
+	var hasSub bool
+	if res.subject, hasSub, err2 = stringClaim(claims, "sub"); err2 != nil {
+		return invalid("sub", err2)
+	}
+	if !hasSub || res.subject == "" {
+		return invalid("sub", errMissing)
+	}
 	if v, ok := claims["auth_time"]; ok && v != nil {
 		at, isNumber := v.(float64)
 		if !isNumber {
@@ -289,6 +305,7 @@ var (
 	errNotAString      = errors.New("is not a string")
 	errNotANumber      = errors.New("is not a number")
 	errNotAStringsList = errors.New("is not a list of strings")
+	errMissing         = errors.New("is missing or empty")
 )
 
 // stringClaim reads the string claim key of m. A claim that is absent or null

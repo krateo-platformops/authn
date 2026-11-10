@@ -219,8 +219,9 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 		up := userinfo.NewStepUpUser(nfo, StepUpLevel)
 		notAfter, err := r.gen.GenerateStepUp(storage.StrategyOIDC, up, cfg.StepUp.ttl)
 		if err != nil {
-			log.Err(err).Str("username", up.GetUserName()).Msg("step-up credential creation failure")
-			encode.Failure(wri, status.FromError(status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing step-up credential: %w", err))))
+			err = status.IssueFailure("step-up credential", err)
+			status.LogFailure(log, err).Str("username", up.GetUserName()).Msg("step-up credential creation failure")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 

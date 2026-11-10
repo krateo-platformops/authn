@@ -15,6 +15,9 @@ import (
 )
 
 type userInfo struct {
+	// subject is the RESTAction's `subject`: the provider's stable id of the
+	// user (GitHub's numeric id), which survives a rename of the login.
+	subject           string
 	name              string
 	email             string
 	preferredUsername string
@@ -70,6 +73,12 @@ func updateConfig(config userInfo, additionalFieldstoReplace map[string]interfac
 					return config, fmt.Errorf("error parsing updated config: %s is not type string", key)
 				}
 				config.name = v
+			case "subject":
+				v, ok := additionalFieldstoReplace[key].(string)
+				if !ok {
+					return config, fmt.Errorf("error parsing updated config: %s is not type string", key)
+				}
+				config.subject = v
 			case "email":
 				v, ok := additionalFieldstoReplace[key].(string)
 				if !ok {

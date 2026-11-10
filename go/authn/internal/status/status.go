@@ -2,6 +2,7 @@ package status
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 )
 
@@ -130,6 +131,18 @@ type CauseType string
 // but authn could not issue its credential or sign its token (500).
 const CauseIssuanceFailed CauseType = "IssuanceFailed"
 
+// Refusals shared by every login that issues a credential (403).
+const (
+	// CauseUsernameUnavailable: authn won't issue this username to this
+	// identity. It was issued to another identity, an administrator
+	// provisioned it, the cluster already grants rights to it, or it is
+	// reserved. The response doesn't say which; the log does.
+	CauseUsernameUnavailable CauseType = "UsernameUnavailable"
+	// CauseSystemGroupNotAllowed: the identity carries a `system:` group,
+	// which Kubernetes reserves for identities the apiserver vouches for.
+	CauseSystemGroupNotAllowed CauseType = "SystemGroupNotAllowed"
+)
+
 // Causes of a 400 shared by the logins that take a config name and an
 // authorization code.
 const (
@@ -254,6 +267,18 @@ func RefusedPrivately(cause CauseType, public, private error) CauseError {
 // Failed is a failure on authn's side (500).
 func Failed(cause CauseType, err error) CauseError {
 	return CauseError{Code: http.StatusInternalServerError, Cause: cause, Err: err}
+}
+
+// IssueFailure renders an error from issuing a credential, what naming it. An
+// error that already carries a cause, such as the name guard's refusal, is
+// answered as it is: wrapping it would turn a refusal into a 500. Any other
+// error is authn's failure to issue: IssuanceFailed (500).
+func IssueFailure(what string, err error) error {
+	var ce CauseError
+	if errors.As(err, &ce) {
+		return err
+	}
+	return Failed(CauseIssuanceFailed, fmt.Errorf("issuing %s: %w", what, err))
 }
 
 // FromError renders err as a Status with its code and cause. An error that

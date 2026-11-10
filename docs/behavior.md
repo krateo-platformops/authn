@@ -367,9 +367,12 @@ authenticating with the long-lived `authn` service JWT. Two resolution paths:
   `restactions` write rule with it. snowplow's cluster-wide `get` on `restactions` for
   group `authn` stays: snowplow resolves the RESTAction as authn.
 
-The returned `status` map may override `name`, `email`, `preferredUsername`, `groups`,
-`avatarURL` (`updateConfig`); a wrong type for one of them is `RESTActionFailed`, and
-any other key is ignored.
+The returned `status` map may set `subject`, `name`, `email`, `preferredUsername`,
+`groups`, `avatarURL` (`updateConfig`); a wrong type for one of them is
+`RESTActionFailed`, and any other key is ignored. On OAuth, `name` and `subject` are
+required: `subject` is the provider's stable user id, the identity the name guard
+checks (below). On OIDC, `subject` is ignored: the identity is the ID token's `iss` and
+`sub`, which no RESTAction can change.
 
 The snowplow base URL comes from `SNOWPLOW_SERVICE_HOST`/`SNOWPLOW_SERVICE_PORT` or
 `URL_SNOWPLOW` (default `http://snowplow.krateo-system.svc.cluster.local:8081`,
@@ -391,6 +394,7 @@ from ([#42](https://github.com/krateo-platformops/authn/issues/42),
 |---|---|
 | `authn.krateo.io/strategy` | `basic`, `ldap`, `oauth`, `oidc`, `serviceaccount`; `self` for authn's own identity (`authn-clientconfig`); `unknown` only from the backfill below |
 | `authn.krateo.io/groups` | the certificate's `O=` groups, **newline-separated**, in order; empty for none |
+| `authn.krateo.io/claim` | the identity the username was issued to, as a JSON array `[strategy, issuer, id]` (see [the name guard](#the-name-guard)); since 0.41.0 |
 
 - **Why newlines:** group names can contain commas (OIDC passes IdP names verbatim).
 - **CEL membership test:** `annotations['authn.krateo.io/groups'].split('\n').exists(g, g == 'admins')`.
@@ -426,6 +430,64 @@ authn runs no pruning loop (`config.OwnedBy`, `storage.AuthInfo.Owner`).
   clientconfig has no ServiceAccount mapping; left in place` (with its `notAfter`) and
   counted as `orphaned`. Deleting it is an operator's decision.
 - People's Secrets (basic, LDAP, OAuth, OIDC, step-up) and authn's own have no owner.
+
+### The name guard
+A certificate's CN is a Kubernetes username, and the cluster grants that name whatever
+its RoleBindings and ClusterRoleBindings grant it. An identity source (LDAP, an OAuth
+RESTAction, an OIDC IdP) chooses the name. So before anything is minted, on every login
+and step-up, authn checks that the name may go to this identity
+(`config/guard.go`). Since 0.41.0.
+
+**The subject.** Every login names the identity it proved, stably across logins and
+renames (`userinfo.Subject`):
+
+| Strategy | Issuer | ID |
+|---|---|---|
+| basic | the User's namespace | the User's name |
+| ldap | the LDAPConfig's name | the entry's DN |
+| oauth | the OAuthConfig's name | the RESTAction's `subject` (required) |
+| oidc | the ID token's `iss` | its `sub` (required) |
+| serviceaccount | the ServiceAccount's namespace | its name (a re-created mapping keeps it) |
+
+The claim recorded on the Secret is `[strategy, issuer, id]`. The same person through two
+strategies is two identities.
+
+**The rules**, in order. A refusal is `403` `UsernameUnavailable`, logged as the warn line
+`username refused` with the reason; the response says only that the name isn't
+available. A failed read is `500` `IssuanceFailed`.
+1. An identity source may not take a **reserved** name: `admin`, `administrator`,
+   `root`, `masterclient`, `nodeclient`, `aksservice`, or one starting with `system`,
+   `kube-`, `kubelet`, `cluster-`, `gke-`, `eks-` or `aks-`. The names the platforms give
+   their own components, which the cluster may grant rights to before any binding names
+   them.
+2. If the name's session Secret has a **claim**, the name goes only to that identity.
+3. A Secret written **before claims existed** is adopted by the first login of the
+   strategy that wrote it (`authn.krateo.io/strategy`). A basic User or a mapping also
+   adopts one whose strategy is `unknown` or missing, since an administrator chose its
+   name. An identity source never adopts one of unknown origin.
+4. With no Secret, a basic User or a mapping gets its name: an administrator chose it.
+   An identity source doesn't if an administrator **provisioned** the name as a basic
+   User or a ServiceAccount mapping, or if any RoleBinding or ClusterRoleBinding in the
+   cluster names it as a **User subject**. That covers users the platform binds for its
+   own components, and names bindings were written for before anyone signed in.
+   Bindings written for a person after their first login belong to their claim.
+
+**Groups.** No login may issue a `system:` group, from any source: `403`
+`SystemGroupNotAllowed`. Kubernetes' CertificateSubjectRestriction admission only blocks
+`system:masters`; other `system:` groups (`system:nodes`, `system:bootstrappers`) would
+otherwise pass.
+
+**Operating it.**
+- The RBAC check lists every RoleBinding and ClusterRoleBinding, so the chart grants
+  authn `list` on both. It runs only on an identity source's first claim of a name; a
+  claimed name is decided from its Secret.
+- Deleting a person's clientconfig Secret releases the claim. If a binding still names
+  them, their next login is then refused until an administrator removes or rewrites that
+  binding.
+- Two first logins of different identities with the same new name, at the same moment,
+  can both pass the check. The write settles it: storing over a Secret claimed by
+  another identity is refused (`UsernameUnavailable`), and the certificate just minted
+  is neither stored nor returned (`storage.ErrClaimedByAnother`).
 
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response

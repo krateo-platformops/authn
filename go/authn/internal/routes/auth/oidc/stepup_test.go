@@ -179,7 +179,7 @@ func oidcEnv(t *testing.T, extraSpec string, claims map[string]any) *rest.Config
 
 	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c := map[string]any{
-			"iss": testIssuer, "aud": "portal", "exp": float64(time.Now().Add(time.Hour).Unix()),
+			"iss": testIssuer, "sub": "idp-user-1", "aud": "portal", "exp": float64(time.Now().Add(time.Hour).Unix()),
 			"preferred_username": "alice", "name": "Alice", "picture": "p", "email": "alice@example.com",
 			"groups": []any{"devs", "krateo:loa:2"}, // an IdP trying to assert the reserved group
 		}

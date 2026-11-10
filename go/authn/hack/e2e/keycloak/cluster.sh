@@ -175,6 +175,9 @@ OIDC_NAME=keycloak OIDC_NAME_STALE=keycloak-stale OIDC_NAME_SWEEP=keycloak-sweep
   "$HERE/stepup.sh"
 RC=$?
 
+step "guard.sh"
+OIDC_NAME=keycloak AUTHN_NAMESPACE=$NS WORKDIR=$WORKDIR/guard "$HERE/guard.sh" || RC=1
+
 step "authn warnings and errors"
 kubectl -n "$NS" logs deploy/authn | jq -Rrc 'fromjson? | select(.level=="error" or .level=="warn") | {level, message, error}' 2>/dev/null | sort | uniq -c | head -20
 echo "authn running imageID: $IMAGE_ID"

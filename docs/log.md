@@ -14,6 +14,30 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-10 — A username goes only to the identity it was issued to
+
+A certificate's CN is a Kubernetes username, and the cluster grants that name whatever
+its bindings grant it. OAuth and OIDC usernames came from the identity source's
+`preferredUsername`, and nothing tied a name to the identity it was first issued to, or
+kept an identity source away from names the cluster already grants rights to. Diego
+chose the design: a username goes only to the identity it was first issued to, and an
+identity source may not take a name the cluster already grants rights to.
+
+What changed (0.41.0):
+- Every login names a stable subject: the OIDC `iss` and `sub`, the OAuth RESTAction's new
+  required `subject`, the LDAP DN, the basic User, the ServiceAccount. It is recorded on
+  the session Secret as `authn.krateo.io/claim`.
+- Before minting, the name guard refuses (`403` `UsernameUnavailable`) a name claimed by
+  another identity; and, for identity sources, a reserved name, a name an administrator
+  provisioned, or a name any RoleBinding or ClusterRoleBinding names as a User. The
+  write re-checks the claim, so two simultaneous first logins can't both keep a name.
+- Secrets from before the guard are adopted by the first login of the strategy that
+  wrote them (Diego's choice). An identity source never adopts a Secret of unknown
+  origin.
+- No login issues a `system:` group (`403` `SystemGroupNotAllowed`); Kubernetes only
+  blocks `system:masters` itself.
+- The chart grants `list` on RoleBindings and ClusterRoleBindings.
+
 ## 2026-11-09 — a service identity's Secret goes away with its mapping
 
 core-provider 2.13.77 deleted a retired composition controller's `cdc-…-clientconfig`

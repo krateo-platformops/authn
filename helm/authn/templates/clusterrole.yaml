@@ -51,6 +51,16 @@ rules:
   - get
   - list
   - watch
+# allow listing RoleBindings and ClusterRoleBindings: before an identity source
+# (ldap, oauth, oidc) is first issued a username, authn checks that no binding
+# already grants rights to that name (the name guard, authn >= 0.41.0).
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - rolebindings
+  - clusterrolebindings
+  verbs:
+  - list
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/configmaps"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -110,6 +112,14 @@ func Storage(s storage.AuthInfoStorage) GeneratorOption {
 	}
 }
 
+// Lookup replaces the cluster reads the name guard decides from (see
+// nameGuard). Tests use it; authn reads the cluster.
+func Lookup(l NameLookup) GeneratorOption {
+	return func(g *kubeconfigGenerator) {
+		g.lookup = l
+	}
+}
+
 func NewGenerator(restConfig *rest.Config, opts ...GeneratorOption) Generator {
 	gen := &kubeconfigGenerator{
 		restconfig: restConfig,
@@ -121,6 +131,14 @@ func NewGenerator(restConfig *rest.Config, opts ...GeneratorOption) Generator {
 
 	if gen.store == nil {
 		gen.store = storage.Default(gen.restconfig)
+	}
+	if gen.lookup == nil {
+		l, err := newClusterLookup(gen.restconfig)
+		if err != nil {
+			gen.lookupErr = err
+		} else {
+			gen.lookup = l
+		}
 	}
 
 	return gen
@@ -137,6 +155,22 @@ type kubeconfigGenerator struct {
 	restconfig    *rest.Config
 	store         storage.AuthInfoStorage
 	log           zerolog.Logger
+	lookup        NameLookup
+	lookupErr     error
+}
+
+// admit checks user's groups for `system:` ones, then asks the name guard
+// whether user's username may be issued to it, and returns the claim to
+// record.
+func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Info) (string, error) {
+	if err := checkSystemGroups(user); err != nil {
+		return "", err
+	}
+	if g.lookupErr != nil {
+		return "", fmt.Errorf("building the name guard's cluster client: %w", g.lookupErr)
+	}
+	guard := nameGuard{lookup: g.lookup, log: g.log}
+	return guard.admit(context.Background(), strategy, user)
 }
 
 func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) ([]byte, time.Time, error) {
@@ -145,9 +179,13 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 	if err := g.checkGroups(userInfo, false); err != nil {
 		return nil, notAfter, err
 	}
+	claim, err := g.admit(strategy, userInfo)
+	if err != nil {
+		return nil, notAfter, err
+	}
 
 	o := NewIssueOptions(opts...)
-	certInfo, clusterInfo, notAfter, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner)
+	certInfo, clusterInfo, notAfter, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner, claim)
 	if err != nil {
 		return nil, notAfter, err
 	}
@@ -191,7 +229,11 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	if err := g.checkGroups(userInfo, true); err != nil {
 		return time.Time{}, err
 	}
-	_, _, notAfter, err := g.issue(strategy, userInfo, ttl, true, nil)
+	claim, err := g.admit(strategy, userInfo)
+	if err != nil {
+		return time.Time{}, err
+	}
+	_, _, notAfter, err := g.issue(strategy, userInfo, ttl, true, nil, claim)
 	return notAfter, err
 }
 
@@ -233,7 +275,7 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 
 // issue mints a certificate for userInfo valid for duration and stores it as
 // the user's session or step-up credential.
-func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference) (CertInfo, ClusterInfo, time.Time, error) {
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference, claim string) (CertInfo, ClusterInfo, time.Time, error) {
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
@@ -247,12 +289,20 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 		return certInfo, clusterInfo, notAfter, err
 	}
 
-	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner)
+	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner, claim)
+	if errors.Is(err, storage.ErrClaimedByAnother) {
+		// Another identity claimed the name between the guard and this write.
+		// The certificate just minted is never stored or returned.
+		g.log.Warn().Str("username", userInfo.GetUserName()).Str("claim", claim).Err(err).Msg("username refused")
+		err = status.RefusedPrivately(status.CauseUsernameUnavailable,
+			fmt.Errorf("the username %q isn't available to this identity", userInfo.GetUserName()), err)
+	}
 	return certInfo, clusterInfo, notAfter, err
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference) error {
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference, claim string) error {
 	nfo := storage.AuthInfo{
+		Claim:    claim,
 		Owner:    owner,
 		StepUp:   stepUp,
 		Strategy: strategy,

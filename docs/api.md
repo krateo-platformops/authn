@@ -27,7 +27,7 @@ operator namespace** (`POD_NAMESPACE`).
 | `users.basic.authn.krateo.io` | `User` | A basic-auth user: `spec.passwordRef` (Secret selector, required), `displayName`, `avatarURL`, `groups[]`. `metadata.name` is the username. |
 | `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`, optional `delegation` {`allowed`, `maxDepth` (3, 1–8)} lets the service use `POST /delegate`, optional `principal` (`agent`, `controller` or `service`, the default) is signed into its tokens as the `principal` claim. `metadata.name` is the issued username. |
 | `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`; optional `groupSearch` {`baseDN` (`spec.baseDN`), `filter` (`(\|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute` (`cn`)} finds the user's groups (#72, [below](#ldap-group-search)). |
-| `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. |
+| `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. Sign-in needs `restActionRef`: its answer names the user, and must carry `subject`, the provider's stable user id (since 0.41.0). |
 | `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `redirectURI`, optional `clientSecret` (omitted: a public client, which sends no `client_secret` and must send a PKCE verifier), plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `allowedGroups[]` admits only users holding at least one of those groups (others get `403 GroupNotAllowed`); optional `additionalScopes`, `restActionRef`, `graphics`. |
 
 `graphics` (`icon`, `displayName`, `backgroundColor`, `textColor`) styles the
@@ -113,6 +113,17 @@ form both answer `403`, for instance, but only one of them has something to rety
 | Retry later | authn or a dependency failed, possibly for a moment. Retry; if it persists, tell an administrator |
 | Fix the client | The request is malformed: a bug in the caller, not something a person can fix |
 
+### Refusals every login shares
+
+Every login that issues a credential (basic, ldap, oauth, oidc, `/oidc/stepup`,
+`/serviceaccount/login`) can also answer these, after the identity is proven and before
+anything is minted ([behavior](./behavior.md#the-name-guard)):
+
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `UsernameUnavailable` | 403 | authn won't issue this username to this identity: it was issued to another identity, an administrator provisioned it as a basic User or ServiceAccount mapping, a RoleBinding or ClusterRoleBinding already grants rights to it, or it is reserved (`system*`, `kube-*`, `kubelet*`, `cluster-*`, `admin`, …). The last three apply to identity sources (ldap, oauth, oidc) only. The message says only that the name isn't available; the warn line `username refused` says why | Tell an administrator |
+| `SystemGroupNotAllowed` | 403 | The identity carries a `system:` group (from an IdP claim, a RESTAction, LDAP, a basic User or a mapping). Kubernetes reserves that prefix for identities the apiserver vouches for | Tell an administrator |
+
 A cause means the same in every table, with two exceptions. `AudienceMismatch` is the
 service account's token on `/serviceaccount/login` (fix the client) and the IdP's ID
 token on `/oidc/login` (tell an administrator). `TokenExpired` here is always the **ID
@@ -187,7 +198,7 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `IssuerMismatch` | 403 | `iss` isn't the expected issuer (exact match, including any trailing `/`) | Tell an administrator |
 | `AudienceMismatch` | 403 | `aud` doesn't include `clientID`, or there are several audiences and `azp` isn't `clientID` | Tell an administrator |
 | `TokenExpired` | 403 | The ID token the IdP just issued has an `exp` more than 1 minute in the past (not the caller's Krateo session). Repeating means the clocks of authn and the IdP disagree | Start the sign-in again |
-| `IDTokenInvalid` | 403 | The ID token can't be decoded, `aud`/`exp` is missing or malformed, or a claim authn reads has the wrong type (`groups` not a list of strings; `preferred_username`, `name`, `picture`, `email` or `acr` not a string; `auth_time` not a number). A `null` claim counts as omitted | Tell an administrator |
+| `IDTokenInvalid` | 403 | The ID token can't be decoded, `aud`/`exp` is missing or malformed, or a claim authn reads has the wrong type (`groups` not a list of strings; `preferred_username`, `name`, `picture`, `email` or `acr` not a string; `auth_time` not a number), or it has no `sub` (or an empty one), which names the identity. A `null` claim counts as omitted | Tell an administrator |
 | `GroupNotAllowed` | 403 | `spec.allowedGroups` is set and the user holds none of those groups (after the RESTAction, and after reserved `krateo:loa:` groups are stripped). Applies to `/oidc/stepup` too | Ask for access |
 | `IssuerUnknown` | 500 | The OIDCConfig has neither `discoveryURL` nor `issuer` | Tell an administrator |
 | `IssuerConflict` | 500 | `spec.issuer` differs from the discovery document's `issuer` | Tell an administrator |
@@ -218,7 +229,7 @@ any failed code exchange answered `417`.
 | `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig | Retry later |
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key | Retry later |
 | `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token type isn't `bearer` (in any case, RFC 6749 §7.1) while a RESTAction needs it | Retry later |
-| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity (see `/oidc/login`) | Retry later |
+| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity (see `/oidc/login`). Its answer must carry `name` and `subject`, the provider's stable user id (for GitHub `(.userInfo.id\|tostring)`); without `subject`, authn can't tell this user from one who takes the same login later. An OAuthConfig without `restActionRef` identifies no one and answers this too | Tell an administrator |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 ### `/oidc/stepup` failures

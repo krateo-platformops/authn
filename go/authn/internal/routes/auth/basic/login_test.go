@@ -16,6 +16,7 @@ import (
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,10 +26,12 @@ import (
 type fakeGenerator struct {
 	calls int
 	err   error
+	info  userinfo.Info // the identity of the last Generate
 }
 
-func (g *fakeGenerator) Generate(storage.Strategy, userinfo.Info, ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
 	g.calls++
+	g.info = nfo
 	if g.err != nil {
 		return nil, time.Time{}, g.err
 	}
@@ -256,9 +259,32 @@ func TestLoginSucceeds(t *testing.T) {
 	assert.Equal(t, 1, gen.calls)
 	assert.Contains(t, rec.Body.String(), "accessToken")
 	assert.Contains(t, rec.Body.String(), `"strategy":{"kind":"basic"}`, "basic has no config to name")
+	assert.Equal(t, userinfo.Subject{Issuer: "krateo-system", ID: "admin"}, gen.info.GetSubject(),
+		"a basic identity is its User, by namespace and name")
 }
 
 func lastLine(b []byte) []byte {
 	lines := bytes.Split(bytes.TrimSpace(b), []byte("\n"))
 	return lines[len(lines)-1]
+}
+
+// A username the name guard won't issue is refused with its own cause, not
+// turned into a 500: the caller learns the sign-in won't work, and why in
+// general terms.
+func TestLoginAnswersTheNameGuardsRefusal(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "krateo-system")
+	srv := fakeAPIServer(t, reply{code: 200, body: userAdmin}, reply{code: 200, body: secretWith("password", "s3cret")})
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	gen := &fakeGenerator{err: status.Refused(status.CauseUsernameUnavailable, errors.New(`the username "admin" isn't available to this identity`))}
+	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+
+	req := httptest.NewRequest(http.MethodGet, Path, nil)
+	req.SetBasicAuth("admin", "s3cret")
+	rec := httptest.NewRecorder()
+	route.Handler().ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"reason":"UsernameUnavailable"`)
+	assert.NotContains(t, rec.Body.String(), "accessToken")
 }
