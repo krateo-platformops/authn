@@ -100,7 +100,7 @@ func TestDoLogin(t *testing.T) {
 				headerBase64 := base64.RawURLEncoding.EncodeToString(headerJSON)
 
 				claims := map[string]interface{}{
-					"iss": testIssuer, "aud": "test-client-id", "exp": float64(time.Now().Add(time.Hour).Unix()),
+					"iss": testIssuer, "sub": "idp-user-1", "aud": "test-client-id", "exp": float64(time.Now().Add(time.Hour).Unix()),
 				}
 				for k, v := range tc.idTokenClaims {
 					claims[k] = v
@@ -306,7 +306,7 @@ func TestDoLoginForwardsCodeVerifier(t *testing.T) {
 				}
 				got = r.PostForm["code_verifier"]
 				claims, _ := json.Marshal(map[string]interface{}{
-					"iss": testIssuer, "aud": "c", "exp": float64(time.Now().Add(time.Hour).Unix()),
+					"iss": testIssuer, "sub": "idp-user-1", "aud": "c", "exp": float64(time.Now().Add(time.Hour).Unix()),
 					"preferred_username": "u", "name": "n", "picture": "p", "email": "e",
 				})
 				_ = json.NewEncoder(w).Encode(TokenResponse{

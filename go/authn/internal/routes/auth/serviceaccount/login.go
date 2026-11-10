@@ -113,8 +113,9 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// the garbage collector, without needing delete rights on Secrets.
 		_, notAfter, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner))
 		if err != nil {
-			log.Err(err).Msg("kubeconfig creation failure")
-			encode.Failure(wri, status.FromError(status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))))
+			err = status.IssueFailure("clientconfig", err)
+			status.LogFailure(*log, err).Msg("kubeconfig creation failure")
+			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
@@ -146,7 +147,13 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 	exts.Add("name", mapping.Spec.DisplayName)
 
 	uid, _ := shortid.Generate()
-	return userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts), Principal(mapping), mapping.OwnerReference(), nil
+	nfo := userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts)
+	// The ServiceAccount, not the mapping: a mapping re-created for the same
+	// ServiceAccount is the same identity, under a new UID.
+	if ref := mapping.Spec.ServiceAccountRef; ref != nil {
+		nfo.Subject = userinfo.Subject{Issuer: ref.Namespace, ID: ref.Name}
+	}
+	return nfo, Principal(mapping), mapping.OwnerReference(), nil
 }
 
 // Principal is the kind of identity a ServiceAccount mapping declares in

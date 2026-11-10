@@ -29,6 +29,7 @@ type fakeGenerator struct {
 	calls      []string
 	strategies []storage.Strategy
 	owners     []*metav1.OwnerReference
+	subjects   []userinfo.Subject
 	err        error
 }
 
@@ -36,6 +37,7 @@ func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, 
 	g.strategies = append(g.strategies, strategy)
 	g.owners = append(g.owners, kubeconfig.NewIssueOptions(opts...).Owner)
 	g.calls = append(g.calls, user.GetUserName())
+	g.subjects = append(g.subjects, user.GetSubject())
 	if g.err != nil {
 		return nil, time.Time{}, g.err
 	}
@@ -135,6 +137,8 @@ func TestHandlerOmitsKubeconfigFromResponse(t *testing.T) {
 		Name:       "cdc-identity",
 		UID:        "0b1f6c1e-2d6a-4b8e-9c3f-5a7e8d9f0a1b",
 	}, gen.owners[0], "the Secret is owned by the mapping that authenticated, by its UID, so retiring the mapping retires the credential")
+	assert.Equal(t, []userinfo.Subject{{Issuer: "krateo-system", ID: "cdc"}}, gen.subjects,
+		"a service identity is its ServiceAccount, which a re-created mapping keeps")
 
 	var out map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))

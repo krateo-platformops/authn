@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -20,6 +21,10 @@ const (
 	// group names through verbatim). A CEL policy tests membership with
 	// annotations['authn.krateo.io/groups'].split('\n').exists(g, g == 'x').
 	GroupsAnnotation = "authn.krateo.io/groups"
+	// ClaimAnnotation records the identity a username was issued to, as
+	// EncodeClaim renders it. authn issues that username again only to the
+	// same identity (see config's name guard).
+	ClaimAnnotation = "authn.krateo.io/claim"
 
 	groupSeparator = "\n"
 )
@@ -84,4 +89,13 @@ func SplitGroups(v string) []string {
 		return []string{}
 	}
 	return strings.Split(v, groupSeparator)
+}
+
+// EncodeClaim renders the identity a username is issued to: the strategy, the
+// subject's issuer and its ID, as a JSON array. JSON keeps the three apart
+// whatever they contain (an OIDC issuer is a URL, an LDAP DN has commas), so
+// two claims are the same identity exactly when their strings are equal.
+func EncodeClaim(strategy Strategy, issuer, id string) string {
+	b, _ := json.Marshal([]string{string(strategy), issuer, id})
+	return string(b)
 }

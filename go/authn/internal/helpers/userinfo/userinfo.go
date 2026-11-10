@@ -28,9 +28,27 @@ func NewStepUpUser(base Info, level int) *DefaultUser {
 		ID:         base.GetID(),
 		Groups:     groups,
 		Extensions: base.GetExtensions(),
+		Subject:    base.GetSubject(),
 		dropped:    base.DroppedGroups(),
 	}
 }
+
+// Subject names the identity an identity source authenticated, stably across
+// logins and renames, so authn can tell whether a username it is about to issue
+// belongs to the same identity it was issued to before. Issuer scopes ID: two
+// identity sources may reuse each other's IDs, never the same Issuer.
+//   - basic: the User's namespace, and its name;
+//   - ldap: the LDAPConfig's name, and the entry's DN;
+//   - oauth: the OAuthConfig's name, and the RESTAction's `subject`;
+//   - oidc: the ID token's `iss`, and its `sub`;
+//   - serviceaccount: the ServiceAccount's namespace, and its name.
+type Subject struct {
+	Issuer string
+	ID     string
+}
+
+// IsZero reports whether no identity source set s.
+func (s Subject) IsZero() bool { return s.Issuer == "" && s.ID == "" }
 
 // IsReserved reports whether group is one only authn may grant.
 func IsReserved(group string) bool {
@@ -74,6 +92,9 @@ type Info interface {
 	GetExtensions() Extensions
 	// SetExtensions to contain additional information.
 	SetExtensions(exts Extensions)
+	// GetSubject returns the identity the identity source authenticated (see
+	// Subject). Unlike GetID, it is the same at every login.
+	GetSubject() Subject
 }
 
 // DefaultUser implement Info interface and provides a simple user information.
@@ -82,8 +103,14 @@ type DefaultUser struct {
 	ID         string
 	Groups     []string
 	Extensions Extensions
+	Subject    Subject
 
 	dropped []string
+}
+
+// GetSubject returns the identity the identity source authenticated.
+func (d *DefaultUser) GetSubject() Subject {
+	return d.Subject
 }
 
 // GetUserName returns the name that uniquely identifies this user among all

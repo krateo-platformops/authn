@@ -172,10 +172,12 @@ but `groups` are read **only** from the ID token (`oidc/support.go:149-156`). An
 that returns groups only on UserInfo will yield a user with no groups (and therefore
 no RBAC), unless a `restActionRef` supplies them.
 
-## RESTAction enrichment can only set five keys
-The `status` map snowplow returns may override exactly `name`, `email`,
+## RESTAction enrichment can only set six keys
+The `status` map snowplow returns may set exactly `subject`, `name`, `email`,
 `preferredUsername`, `groups`, `avatarURL` (`updateConfig`). Any other key is ignored,
-not an error. A RESTAction must read the user's token as `${ .token }`, in a stage
+not an error. On OAuth, `subject` is required since 0.41.0: GitHub's is
+`"subject": (.userInfo.id|tostring)`, a string. A number, or no `subject`, fails
+sign-in with `500` `RESTActionFailed`. A RESTAction must read the user's token as `${ .token }`, in a stage
 header (never a path). There is no copy-and-inject fallback any more.
 
 ## Basic-auth passwords are stored in plaintext

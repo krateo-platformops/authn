@@ -166,6 +166,8 @@ func TestGroupSearch(t *testing.T) {
 			assert.NoError(t, err, "the group filter is a valid LDAP filter")
 
 			require.NotNil(t, gen.info)
+			assert.Equal(t, "corp", gen.info.GetSubject().Issuer, "an LDAP identity is issued by its LDAPConfig")
+			assert.Equal(t, srvLDAP.user(), gen.info.GetSubject().ID, "and named by its entry's DN")
 			if tc.want == nil {
 				assert.Empty(t, gen.info.GetGroups())
 			} else {

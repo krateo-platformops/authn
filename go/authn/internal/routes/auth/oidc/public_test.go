@@ -29,7 +29,7 @@ func tokenEndpoint(t *testing.T) (*httptest.Server, *[]map[string][]string) {
 		require.NoError(t, r.ParseForm())
 		forms = append(forms, r.PostForm)
 		claims, _ := json.Marshal(map[string]interface{}{
-			"iss": testIssuer, "aud": "c", "exp": float64(time.Now().Add(time.Hour).Unix()),
+			"iss": testIssuer, "sub": "idp-user-1", "aud": "c", "exp": float64(time.Now().Add(time.Hour).Unix()),
 			"preferred_username": "u", "name": "n", "picture": "p", "email": "e",
 		})
 		_ = json.NewEncoder(w).Encode(TokenResponse{

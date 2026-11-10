@@ -2,10 +2,12 @@ package storage
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
@@ -83,6 +85,10 @@ type AuthInfo struct {
 	// recorded as an annotation on the Secret, never in the kubeconfig.
 	Strategy Strategy `json:"-"`
 
+	// Claim, when set, is recorded as ClaimAnnotation: the identity this
+	// username was issued to (EncodeClaim).
+	Claim string `json:"-"`
+
 	// StepUp stores the credential as the user's step-up credential
 	// (StepUpSecretName) instead of their session credential.
 	StepUp bool `json:"-"`
@@ -135,6 +141,9 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 	for k, v := range identity {
 		annotations[k] = v
 	}
+	if nfo.Claim != "" {
+		annotations[ClaimAnnotation] = nfo.Claim
+	}
 	sec.SetAnnotations(annotations)
 	if nfo.Owner != nil {
 		sec.SetOwnerReferences([]metav1.OwnerReference{*nfo.Owner})
@@ -156,5 +165,22 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 		return err
 	}
 
+	// The Secret exists. If it is claimed by another identity, this write would
+	// hand that identity's name to this one: two first logins of the same new
+	// name can both pass the name guard, and only one may be stored.
+	if nfo.Claim != "" {
+		have, err := secrets.Get(context.TODO(), st.rc, &core.SecretKeySelector{Name: sec.Name, Namespace: ns})
+		if err != nil {
+			return fmt.Errorf("reading the existing Secret %s: %w", sec.Name, err)
+		}
+		if c := have.GetAnnotations()[ClaimAnnotation]; c != "" && c != nfo.Claim {
+			return fmt.Errorf("%w: %s is claimed by %s", ErrClaimedByAnother, sec.Name, c)
+		}
+	}
+
 	return secrets.Update(context.TODO(), st.rc, &sec)
 }
+
+// ErrClaimedByAnother: Put found the Secret claimed by another identity, and
+// stored nothing.
+var ErrClaimedByAnother = stderrors.New("the username is claimed by another identity")

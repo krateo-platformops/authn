@@ -29,6 +29,9 @@ const (
 )
 
 type ldapConfig struct {
+	// name is the LDAPConfig's name, the issuer of the subjects it
+	// authenticates (userinfo.Subject).
+	name       string
 	dialURL    string
 	bindDN     string
 	bindSecret string
@@ -97,6 +100,7 @@ func getConfig(rc *rest.Config, name string) (ldapConfig, error) {
 	}
 
 	res := ldapConfig{
+		name:    name,
 		dialURL: cfg.Spec.DialURL,
 		baseDN:  cfg.Spec.BaseDN,
 		bindDN:  ptr.Deref(cfg.Spec.BindDN, ""),
@@ -223,7 +227,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 
 	// The user's groups are exactly what the group search found (#72): the
 	// user entry's own attributes (e.g. ou) are not groups.
-	return ldapEntryToUserInfo(user, groupNames(groupSR.Entries, cfg.groupNameAttr)), nil
+	return ldapEntryToUserInfo(user, groupNames(groupSR.Entries, cfg.groupNameAttr), cfg.name), nil
 }
 
 // groupNames names each group entry by its nameAttr value, in order and
@@ -276,8 +280,9 @@ func serverFailure(cause status.CauseType, err error) error {
 }
 
 // ldapEntryToUserInfo is the identity of the user entry, with groups (from the
-// group search). NewDefaultUser drops reserved groups (krateo:loa:).
-func ldapEntryToUserInfo(entry *ldap.Entry, groups []string) userinfo.Info {
+// group search). NewDefaultUser drops reserved groups (krateo:loa:). Its
+// subject is the entry's DN, issued by the LDAPConfig named config.
+func ldapEntryToUserInfo(entry *ldap.Entry, groups []string, config string) userinfo.Info {
 	exts := userinfo.Extensions{}
 	exts.Add("name", entry.GetAttributeValue("cn"))
 	exts.Add("email", entry.GetAttributeValue("mail"))
@@ -288,6 +293,7 @@ func ldapEntryToUserInfo(entry *ldap.Entry, groups []string) userinfo.Info {
 	nfo := userinfo.NewDefaultUser(
 		entry.GetAttributeValue("uid"), uid,
 		groups, exts)
+	nfo.Subject = userinfo.Subject{Issuer: config, ID: entry.DN}
 
 	return nfo
 }

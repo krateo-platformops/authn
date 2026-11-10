@@ -150,7 +150,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		dat, notAfter, err := r.gen.Generate(storage.StrategyBasic, user)
 		if err != nil {
-			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
 			encode.Failure(wri, status.FromError(err))
 			return
@@ -225,6 +225,7 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 
 	uid, _ := shortid.Generate()
 	nfo := userinfo.NewDefaultUser(usr.Name, uid, usr.Spec.Groups, exts)
+	nfo.Subject = userinfo.Subject{Issuer: usr.Namespace, ID: usr.Name}
 	return nfo, nil
 }
 

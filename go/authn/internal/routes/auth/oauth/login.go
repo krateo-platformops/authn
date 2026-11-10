@@ -158,6 +158,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			if err == nil {
 				if v, ok := additionalFieldstoReplace["name"].(string); !ok || v == "" {
 					err = errors.New("the RESTAction's answer has no name")
+				} else if v, ok := additionalFieldstoReplace["subject"].(string); !ok || v == "" {
+					// Without the provider's stable id, authn can't tell this
+					// user from another who takes the same login later.
+					err = errors.New(`the RESTAction's answer has no subject (the provider's stable user id, e.g. "subject": (.userInfo.id|tostring))`)
 				}
 			}
 			if err != nil {
@@ -177,7 +181,16 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", userinfo.name, userinfo.preferredUsername, userinfo.email, userinfo.groups, userinfo.avatarURL)
 		}
 
-		user := r.validate(userinfo)
+		if restactionRef == nil {
+			// Only a RESTAction can say who signed in: an OAuthConfig
+			// without one identifies no one.
+			err := status.Failed(CauseRESTActionFailed, errors.New("the OAuthConfig has no restActionRef, so authn can't identify the user"))
+			status.LogFailure(log, err).Str("name", name).Msg("unable to identify the user")
+			encode.Failure(wri, status.FromError(err))
+			return
+		}
+
+		user := r.validate(name, userinfo)
 		log.Info().
 			Str("user", user.GetUserName()).
 			Strs("groups", user.GetGroups()).
@@ -185,7 +198,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		dat, notAfter, err := r.gen.Generate(storage.StrategyOAuth, user)
 		if err != nil {
-			err = status.Failed(CauseIssuanceFailed, fmt.Errorf("issuing clientconfig: %w", err))
+			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
 			encode.Failure(wri, status.FromError(err))
 			return
@@ -206,14 +219,16 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 	}
 }
 
-func (r *loginRoute) validate(user userInfo) userinfo.Info {
+func (r *loginRoute) validate(config string, user userInfo) userinfo.Info {
 	exts := userinfo.Extensions{}
 	exts.Add("name", user.name)
 	exts.Add("email", user.email)
 	exts.Add("avatarUrl", user.avatarURL)
 
 	uid, _ := shortid.Generate()
-	return userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(user.preferredUsername), uid, user.groups, exts)
+	nfo := userinfo.NewDefaultUser(kubeutil.MakeDNS1123Compatible(user.preferredUsername), uid, user.groups, exts)
+	nfo.Subject = userinfo.Subject{Issuer: config, ID: user.subject}
+	return nfo
 }
 
 // classifyExchange gives a failed code exchange its cause: the token
