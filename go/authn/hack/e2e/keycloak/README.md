@@ -1,6 +1,6 @@
-# Step-up e2e against a real Keycloak
+# Step-up and name-guard e2e against a real Keycloak
 
-These scripts test authn's step-up (`POST /oidc/stepup`) against a real Keycloak. They check
+These scripts test authn's step-up (`POST /oidc/stepup`) and its name guard against a real Keycloak. They check
 the `acr` and `auth_time` claims Keycloak actually issues, which a mock IdP can't show.
 
 | Script | What it does | Needs |
@@ -9,6 +9,7 @@ the `acr` and `auth_time` claims Keycloak actually issues, which a mock IdP can'
 | `stepup.sh` | Drives Keycloak's login pages with curl, starting from the URLs authn's `/strategies` advertises. It posts the codes to authn and checks the answers. | bash ≥ 4.4, curl, jq, openssl, od/sed/awk/base64 (kubectl only with `KUBECTL_CHECKS=1`) |
 | `cluster.sh` | The harness on an existing cluster (`KUBECONFIG`): authn from its helm chart (a published release, or a local chart), Keycloak, OIDCConfigs in `NS`, then the two scripts above. | kubectl, helm, plus the above |
 | `kind.sh` | A kind cluster and authn built from `REF`, then `cluster.sh` on it. | git, docker, kind, plus the above |
+| `guard.sh` | The name guard against the same Keycloak and apiserver: a name a ClusterRoleBinding names as a User, the same name re-created in Keycloak with a new `sub`, a `system:` group, a reserved name. `cluster.sh` runs it after `stepup.sh`. It creates and deletes the ClusterRoleBinding `guard-e2e-bound`. | kubectl, plus the above |
 
 The TOTP codes are computed with `openssl dgst -mac HMAC`, so python isn't needed.
 
