@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
@@ -72,6 +73,9 @@ func mappingList(items ...string) string {
 		strings.Join(items, ",") + `]}`
 }
 
+// noAnswer, as an apiReplies code, drops the connection without an answer.
+const noAnswer = -1
+
 func defaultReplies() apiReplies {
 	return apiReplies{tokenReviewCode: 200, tokenReview: reviewOK, mappingsCode: 200, mappings: mappingList(mappingCdc)}
 }
@@ -84,10 +88,19 @@ func fakeAPIServer(t *testing.T, rep ...apiReplies) *httptest.Server {
 	if len(rep) > 0 {
 		cfg = rep[0]
 	}
+	// A non-200 answers with a Status carrying that code, as the apiserver
+	// does; noAnswer drops the connection, so nothing answers at all.
 	reply := func(w http.ResponseWriter, code int, body string) {
+		if code == noAnswer {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+			return
+		}
 		w.WriteHeader(code)
 		if code != http.StatusOK {
-			body = `{"kind":"Status","apiVersion":"v1","status":"Failure","message":"boom","code":500}`
+			body = fmt.Sprintf(`{"kind":"Status","apiVersion":"v1","status":"Failure","message":"boom","code":%d}`, code)
 		}
 		_, _ = w.Write([]byte(body))
 	}

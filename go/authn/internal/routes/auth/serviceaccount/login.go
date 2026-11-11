@@ -10,6 +10,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
 	authnv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -95,8 +97,11 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		user, principal, owner, err := r.validate(req.Context(), token)
+		user, principal, owner, verified, err := r.validate(req.Context(), token)
 		if err != nil {
+			// A caller the TokenReview verified is recorded however it was
+			// refused or failed (authn#132); one refused before that is not.
+			RecordUnmapped(r.audit, req, auditlog.LoginAction(storage.StrategyServiceAccount), verified)
 			status.LogFailure(*log, err).Msg("serviceaccount auth failed")
 			encode.Failure(wri, status.FromError(err))
 			return
@@ -142,11 +147,12 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 }
 
 // validate authenticates the SA token (Authenticate) and builds the issued
-// identity (username = mapping name, groups = mapping spec.groups).
-func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, jwtutil.Principal, metav1.OwnerReference, error) {
-	mapping, err := Authenticate(ctx, r.rc, r.audience, token)
+// identity (username = mapping name, groups = mapping spec.groups). Verified
+// is what Authenticate established, whatever the outcome.
+func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info, jwtutil.Principal, metav1.OwnerReference, Verified, error) {
+	mapping, v, err := Authenticate(ctx, r.rc, r.audience, token)
 	if err != nil {
-		return nil, "", metav1.OwnerReference{}, err
+		return nil, "", metav1.OwnerReference{}, v, err
 	}
 
 	exts := userinfo.Extensions{}
@@ -159,7 +165,7 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 	if ref := mapping.Spec.ServiceAccountRef; ref != nil {
 		nfo.Subject = userinfo.Subject{Issuer: ref.Namespace, ID: ref.Name}
 	}
-	return nfo, Principal(mapping), mapping.OwnerReference(), nil
+	return nfo, Principal(mapping), mapping.OwnerReference(), v, nil
 }
 
 // Principal is the kind of identity a ServiceAccount mapping declares in
@@ -171,15 +177,30 @@ func Principal(mapping *sav1alpha1.ServiceAccount) jwtutil.Principal {
 	return jwtutil.PrincipalService
 }
 
+// Verified is what Authenticate established about its caller, so a route can
+// record a refusal or failure that came after verification (authn#132).
+//
+// User is the TokenReview's username once the token verified for authn's
+// audience, and "" before that: a token addressed elsewhere isn't verified for
+// authn. Denial says why a verified caller was refused at the mapping lookup,
+// and LookupStatus is the apiserver's answer when that lookup failed with one
+// (0 when nothing answered).
+type Verified struct {
+	User         string
+	Denial       auditlog.MappingDenial
+	LookupStatus int
+}
+
 // Authenticate verifies a projected ServiceAccount token through the
 // Kubernetes TokenReview API, bound to audience, and returns the one
 // ServiceAccount mapping (the allowlist) that names its ServiceAccount. Its
 // errors carry this package's causes: a refusal of the caller, or authn's own
-// failure to check.
-func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) (*sav1alpha1.ServiceAccount, error) {
+// failure to check. Verified is set whatever the outcome.
+func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) (*sav1alpha1.ServiceAccount, Verified, error) {
+	var v Verified
 	clientset, err := kubernetes.NewForConfig(rc)
 	if err != nil {
-		return nil, status.Failed(CauseTokenReviewFailed, fmt.Errorf("token review: building the client: %w", err))
+		return nil, v, status.Failed(CauseTokenReviewFailed, fmt.Errorf("token review: building the client: %w", err))
 	}
 
 	tr := &authnv1.TokenReview{
@@ -190,7 +211,7 @@ func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) 
 	}
 	tr, err = clientset.AuthenticationV1().TokenReviews().Create(ctx, tr, metav1.CreateOptions{})
 	if err != nil {
-		return nil, status.Failed(CauseTokenReviewFailed, fmt.Errorf("token review: %w", err))
+		return nil, v, status.Failed(CauseTokenReviewFailed, fmt.Errorf("token review: %w", err))
 	}
 	if !tr.Status.Authenticated {
 		// status.error is the apiserver's verdict on the caller's token
@@ -200,27 +221,53 @@ func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) 
 		if tr.Status.Error != "" {
 			msg += ": " + tr.Status.Error
 		}
-		return nil, status.Refused(CauseTokenNotAuthenticated, errors.New(msg))
+		return nil, v, status.Refused(CauseTokenNotAuthenticated, errors.New(msg))
 	}
 	if !containsAudience(tr.Status.Audiences, audience) {
-		return nil, status.Refused(CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", audience))
+		return nil, v, status.Refused(CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", audience))
 	}
+	// Verified for authn: every refusal or failure from here on is recorded.
+	v.User = tr.Status.User.Username
 
 	saNamespace, saName, err := parseServiceAccountUsername(tr.Status.User.Username)
 	if err != nil {
-		return nil, status.Refused(CauseNotAServiceAccount, err)
+		v.Denial = auditlog.NotAServiceAccount
+		return nil, v, status.Refused(CauseNotAServiceAccount, err)
 	}
 
 	mapping, err := resolvers.ServiceAccountForSA(rc, saNamespace, saName)
 	switch {
 	case errors.Is(err, resolvers.ErrNoMapping):
-		return nil, status.Refused(CauseNoMapping, err)
+		v.Denial = auditlog.MappingMissing
+		return nil, v, status.Refused(CauseNoMapping, err)
 	case errors.Is(err, resolvers.ErrAmbiguousMapping):
-		return nil, status.Refused(CauseAmbiguousMapping, err)
+		v.Denial = auditlog.MappingAmbiguous
+		return nil, v, status.Refused(CauseAmbiguousMapping, err)
 	case err != nil:
-		return nil, status.Failed(CauseMappingLookupFailed, err)
+		// The apiserver's answer to the lookup when it gave one; never authn's
+		// own 500, which is no authority's answer.
+		var answered apierrors.APIStatus
+		if errors.As(err, &answered) {
+			v.LookupStatus = int(answered.Status().Code)
+		}
+		return nil, v, status.Failed(CauseMappingLookupFailed, err)
 	}
-	return mapping, nil
+	return mapping, v, nil
+}
+
+// RecordUnmapped records a caller Authenticate verified but refused or failed
+// at the mapping lookup, under action: denied with its reason, or a failure
+// with the apiserver's answer. A caller refused before verification has no
+// User and gets no record.
+func RecordUnmapped(rec *auditlog.Recorder, req *http.Request, action string, v Verified) {
+	if v.User == "" {
+		return
+	}
+	outcome := audit.OutcomeFailure
+	if v.Denial != auditlog.NoMappingDenial {
+		outcome = audit.OutcomeDenied
+	}
+	rec.Unmapped(req, action, v.User, outcome, v.Denial, v.LookupStatus)
 }
 
 // BearerToken returns the request's Authorization: Bearer token.

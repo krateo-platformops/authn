@@ -190,13 +190,20 @@ type kubeconfigGenerator struct {
 // admit checks user's groups for `system:` ones, then asks the name guard
 // whether user's username may be issued to it, and returns the claim to
 // record.
-func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Info) (string, error) {
+// refuseGroups refuses an identity by its own groups: a system: group, or a
+// krateo: group asserted by an identity source. It reads nothing, and runs
+// before every admission check (Admit), so the identity is refused for what it
+// is before its assurance or a provider's allowedGroups is evaluated: a
+// system: group is never reported as a step-up or allowedGroups refusal
+// (authn#133 review).
+func refuseGroups(strategy storage.Strategy, user userinfo.Info) error {
 	if err := checkSystemGroups(user); err != nil {
-		return "", err
+		return err
 	}
-	if err := checkPlatformGroups(strategy, user); err != nil {
-		return "", err
-	}
+	return checkPlatformGroups(strategy, user)
+}
+
+func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Info) (string, error) {
 	if g.lookupErr != nil {
 		return "", fmt.Errorf("building the name guard's cluster client: %w", g.lookupErr)
 	}
@@ -208,6 +215,9 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 	target := secretFor(userInfo, storage.ClientConfigSecretName)
 	o := NewIssueOptions(opts...)
 	if err := g.checkGroups(userInfo, false); err != nil {
+		return Issued{Secret: g.wouldWrite(target)}, err
+	}
+	if err := refuseGroups(strategy, userInfo); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	if err := o.CheckAdmit(userInfo); err != nil {
@@ -263,6 +273,9 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	target := secretFor(userInfo, storage.StepUpSecretName)
 	o := NewIssueOptions(opts...)
 	if err := g.checkGroups(userInfo, true); err != nil {
+		return Issued{Secret: g.wouldWrite(target)}, err
+	}
+	if err := refuseGroups(strategy, userInfo); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	if err := o.CheckAdmit(userInfo); err != nil {

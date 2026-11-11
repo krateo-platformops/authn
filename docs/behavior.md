@@ -511,17 +511,31 @@ or a log line.
   - `success`, with the apiserver's status for the request that stored the Secret (201 or
     200) and the stored uid;
   - `denied` when authn refused the verified identity: no username, the name guard, a
-    `system:` or `krateo:` group, or an OIDCConfig's `allowedGroups`. The target is the
+    `system:` or `krateo:` group, an OIDCConfig's `allowedGroups`, or a step-up the ID
+    token doesn't prove (not enabled, too low an `acr`, a stale or missing `auth_time`).
+    The target is the
     Secret it would have written, with the verb it would have sent, and no status code,
     since authn refused before asking the apiserver. An identity with no username has no
     Secret name, so its record names the Secret resource in authn's namespace, without a
     name or a verb. `krateo.audit.denial_reason` says why, from a
     closed set: `name_missing`, `name_reserved`, `name_claimed`, `name_held_legacy`,
     `name_provisioned`, `name_bound`, `system_group`, `platform_group`,
-    `group_not_allowed`. The HTTP answer stays opaque;
-  - `failure` when the issuance failed after verification.
+    `group_not_allowed`, `stepup_not_enabled`, `insufficient_assurance`,
+    `stale_authentication`. The HTTP answer stays opaque;
+  - `failure` when the issuance failed after verification, a misconfigured
+    `spec.stepUp` included (no status code: no authority was asked).
 
-  A caller refused before verification (wrong password, invalid token) gets no record. On
+  **ServiceAccount login** is verified once the TokenReview authenticates the token for
+  authn's audience. From then on, a refusal at the mapping lookup is `denied`: `no_mapping`
+  (the allowlist doesn't name the ServiceAccount), `ambiguous_mapping` (more than one
+  mapping does), or `not_a_service_account` (the token's user isn't one). A failed lookup is
+  a `failure` that carries the apiserver's code when it answered, and none when nothing
+  answered. No mapping can be named, so the actor is the TokenReview's username and the
+  target is the mapping resource (`serviceaccounts.serviceaccount.authn.krateo.io`) in
+  authn's namespace, without a name or a verb.
+
+  A caller refused before verification (wrong password, invalid token, a ServiceAccount
+  token addressed to another audience) gets no record. On
   an OAuth or OIDC callback the record keeps the path only, because the query carries the
   authorization code and state.
 - **`/delegate`.** The actor is the mapping's name, of the class its `spec.principal`
@@ -531,7 +545,9 @@ or a log line.
   refused subject token: `subject_token_expired` when it verified but has lapsed or is
   about to, `subject_token_invalid` when it didn't verify (a bad signature, a kid authn
   has no key for, including a retired one, or malformed). Both answer `401`
-  `SubjectTokenInvalid`. It's `failure` when signing fails.
+  `SubjectTokenInvalid`. It's `failure` when signing fails. An actor refused or failed at
+  its mapping lookup is recorded as on ServiceAccount login (above), under
+  `authn.delegate`.
 - **Background.** The sweep's deletes and the writes of authn's own certificate (its first
   issue and every renewal) are `controller` rows from a second scope
   (`github.com/krateo-platformops/authn/audit/controller`), with authn's own

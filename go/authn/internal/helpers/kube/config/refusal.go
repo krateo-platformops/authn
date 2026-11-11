@@ -3,7 +3,8 @@ package config
 import "errors"
 
 // Refusal is why authn refused a verified identity a credential: no username,
-// the name guard's reasons, and a system: or krateo: group. An audit record carries it as its
+// the name guard's reasons, a system: or krateo: group, an OIDCConfig's
+// allowedGroups, and a step-up the ID token doesn't prove. An audit record carries it as its
 // closed-set denial reason (AUDIT-4); the HTTP answer stays opaque.
 type Refusal string
 
@@ -32,6 +33,15 @@ const (
 	RefusalGroupNotAllowed Refusal = "group_not_allowed"
 	// RefusalPlatformGroup: an identity source asserted a `krateo:` group.
 	RefusalPlatformGroup Refusal = "platform_group"
+	// RefusalStepUpNotEnabled: a step-up was asked of an OIDCConfig without
+	// spec.stepUp.
+	RefusalStepUpNotEnabled Refusal = "stepup_not_enabled"
+	// RefusalInsufficientAssurance: the step-up's ID token has an acr that
+	// isn't one of spec.stepUp.acrValues.
+	RefusalInsufficientAssurance Refusal = "insufficient_assurance"
+	// RefusalStaleAuthentication: the step-up's ID token has no auth_time, or
+	// an authentication older than spec.stepUp.maxAge.
+	RefusalStaleAuthentication Refusal = "stale_authentication"
 )
 
 // refusedError carries a Refusal beside the status error the caller answers
@@ -50,7 +60,8 @@ func refused(reason Refusal, err error) error { return refusedError{reason: reas
 // Refusals lists every Refusal, for a caller that maps them (the audit record's
 // denial reason) to prove its map complete.
 var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
-	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup}
+	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup,
+	RefusalStepUpNotEnabled, RefusalInsufficientAssurance, RefusalStaleAuthentication}
 
 // Refused marks err, the status error a caller answers with, as a refusal of a
 // verified identity for reason (see Admit).

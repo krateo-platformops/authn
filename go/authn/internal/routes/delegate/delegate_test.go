@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"fmt"
+	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
@@ -46,6 +48,12 @@ func mappingAs(delegation, principal string) string {
 
 // apiserver answers the TokenReview and the mapping list, and counts calls.
 func apiserver(t *testing.T, mappings string) (*rest.Config, *atomic.Int32) {
+	return apiserverWith(t, reviewOK, http.StatusOK, mappings)
+}
+
+// apiserverWith is apiserver with the TokenReview's answer, and the mapping
+// list's status code, as given. A non-200 list answers with a Status of that code.
+func apiserverWith(t *testing.T, review string, mappingsCode int, mappings string) (*rest.Config, *atomic.Int32) {
 	t.Helper()
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 	var calls atomic.Int32
@@ -54,8 +62,13 @@ func apiserver(t *testing.T, mappings string) (*rest.Config, *atomic.Int32) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/apis/authentication.k8s.io/v1/tokenreviews":
-			_, _ = w.Write([]byte(reviewOK))
+			_, _ = w.Write([]byte(review))
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/serviceaccount.authn.krateo.io/v1alpha1/namespaces/krateo-system/serviceaccounts":
+			if mappingsCode != http.StatusOK {
+				w.WriteHeader(mappingsCode)
+				_, _ = fmt.Fprintf(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","message":"boom","code":%d}`, mappingsCode)
+				return
+			}
 			_, _ = w.Write([]byte(mappings))
 		default:
 			t.Errorf("unexpected apiserver call: %s %s", r.Method, r.URL.Path)
@@ -365,6 +378,67 @@ func TestDelegationRefusals(t *testing.T) {
 			// Every refusal of a verified actor names the schema's reason.
 			require.NotEmpty(t, tc.reason, "a recorded refusal needs its expected reason")
 			assert.Equal(t, tc.reason, auditlogtest.String(r, "krateo.audit.denial_reason"))
+		})
+	}
+}
+
+// An actor the TokenReview verified is a record under authn.delegate however
+// authn refused or failed it at its mapping (authn#132), with the same shape
+// as on /serviceaccount/login; one refused before that, the wrong audience
+// included, is no record.
+func TestActorRefusalsAfterVerificationAreRecorded(t *testing.T) {
+	const agent = "system:serviceaccount:krateo-system:agent"
+	k := newKeys(t)
+	empty := `{"apiVersion":"serviceaccount.authn.krateo.io/v1alpha1","kind":"ServiceAccountList","items":[]}`
+	two := strings.Replace(mapping(`{"allowed":true}`), `}}]}`,
+		`}},{"metadata":{"name":"kagent-2","namespace":"krateo-system"},"spec":{"serviceAccountRef":{"namespace":"krateo-system","name":"agent"}}}]}`, 1)
+	for _, tc := range []struct {
+		name                  string
+		review                string
+		mappingsCode          int
+		mappings              string
+		user, outcome, reason string
+		status                string
+	}{
+		{name: "wrong audience: not verified for authn", review: `{"kind":"TokenReview","status":{"authenticated":true,
+			"audiences":["kube-apiserver"],"user":{"username":"` + agent + `"}}}`, mappingsCode: http.StatusOK, mappings: empty},
+		{name: "not a service account", review: `{"kind":"TokenReview","status":{"authenticated":true,"audiences":["authn"],"user":{"username":"alice"}}}`,
+			mappingsCode: http.StatusOK, mappings: empty, user: "alice", outcome: "denied", reason: "not_a_service_account"},
+		{name: "no mapping", review: reviewOK, mappingsCode: http.StatusOK, mappings: empty,
+			user: agent, outcome: "denied", reason: "no_mapping"},
+		{name: "ambiguous mapping", review: reviewOK, mappingsCode: http.StatusOK, mappings: two,
+			user: agent, outcome: "denied", reason: "ambiguous_mapping"},
+		{name: "the lookup is refused by the apiserver", review: reviewOK, mappingsCode: http.StatusForbidden,
+			user: agent, outcome: "failure", status: "403"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rc, _ := apiserverWith(t, tc.review, tc.mappingsCode, tc.mappings)
+			h, records := k.recorded(t, rc)
+			rec := exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil)))
+			require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
+			assert.NotContains(t, rec.Body.String(), `"access_token":`)
+			if tc.user == "" {
+				assert.Empty(t, records.Records(), "an actor refused before verification is no record")
+				return
+			}
+			// Incomplete by design, each gap marked: with no mapping, neither the
+			// actor's class (a mapping declares it) nor a verb is known.
+			r := records.Only(t)
+			audittest.AssertConformant(t, audit.WriterRequest, r,
+				audittest.AllowIncomplete("krateo.audit.actor_class", audit.KeyVerb, "http.request.method", "krateo.audit.preview"))
+			assert.Equal(t, "authn.delegate", auditlogtest.String(r, "krateo.action"))
+			assert.Equal(t, tc.user, auditlogtest.String(r, "user.name"))
+			assert.Equal(t, tc.outcome, auditlogtest.String(r, "krateo.audit.outcome"))
+			assert.Equal(t, tc.reason, auditlogtest.String(r, "krateo.audit.denial_reason"))
+			assert.Equal(t, "serviceaccounts", auditlogtest.String(r, "krateo.audit.object_ref.resource"))
+			assert.Empty(t, auditlogtest.String(r, "krateo.audit.object_ref.name"), "no mapping can be named")
+			var status string
+			for _, kv := range audittest.Attributes(r) {
+				if string(kv.Key) == "http.response.status_code" {
+					status = kv.Value.String()
+				}
+			}
+			assert.Equal(t, tc.status, status, "the apiserver's answer to the lookup, never authn's own")
 		})
 	}
 }

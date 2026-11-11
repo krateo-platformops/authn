@@ -119,8 +119,11 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
-		actor, err := serviceaccount.Authenticate(req.Context(), r.rc, r.opts.Audience, token)
+		actor, verified, err := serviceaccount.Authenticate(req.Context(), r.rc, r.opts.Audience, token)
 		if err != nil {
+			// An actor the TokenReview verified is recorded however it was
+			// refused or failed at its mapping (authn#132).
+			serviceaccount.RecordUnmapped(r.opts.Audit, req, auditlog.ActionDelegate, verified)
 			fail(err, "delegation actor not authenticated")
 			return
 		}

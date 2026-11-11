@@ -282,13 +282,22 @@ func TestStepUpRefusals(t *testing.T) {
 		claims map[string]any
 		code   int
 		cause  string
+		// The record (authn#132): the ID token verified, so every refusal is
+		// denied with its reason and a misconfiguration is authn's failure.
+		outcome, reason string
 	}{
-		{name: "not enabled", claims: map[string]any{"acr": "gold", "auth_time": fresh}, code: 403, cause: "StepUpNotEnabled"},
-		{name: "acr too low", stepUp: stepUpGold, claims: map[string]any{"acr": "silver", "auth_time": fresh}, code: 403, cause: "InsufficientAssurance"},
+		{name: "not enabled", claims: map[string]any{"acr": "gold", "auth_time": fresh}, code: 403, cause: "StepUpNotEnabled",
+			outcome: "denied", reason: "stepup_not_enabled"},
+		{name: "acr too low", stepUp: stepUpGold, claims: map[string]any{"acr": "silver", "auth_time": fresh}, code: 403, cause: "InsufficientAssurance",
+			outcome: "denied", reason: "insufficient_assurance"},
+		{name: "no auth_time", stepUp: stepUpGold, claims: map[string]any{"acr": "gold"}, code: 403, cause: "StaleAuthentication",
+			outcome: "denied", reason: "stale_authentication"},
 		{name: "stale authentication", stepUp: stepUpGold, code: 403, cause: "StaleAuthentication",
-			claims: map[string]any{"acr": "gold", "auth_time": float64(time.Now().Add(-time.Hour).Unix())}},
+			claims:  map[string]any{"acr": "gold", "auth_time": float64(time.Now().Add(-time.Hour).Unix())},
+			outcome: "denied", reason: "stale_authentication"},
 		{name: "ttl below the CSR minimum", stepUp: `{"acrValues":["gold"],"ttl":"5m"}`, code: 500, cause: "StepUpMisconfigured",
-			claims: map[string]any{"acr": "gold", "auth_time": fresh}},
+			claims:  map[string]any{"acr": "gold", "auth_time": fresh},
+			outcome: "failure"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -309,6 +318,16 @@ func TestStepUpRefusals(t *testing.T) {
 			assert.Empty(t, gen.stepUps, "nothing is minted for a refused step-up")
 			assert.Empty(t, gen.sessions)
 			assert.False(t, strings.Contains(rec.Body.String(), "accessToken"))
+
+			r := auditlogtest.Only(t, gen.records)
+			assert.Equal(t, "authn.stepup.oidc", auditlogtest.String(r, "krateo.action"))
+			assert.Equal(t, tc.outcome, auditlogtest.String(r, "krateo.audit.outcome"))
+			assert.Equal(t, tc.reason, auditlogtest.String(r, "krateo.audit.denial_reason"))
+			assert.True(t, strings.HasSuffix(auditlogtest.String(r, "krateo.audit.object_ref.name"), "-clientconfig-stepup"),
+				"the step-up Secret it would have written")
+			for _, kv := range audittest.Attributes(r) {
+				assert.NotEqual(t, "http.response.status_code", string(kv.Key), "no authority answered")
+			}
 		})
 	}
 }
@@ -365,4 +384,35 @@ func logLine(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
 	}
 	t.Fatalf("no %q log line in:\n%s", msg, buf.String())
 	return nil
+}
+
+// A provider's allowedGroups refuses the identity before its step-up is
+// evaluated (authn#133 review): a person outside allowedGroups is
+// group_not_allowed whichever step-up refusal would also apply.
+func TestAllowedGroupsComeBeforeTheStepUpCheck(t *testing.T) {
+	fresh := float64(time.Now().Add(-time.Minute).Unix())
+	stale := float64(time.Now().Add(-time.Hour).Unix())
+	for _, tc := range []struct {
+		name   string
+		stepUp string
+		claims map[string]any
+	}{
+		{"step-up not enabled", "", map[string]any{"acr": "gold", "auth_time": fresh}},
+		{"acr too low", stepUpGold, map[string]any{"acr": "silver", "auth_time": fresh}},
+		{"stale authentication", stepUpGold, map[string]any{"acr": "gold", "auth_time": stale}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			extra := `"allowedGroups":["admins"]` // alice is in devs only
+			if tc.stepUp != "" {
+				extra += `,"stepUp":` + tc.stepUp
+			}
+			gen := &stepUpGenerator{notAfter: time.Now().Add(15 * time.Minute)}
+			rec := stepUpRequest(t, oidcEnv(t, extra, tc.claims), gen)
+			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "GroupNotAllowed")
+			r := auditlogtest.Only(t, gen.records)
+			assert.Equal(t, "group_not_allowed", auditlogtest.String(r, "krateo.audit.denial_reason"))
+			assert.Empty(t, gen.stepUps)
+		})
+	}
 }
