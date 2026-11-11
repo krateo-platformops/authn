@@ -234,3 +234,32 @@ func TestMiddlewareMarksTheServerSpanAndCarriesASession(t *testing.T) {
 		})
 	}
 }
+
+// Every refusal reaches the record as its schema value, on a denied record that
+// conforms; Check would report an unknown value as bad-enum.
+func TestEveryRefusalHasADenialReason(t *testing.T) {
+	for _, why := range config.Refusals {
+		t.Run(string(why), func(t *testing.T) {
+			want, ok := denialReasons[why]
+			require.True(t, ok, "no schema denial reason for %q", why)
+			r, rec := newRecorder(t)
+			err := config.Refused(why, status.Refused(status.CauseUsernameUnavailable, errors.New("refused")))
+			r.Issuance(get("/oidc/login"), LoginAction(storage.StrategyOIDC), alice(), jwtutil.PrincipalHuman, wouldUpdate(), err)
+			got := rec.Only(t)
+			audittest.AssertConformant(t, audit.WriterRequest, got)
+			v, _ := attr(t, audittest.Attributes(got), audit.KeyDenialReason)
+			assert.Equal(t, want, v.AsString())
+			assert.Equal(t, string(why), v.AsString(), "authn's refusal names are the schema's")
+		})
+	}
+	assert.Len(t, denialReasons, len(config.Refusals), "no stale entries")
+
+	t.Run("a success or a failure carries none", func(t *testing.T) {
+		for _, err := range []error{nil, errors.New("internal")} {
+			r, rec := newRecorder(t)
+			r.Issuance(get("/oidc/login"), LoginAction(storage.StrategyOIDC), alice(), jwtutil.PrincipalHuman, created(), err)
+			_, has := attr(t, audittest.Attributes(rec.Only(t)), audit.KeyDenialReason)
+			assert.False(t, has)
+		}
+	})
+}

@@ -32,7 +32,7 @@ with snowplow, the AUDIT-4 lead:
 
 To make the verb and the uid known, `storage.Put` now returns what it wrote, and
 `Generate` returns it in `Issued`. The guard's refusals carry a closed-set reason
-(`config.RefusalOf`), which goes into the record once audit v0.5.0 adds the key. An
+(`config.RefusalOf`), recorded as audit v0.5.0's `krateo.audit.denial_reason`. An
 OIDCConfig's `allowedGroups` check moved from the route into `Generate` (`Admit`), so its
 refusal is recorded like the guard's. authn's own certificate writes are recorded from
 plumbing v1.43.0's `signup.DoWritten`. `endpoints.Store` sends a create, then an update

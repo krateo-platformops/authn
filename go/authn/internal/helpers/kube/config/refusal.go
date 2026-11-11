@@ -42,6 +42,11 @@ func (e refusedError) Unwrap() error { return e.err }
 
 func refused(reason Refusal, err error) error { return refusedError{reason: reason, err: err} }
 
+// Refusals lists every Refusal, for a caller that maps them (the audit record's
+// denial reason) to prove its map complete.
+var Refusals = []Refusal{RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
+	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed}
+
 // Refused marks err, the status error a caller answers with, as a refusal of a
 // verified identity for reason (see Admit).
 func Refused(reason Refusal, err error) error { return refused(reason, err) }

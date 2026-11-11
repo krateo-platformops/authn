@@ -93,6 +93,7 @@ func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info
 		// authn refused before asking the apiserver: no status code, which in
 		// schema v1 is the authority's answer.
 		ev.Outcome, ev.Message = audit.OutcomeDenied, msgRefused
+		ev.DenialReason = denialReasons[config.RefusalOf(err)]
 	default:
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgFailed
 	}
@@ -218,3 +219,17 @@ const (
 	PreviewLabel   = "krateo.io/purpose"
 	PreviewSandbox = "preview-sandbox"
 )
+
+// denialReasons maps each refusal to the schema's closed-set denial reason. It
+// is spelled out rather than converted, so a refusal added without a schema
+// value fails TestEveryRefusalHasADenialReason instead of writing an invalid
+// one.
+var denialReasons = map[config.Refusal]string{
+	config.RefusalReserved:        audit.DenialReasonNameReserved,
+	config.RefusalClaimed:         audit.DenialReasonNameClaimed,
+	config.RefusalHeldLegacy:      audit.DenialReasonNameHeldLegacy,
+	config.RefusalProvisioned:     audit.DenialReasonNameProvisioned,
+	config.RefusalBound:           audit.DenialReasonNameBound,
+	config.RefusalSystemGroup:     audit.DenialReasonSystemGroup,
+	config.RefusalGroupNotAllowed: audit.DenialReasonGroupNotAllowed,
+}

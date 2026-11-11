@@ -511,7 +511,9 @@ or a log line.
   - `denied` when authn refused the verified identity: the name guard, a `system:` group,
     or an OIDCConfig's `allowedGroups`. The target is the Secret it would have written,
     with the verb it would have sent, and no status code, since authn refused before
-    asking the apiserver;
+    asking the apiserver. `krateo.audit.denial_reason` says why, from a closed set:
+    `name_reserved`, `name_claimed`, `name_held_legacy`, `name_provisioned`, `name_bound`,
+    `system_group`, `group_not_allowed`. The HTTP answer stays opaque;
   - `failure` when the issuance failed after verification.
 
   A caller refused before verification (wrong password, invalid token) gets no record. On
