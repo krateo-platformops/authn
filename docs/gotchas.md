@@ -212,3 +212,11 @@ versa) makes previously issued tokens unverifiable against the new JWKS.
 flips it back to `0` on shutdown (`main.go:315`). It reflects process lifecycle only
 — it does **not** check apiserver/snowplow/LDAP reachability, so a "healthy" authn
 can still fail every login if its dependencies are down.
+
+## Deleting a clientconfig Secret can delete a tenant
+A policy may generate objects from `<username>-clientconfig` (demo's Kyverno
+`tenant-namespace-on-login` generates the user's tenant namespace, Role, RoleBinding,
+LimitRange and ResourceQuota, with `synchronize: true`). Deleting the Secret then
+deletes all of it. To move a name to a new identity, write the new identity's claim
+onto the existing Secret instead ([behavior](./behavior.md), "Moving a name to a new
+identity").
