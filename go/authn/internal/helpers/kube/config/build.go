@@ -11,6 +11,7 @@ import (
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/configmaps"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
@@ -31,7 +32,7 @@ type Generator interface {
 	// the Secret together with the certificate's groups (see
 	// storage.IdentityAnnotations). opts adjust how the Secret is stored; see
 	// OwnedBy.
-	Generate(strategy storage.Strategy, user userinfo.Info, opts ...IssueOption) (dat []byte, notAfter time.Time, err error)
+	Generate(strategy storage.Strategy, user userinfo.Info, opts ...IssueOption) (Issued, error)
 
 	// GenerateStepUp mints a short-lived step-up credential (#49) for user,
 	// who must have been built by userinfo.NewStepUpUser, and stores it as
@@ -39,7 +40,24 @@ type Generator interface {
 	// not touched, and no kubeconfig is returned. ttl is the requested
 	// lifetime. The returned notAfter is the granted one, which bounds the
 	// step-up JWT.
-	GenerateStepUp(strategy storage.Strategy, user userinfo.Info, ttl time.Duration) (notAfter time.Time, err error)
+	GenerateStepUp(strategy storage.Strategy, user userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error)
+}
+
+// Issued is the outcome of one Generate or GenerateStepUp, for the caller's
+// audit record (AUDIT-4) as much as for its answer.
+type Issued struct {
+	// Kubeconfig is the session kubeconfig document. Nil for a step-up, and on
+	// an error.
+	Kubeconfig []byte
+	// NotAfter is the certificate's granted expiry, which bounds the JWT.
+	NotAfter time.Time
+	// Secret names the credential Secret. On success it is the write: the verb
+	// sent, the apiserver's status, the stored uid. On a refusal (RefusalOf
+	// the error) or a failure before the write, it is the Secret the issuance
+	// would have written and the verb it would have sent, with no status. It
+	// names the Secret whenever the identity has a username; one without names
+	// none.
+	Secret storage.Written
 }
 
 // IssueOption adjusts how one issued credential is stored.
@@ -49,6 +67,16 @@ type IssueOption func(*IssueOptions)
 type IssueOptions struct {
 	// Owner becomes the stored Secret's ownerReference (see OwnedBy).
 	Owner *metav1.OwnerReference
+	// Admit holds the caller's own admission checks (see Admit).
+	Admit []func(userinfo.Info) error
+}
+
+// Admit adds an admission check the identity must pass before anything is
+// minted, after the reserved-group check and before the name guard. A check
+// refuses with an error built by Refused, so the refusal reaches the audit
+// record as a denial with its reason; any other error is a failure.
+func Admit(check func(userinfo.Info) error) IssueOption {
+	return func(o *IssueOptions) { o.Admit = append(o.Admit, check) }
 }
 
 // NewIssueOptions applies opts in order.
@@ -173,21 +201,23 @@ func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Inf
 	return guard.admit(context.Background(), strategy, user)
 }
 
-func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) ([]byte, time.Time, error) {
-	var notAfter time.Time
-
+func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) (Issued, error) {
+	target := secretFor(userInfo, storage.ClientConfigSecretName)
+	o := NewIssueOptions(opts...)
 	if err := g.checkGroups(userInfo, false); err != nil {
-		return nil, notAfter, err
+		return Issued{Secret: g.wouldWrite(target)}, err
+	}
+	if err := o.CheckAdmit(userInfo); err != nil {
+		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	claim, err := g.admit(strategy, userInfo)
 	if err != nil {
-		return nil, notAfter, err
+		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 
-	o := NewIssueOptions(opts...)
-	certInfo, clusterInfo, notAfter, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner, claim)
+	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner, claim)
 	if err != nil {
-		return nil, notAfter, err
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
 	}
 
 	c := KubeConfig{
@@ -219,22 +249,89 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 
 	out, err := json.Marshal(c)
 	if err != nil {
-		return nil, notAfter, fmt.Errorf("converting generated config to json: %w", err)
+		// The Secret is stored; only the response document failed.
+		return Issued{NotAfter: notAfter, Secret: written}, fmt.Errorf("converting generated config to json: %w", err)
 	}
 
-	return out, notAfter, nil
+	return Issued{Kubeconfig: out, NotAfter: notAfter, Secret: written}, nil
 }
 
-func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration) (time.Time, error) {
+func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error) {
+	target := secretFor(userInfo, storage.StepUpSecretName)
+	o := NewIssueOptions(opts...)
 	if err := g.checkGroups(userInfo, true); err != nil {
-		return time.Time{}, err
+		return Issued{Secret: g.wouldWrite(target)}, err
+	}
+	if err := o.CheckAdmit(userInfo); err != nil {
+		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	claim, err := g.admit(strategy, userInfo)
 	if err != nil {
-		return time.Time{}, err
+		return Issued{Secret: g.wouldWrite(target)}, err
 	}
-	_, _, notAfter, err := g.issue(strategy, userInfo, ttl, true, nil, claim)
-	return notAfter, err
+	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, nil, claim)
+	if err != nil {
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
+	}
+	return Issued{NotAfter: notAfter, Secret: written}, nil
+}
+
+// CheckAdmit runs o's admission checks (Admit) on user, in order, and returns
+// the first refusal.
+func (o IssueOptions) CheckAdmit(user userinfo.Info) error {
+	for _, check := range o.Admit {
+		if err := check(user); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// wouldWrite names the Secret an issuance that stopped before writing would
+// have written, with the verb it would have sent: update when the Secret
+// exists (Put's create is answered 409 and it updates), create otherwise. When
+// the namespace or the Secret can't be read, the verb is left empty rather
+// than guessed.
+func (g *kubeconfigGenerator) wouldWrite(name string) storage.Written {
+	if name == "" {
+		// An identity with no username names no Secret.
+		return storage.Written{}
+	}
+	w := storage.Written{Name: name}
+	ns, err := util.GetOperatorNamespace()
+	if err != nil {
+		return w
+	}
+	w.Namespace = ns
+	if g.lookup == nil {
+		return w
+	}
+	sec, err := g.lookup.Secret(context.Background(), name)
+	switch {
+	case err != nil:
+	case sec != nil:
+		w.Verb = "update"
+	default:
+		w.Verb = "create"
+	}
+	return w
+}
+
+// secretFor is name(user's username), or "" for an identity with no username,
+// which no Secret can be named for.
+func secretFor(user userinfo.Info, name func(string) string) string {
+	if user.GetUserName() == "" {
+		return ""
+	}
+	return name(user.GetUserName())
+}
+
+// orWouldWrite is written when Put sent a request, else wouldWrite(name).
+func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string) storage.Written {
+	if written.Verb != "" {
+		return written
+	}
+	return g.wouldWrite(name)
 }
 
 // checkGroups refuses, before anything is minted, an identity whose groups
@@ -275,32 +372,32 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 
 // issue mints a certificate for userInfo valid for duration and stores it as
 // the user's session or step-up credential.
-func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference, claim string) (CertInfo, ClusterInfo, time.Time, error) {
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference, claim string) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
-			return CertInfo{}, ClusterInfo{}, time.Time{}, err
+			return CertInfo{}, ClusterInfo{}, time.Time{}, storage.Written{}, err
 		}
 		g.caData = caCrt
 	}
 
 	certInfo, clusterInfo, notAfter, err := g.generateCertAndClusterInfo(userInfo, duration)
 	if err != nil {
-		return certInfo, clusterInfo, notAfter, err
+		return certInfo, clusterInfo, notAfter, storage.Written{}, err
 	}
 
-	err = g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner, claim)
+	written, err := g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner, claim)
 	if errors.Is(err, storage.ErrClaimedByAnother) {
 		// Another identity claimed the name between the guard and this write.
 		// The certificate just minted is never stored or returned.
 		g.log.Warn().Str("username", userInfo.GetUserName()).Str("claim", claim).Err(err).Msg("username refused")
-		err = status.RefusedPrivately(status.CauseUsernameUnavailable,
-			fmt.Errorf("the username %q isn't available to this identity", userInfo.GetUserName()), err)
+		err = refused(RefusalClaimed, status.RefusedPrivately(status.CauseUsernameUnavailable,
+			fmt.Errorf("the username %q isn't available to this identity", userInfo.GetUserName()), err))
 	}
-	return certInfo, clusterInfo, notAfter, err
+	return certInfo, clusterInfo, notAfter, written, err
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference, claim string) error {
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference, claim string) (storage.Written, error) {
 	nfo := storage.AuthInfo{
 		Claim:    claim,
 		Owner:    owner,

@@ -7,6 +7,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
 	"strings"
@@ -81,9 +82,11 @@ func invalidCredentials(reason error) error {
 
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
-	JwtDuration         time.Duration
-	JwtPrivateKey       *rsa.PrivateKey
-	JwtKeyID            string
+	// Audit records each verified identity\'s credential write (AUDIT-4). Nil records nothing.
+	Audit         *auditlog.Recorder
+	JwtDuration   time.Duration
+	JwtPrivateKey *rsa.PrivateKey
+	JwtKeyID      string
 	// DecoySecret is read for an unknown user, so that a refusal costs the
 	// Secret read a known user's does. Nil skips the read.
 	DecoySecret *core.SecretKeySelector
@@ -93,6 +96,7 @@ func Login(rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
 		rc:            rc,
 		gen:           opts.KubeconfigGenerator,
+		audit:         opts.Audit,
 		jwtDuration:   opts.JwtDuration,
 		jwtPrivateKey: opts.JwtPrivateKey,
 		jwtKeyID:      opts.JwtKeyID,
@@ -105,6 +109,7 @@ var _ routes.Route = (*loginRoute)(nil)
 type loginRoute struct {
 	rc            *rest.Config
 	gen           kubeconfig.Generator
+	audit         *auditlog.Recorder
 	jwtDuration   time.Duration
 	jwtPrivateKey *rsa.PrivateKey
 	jwtKeyID      string
@@ -148,7 +153,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Str("groups", strings.Join(user.GetGroups(), ",")).
 			Msg("basic auth succeded")
 
-		dat, notAfter, err := r.gen.Generate(storage.StrategyBasic, user)
+		issued, err := r.gen.Generate(storage.StrategyBasic, user)
+		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyBasic), user, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
@@ -157,17 +163,17 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		if req.URL.Query().Has("d") {
-			encode.Attach(wri, username, dat)
+			encode.Attach(wri, username, issued.Kubeconfig)
 			return
 		}
 
-		if err := encode.Success(wri, dat, &encode.Extras{
+		if err := encode.Success(wri, issued.Kubeconfig, &encode.Extras{
 			UserInfo:      user,
 			Strategy:      &encode.Strategy{Kind: string(storage.StrategyBasic)},
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
-			CertNotAfter:  notAfter,
+			CertNotAfter:  issued.NotAfter,
 			Principal:     jwtutil.PrincipalHuman,
 		}); err != nil {
 			// Success has already answered with IssuanceFailed.

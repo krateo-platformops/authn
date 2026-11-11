@@ -29,6 +29,7 @@ package identitybackfill
 import (
 	"context"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"strings"
 
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
@@ -65,6 +66,9 @@ type Options struct {
 	// Lookup defaults to the cluster resolvers.
 	Lookup Lookup
 	Log    zerolog.Logger
+	// Audit records each write: every one stamps an authorization-bearing
+	// annotation or an owner (AUDIT-4). Nil records nothing.
+	Audit *auditlog.Controller
 }
 
 // Result counts what a run did, for the log line and for tests.
@@ -148,7 +152,13 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			// sec carries the resourceVersion from the list, so a concurrent
 			// writer (a login rewriting the Secret) wins with a conflict
 			// instead of being clobbered.
-			if err := secrets.Update(ctx, o.RestConfig, sec); err != nil {
+			ref := auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name}
+			code, err := secrets.Update(ctx, o.RestConfig, sec)
+			if err == nil {
+				ref.UID, ref.ResourceVersion = string(sec.UID), sec.ResourceVersion
+			}
+			o.Audit.IdentityWritten(ctx, auditlog.ActionIdentityBackfilled, ref, code, err)
+			if err != nil {
 				res.Skipped++
 				o.Log.Warn().Err(err).Str("secret", sec.Name).Str("namespace", ns).
 					Msg("identity annotations not backfilled")

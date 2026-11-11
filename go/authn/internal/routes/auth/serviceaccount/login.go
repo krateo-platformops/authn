@@ -10,6 +10,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"strings"
 	"time"
@@ -39,9 +40,11 @@ const (
 
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
-	JwtDuration         time.Duration
-	JwtPrivateKey       *rsa.PrivateKey
-	JwtKeyID            string
+	// Audit records each verified identity\'s credential write (AUDIT-4). Nil records nothing.
+	Audit         *auditlog.Recorder
+	JwtDuration   time.Duration
+	JwtPrivateKey *rsa.PrivateKey
+	JwtKeyID      string
 	// Audience the projected SA token must carry (enforced via TokenReview); defaults to
 	// DefaultAudience. Binding the audience prevents replay of tokens minted for the
 	// apiserver or another service.
@@ -56,6 +59,7 @@ func Login(rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
 		rc:            rc,
 		gen:           opts.KubeconfigGenerator,
+		audit:         opts.Audit,
 		jwtDuration:   opts.JwtDuration,
 		jwtPrivateKey: opts.JwtPrivateKey,
 		jwtKeyID:      opts.JwtKeyID,
@@ -68,6 +72,7 @@ var _ routes.Route = (*loginRoute)(nil)
 type loginRoute struct {
 	rc            *rest.Config
 	gen           kubeconfig.Generator
+	audit         *auditlog.Recorder
 	jwtDuration   time.Duration
 	jwtPrivateKey *rsa.PrivateKey
 	jwtKeyID      string
@@ -111,7 +116,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// The Secret is owned by the mapping, so whoever retires the mapping
 		// (core-provider, on Undeploy) retires the credential with it, through
 		// the garbage collector, without needing delete rights on Secrets.
-		_, notAfter, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner))
+		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner))
+		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyServiceAccount), user, principal, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(*log, err).Msg("kubeconfig creation failure")
@@ -125,7 +131,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
-			CertNotAfter:  notAfter,
+			CertNotAfter:  issued.NotAfter,
 			Principal:     principal,
 		})
 		if err != nil {

@@ -44,18 +44,40 @@ func List(ctx context.Context, rc *rest.Config, namespace string) (*corev1.Secre
 	return res, err
 }
 
-func Create(ctx context.Context, rc *rest.Config, secret *corev1.Secret) error {
+// Create creates secret and decodes the stored Secret back into it, so the
+// caller holds its uid and resourceVersion. It returns the apiserver's HTTP
+// status code (0 when no response arrived), which an audit record carries as
+// the authority's answer.
+func Create(ctx context.Context, rc *rest.Config, secret *corev1.Secret) (int, error) {
 	cli, err := client.New(rc, schema.GroupVersion{Group: "", Version: "v1"})
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	return cli.Post().
+	res := cli.Post().
 		Namespace(secret.GetNamespace()).
 		Resource("secrets").
 		Body(secret).
-		Do(ctx).
-		Error()
+		Do(ctx)
+	return decodeInto(res, secret)
+}
+
+// decodeInto reads res's status code and, on success, decodes the stored
+// Secret into secret. The write succeeded when res carries no error, and then
+// the error is nil whatever happens next: an answer that can't be decoded only
+// leaves secret as sent (no uid), so a done write never reads as failed.
+func decodeInto(res rest.Result, secret *corev1.Secret) (int, error) {
+	var code int
+	res.StatusCode(&code)
+	if err := res.Error(); err != nil {
+		return code, err
+	}
+	stored := &corev1.Secret{}
+	if err := res.Into(stored); err != nil {
+		return code, nil
+	}
+	*secret = *stored
+	return code, nil
 }
 
 func CreateOrUpdate(ctx context.Context, rc *rest.Config, secret *corev1.Secret) error {
@@ -97,18 +119,20 @@ func CreateOrUpdate(ctx context.Context, rc *rest.Config, secret *corev1.Secret)
 		Error()
 }
 
-func Update(ctx context.Context, rc *rest.Config, secret *corev1.Secret) error {
+// Update replaces secret (PUT) and decodes the stored Secret back into it. It
+// returns the apiserver's HTTP status code, as Create does.
+func Update(ctx context.Context, rc *rest.Config, secret *corev1.Secret) (int, error) {
 	cli, err := client.New(rc, schema.GroupVersion{Group: "", Version: "v1"})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return cli.Put().
+	res := cli.Put().
 		Namespace(secret.GetNamespace()).
 		Resource("secrets").
 		Name(secret.Name).
 		Body(secret).
-		Do(ctx).
-		Error()
+		Do(ctx)
+	return decodeInto(res, secret)
 }
 
 func Delete(ctx context.Context, rc *rest.Config, sel *core.SecretKeySelector) error {

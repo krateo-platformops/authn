@@ -83,9 +83,14 @@ func TestStorage(t *testing.T) {
 
 			// Twice: the first Put creates the Secret, the second finds it and
 			// updates it.
-			for range 2 {
-				if err := store.Put(username, want); err != nil {
+			for i, verb := range []string{"create", "update"} {
+				w, err := store.Put(username, want)
+				if err != nil {
 					t.Fatal(err)
+				}
+				// What Put reports is what the audit record names (AUDIT-4).
+				if w.Verb != verb || w.UID == "" || w.StatusCode == 0 {
+					t.Fatalf("Put #%d reported %+v, want verb %q with a uid and a status", i+1, w, verb)
 				}
 			}
 

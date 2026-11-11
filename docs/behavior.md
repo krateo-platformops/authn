@@ -489,6 +489,99 @@ otherwise pass.
   another identity is refused (`UsernameUnavailable`), and the certificate just minted
   is neither stored nor returned (`storage.ErrClaimedByAnother`).
 
+### Audit records
+With `OTEL_LOGS_ENABLED` on (default `OTEL_ENABLED`, which the chart turns on), authn writes one audit record (audit
+library schema v1, AUDIT-4) per credential it writes for a verified caller, and one per
+`/delegate` decision about an authenticated actor. Records go to the OTLP logs pipeline
+and nowhere else: their attributes carry identity on purpose, so they never reach a span
+or a log line.
+
+| Emit site | `krateo.action` | Target | Verb |
+|---|---|---|---|
+| basic, LDAP, OAuth, OIDC, ServiceAccount login | `authn.login.<strategy>` | the `<username>-clientconfig` Secret | `create` or `update`, as sent |
+| OIDC step-up | `authn.stepup.oidc` | the `<username>-clientconfig-stepup` Secret | `create` or `update` |
+| `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping, subresource `token` | `create` (the issuance; no status code) |
+| step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
+| authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
+| identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
+| authn's own identity annotations (background) | `authn.servicecert.annotated` | authn's `-clientconfig` Secret | `update` |
+
+- **Login, step-up.** A record is written right after the credential is issued, whatever
+  the outcome:
+  - `success`, with the apiserver's status for the request that stored the Secret (201 or
+    200) and the stored uid;
+  - `denied` when authn refused the verified identity: the name guard, a `system:` group,
+    or an OIDCConfig's `allowedGroups`. The target is the Secret it would have written,
+    with the verb it would have sent, and no status code, since authn refused before
+    asking the apiserver. `krateo.audit.denial_reason` says why, from a closed set:
+    `name_reserved`, `name_claimed`, `name_held_legacy`, `name_provisioned`, `name_bound`,
+    `system_group`, `group_not_allowed`. The HTTP answer stays opaque;
+  - `failure` when the issuance failed after verification.
+
+  A caller refused before verification (wrong password, invalid token) gets no record. On
+  an OAuth or OIDC callback the record keeps the path only, because the query carries the
+  authorization code and state.
+- **`/delegate`.** The actor is the mapping's name, of the class its `spec.principal`
+  declares. A record carries `on_behalf_of` and the delegation chain once the subject token
+  is read. It's `denied` for `DelegationNotAllowed` and `DelegationTooDeep`, and `failure`
+  when signing fails.
+- **Background.** The sweep's deletes and the writes of authn's own certificate (its first
+  issue and every renewal) are `controller` rows from a second scope
+  (`github.com/krateo-platformops/authn/audit/controller`), with authn's own
+  ServiceAccount (`POD_SERVICE_ACCOUNT`) as actor and the status the apiserver answered.
+  The certificate's write is reported by plumbing's `signup.DoWritten`
+  (`endpoints.StoreWritten`). A renewal that fails before the Secret write (at the CSR)
+  sends nothing for the Secret, so there is nothing to record. Its failure shows in authn's
+  log (`issuing a client certificate`), and the renewer retries a minute later.
+- **The CSR is a step, not a record.** Every login and renewal creates, approves and
+  deletes a `certificates.k8s.io` CertificateSigningRequest. Those are steps of one
+  issuance (#119's scope), and the record names the credential Secret they produce. A
+  login whose CSR step fails still has its record, a `failure` naming the Secret it would
+  have written, so a failed issuance is never silent. The annotation updates that follow (the validity
+  window) change no data; they are recorded only when they change an
+  authorization-bearing annotation (below).
+- **Authorization-bearing annotations are content.** Policy decides from a credential's
+  `authn.krateo.io/strategy` and `authn.krateo.io/groups` (tenant onboarding, for one),
+  so a write that changes one changes what the identity may do. `storage.AuthorizationAnnotations`
+  declares them, once. The startup backfill writes only to stamp one of them or an owner,
+  so every backfill write is a record. The renewer's annotation sync is recorded when it
+  changes one of them, not for the validity window alone.
+- **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per
+  request), the source IPs, the user agent and whether the target's namespace is a
+  preview sandbox (from the Namespace's labels, read and cached for 5 minutes; the chart
+  grants `get` on authn's own Namespace only). Its body is a closed set of texts, never an
+  error's. A request that wrote a record marks its Server span
+  `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
+  then drops, and `authn.audit.export.failed` counts the dropped records.
+
+### Moving a name to a new identity
+An existing username can move to a new identity, for example a person's sign-in
+moving from a retired GitHub OAuthConfig to a Keycloak OIDC login with the same
+username. The supported way is an **administrator-written claim on the existing
+Secret**:
+
+1. Create the new identity first, so its stable id is known: for OIDC, the `sub`
+   (Keycloak: the user's id) and the issuer (`iss`, the realm URL exactly as the ID
+   token carries it).
+2. Write that identity's claim onto the existing `<username>-clientconfig` Secret, as
+   the annotation `authn.krateo.io/claim`, a JSON array in `storage.EncodeClaim`'s
+   form: `["oidc","<iss>","<sub>"]`.
+3. The new identity's first sign-in finds its own claim, is admitted, and rewrites the
+   Secret in place. It is admitted even though bindings already name the user: a name's
+   claim is checked before anything else, and a matching claim is the identity the name
+   was given to.
+
+Any other identity with the same username is refused (`name_claimed`), and so is the
+new one when no claim was written (`name_held_legacy`). The Secret is never deleted,
+so anything generated from it survives (a tenant namespace that a policy creates from
+the Secret, for one), and the user's bindings stay. Whoever writes the claim records
+that write in its own audit trail: it decides who may sign in as that name.
+
+**Don't delete the Secret to free the name** where a policy generates from it. With
+Kyverno's `synchronize: true`, deleting the trigger deletes everything it generated
+(demo's `tenant-namespace-on-login` generates the user's tenant namespace this way).
+Deleting it also doesn't free a name that bindings grant rights to (`name_bound`).
+
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response
 (`data` + `accessToken`) to authenticate the user. CORS is enabled by default with

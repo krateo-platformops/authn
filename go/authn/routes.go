@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
@@ -40,6 +41,8 @@ type routeOptions struct {
 	Healthy                *int32
 	Version                string
 	ServiceName            string
+	// Audit records credential issuance (AUDIT-4). Nil records nothing.
+	Audit *auditlog.Recorder
 }
 
 // buildRoutes returns every route authn serves. It is the whole HTTP surface:
@@ -53,6 +56,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 
 	all = append(all, basic.Login(o.RestConfig, basic.LoginOptions{
 		KubeconfigGenerator: o.Generator,
+		Audit:               o.Audit,
 		JwtDuration:         o.JwtDuration,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
@@ -63,6 +67,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 	// ServiceAccount token (validated via TokenReview) for an authn JWT + clientconfig.
 	all = append(all, serviceaccount.Login(o.RestConfig, serviceaccount.LoginOptions{
 		KubeconfigGenerator: o.Generator,
+		Audit:               o.Audit,
 		JwtDuration:         o.JwtDuration,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
@@ -77,10 +82,12 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 		PrivateKey:   o.PrivateKey,
 		KeyID:        o.KeyID,
 		PreviousKeys: o.PreviousKeys,
+		Audit:        o.Audit,
 	}))
 
 	all = append(all, ldap.Login(o.RestConfig, ldap.LoginOptions{
 		KubeconfigGenerator: o.Generator,
+		Audit:               o.Audit,
 		JwtDuration:         o.JwtDuration,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
@@ -114,6 +121,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 
 	all = append(all, oauth.Login(restActionContext(), o.RestConfig, oauth.LoginOptions{
 		KubeconfigGenerator: o.Generator,
+		Audit:               o.Audit,
 		JwtDuration:         o.JwtDuration,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
@@ -121,6 +129,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 
 	all = append(all, oidc.Login(restActionContext(), o.RestConfig, oidc.LoginOptions{
 		KubeconfigGenerator: o.Generator,
+		Audit:               o.Audit,
 		JwtDuration:         o.JwtDuration,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
@@ -130,6 +139,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 	// that proves a higher assurance level.
 	all = append(all, oidc.StepUp(restActionContext(), o.RestConfig, oidc.StepUpOptions{
 		KubeconfigGenerator: o.Generator,
+		Audit:               o.Audit,
 		JwtPrivateKey:       o.PrivateKey,
 		JwtKeyID:            o.KeyID,
 	}))

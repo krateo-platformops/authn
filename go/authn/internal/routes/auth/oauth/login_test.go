@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/krateo-platformops/audit/audittest"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -24,17 +26,19 @@ import (
 )
 
 type fakeGenerator struct {
-	calls int
-	info  userinfo.Info // the identity of the last Generate
+	// records holds what the route's audit Recorder wrote (AUDIT-4).
+	records *audittest.Recorder
+	calls   int
+	info    userinfo.Info // the identity of the last Generate
 }
 
-func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls++
 	g.info = nfo
-	return []byte(`{}`), time.Now().Add(time.Hour), nil
+	return kubeconfig.Issued{Kubeconfig: []byte(`{}`), NotAfter: time.Now().Add(time.Hour), Secret: auditlogtest.Created(nfo.GetUserName())}, nil
 }
 
-func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration) (time.Time, error) {
+func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	panic("oauth login never issues a step-up credential")
 }
 

@@ -268,6 +268,18 @@
     "affinity": {
       "type": "object"
     },
+    "otel": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OpenTelemetry settings the chart wires. The OTEL_* gates themselves go in env.",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The OTLP/HTTP endpoint for every OpenTelemetry signal, audit records included. $(HOST_IP) expands to the node IP."
+        }
+      }
+    },
     "env": {
       "type": "object",
       "title": "Environment",
@@ -353,7 +365,7 @@
                 "type": "string",
                 "minLength": 1,
                 "title": "Key ID",
-                "description": "The kid the retired key signed with. No commas, equals signs or whitespace: entries are passed as kid=path,\u2026",
+                "description": "The kid the retired key signed with. No commas, equals signs or whitespace: entries are passed as kid=path,…",
                 "pattern": "^[^,=\\s]+$"
               },
               "secretName": {

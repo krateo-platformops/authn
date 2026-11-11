@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
 	"slices"
@@ -37,15 +38,18 @@ const (
 
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
-	JwtDuration         time.Duration
-	JwtPrivateKey       *rsa.PrivateKey
-	JwtKeyID            string
+	// Audit records each verified identity\'s credential write (AUDIT-4). Nil records nothing.
+	Audit         *auditlog.Recorder
+	JwtDuration   time.Duration
+	JwtPrivateKey *rsa.PrivateKey
+	JwtKeyID      string
 }
 
 func Login(ctx context.Context, rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
 		rc: rc, ctx: ctx,
 		gen:           opts.KubeconfigGenerator,
+		audit:         opts.Audit,
 		jwtDuration:   opts.JwtDuration,
 		jwtPrivateKey: opts.JwtPrivateKey,
 		jwtKeyID:      opts.JwtKeyID,
@@ -57,6 +61,7 @@ var _ routes.Route = (*loginRoute)(nil)
 type loginRoute struct {
 	rc            *rest.Config
 	gen           kubeconfig.Generator
+	audit         *auditlog.Recorder
 	ctx           context.Context
 	jwtDuration   time.Duration
 	jwtPrivateKey *rsa.PrivateKey
@@ -81,13 +86,14 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Str("namespace", os.Getenv(util.NamespaceEnvVar)).
 			Logger()
 
-		_, _, nfo, ok := authenticate(wri, req, r.ctx, r.rc, log)
+		cfg, _, nfo, ok := authenticate(wri, req, r.ctx, r.rc, log)
 		if !ok {
 			return
 		}
 
 		log.Debug().Msg("generating secret from oidc idtoken")
-		dat, notAfter, err := r.gen.Generate(storage.StrategyOIDC, nfo)
+		issued, err := r.gen.Generate(storage.StrategyOIDC, nfo, admitGroups(cfg, nfo))
+		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyOIDC), nfo, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
@@ -95,13 +101,13 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		if err := encode.Success(wri, dat, &encode.Extras{
+		if err := encode.Success(wri, issued.Kubeconfig, &encode.Extras{
 			UserInfo:      nfo,
 			Strategy:      &encode.Strategy{Kind: string(storage.StrategyOIDC), Name: req.URL.Query().Get("name")},
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
-			CertNotAfter:  notAfter,
+			CertNotAfter:  issued.NotAfter,
 			Principal:     jwtutil.PrincipalHuman,
 		}); err != nil {
 			// Success has already answered with IssuanceFailed.
@@ -181,11 +187,6 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 	log.Debug().Str("name", name).Msg("validating idtoken")
 	nfo = validate(tok)
 
-	if err := checkAllowedGroups(cfg.AllowedGroups, nfo); err != nil {
-		status.LogFailure(log, err).Str("name", name).Str("username", nfo.GetUserName()).Msg("login refused")
-		encode.Failure(wri, status.FromError(err))
-		return nil, tok, nil, false
-	}
 	return cfg, tok, nfo, true
 }
 
@@ -226,7 +227,15 @@ func checkAllowedGroups(allowed []string, nfo userinfo.Info) error {
 			return nil
 		}
 	}
-	return status.Refused(CauseGroupNotAllowed, fmt.Errorf("user %q is in none of the groups this OIDCConfig admits", nfo.GetUserName()))
+	return kubeconfig.Refused(kubeconfig.RefusalGroupNotAllowed,
+		status.Refused(CauseGroupNotAllowed, fmt.Errorf("user %q is in none of the groups this OIDCConfig admits", nfo.GetUserName())))
+}
+
+// admitGroups is cfg's allowedGroups as a Generate admission check. It checks
+// nfo, the identity before any step-up group is added, so a krateo:loa group
+// can never admit anyone.
+func admitGroups(cfg *oidcConfig, nfo userinfo.Info) kubeconfig.IssueOption {
+	return kubeconfig.Admit(func(userinfo.Info) error { return checkAllowedGroups(cfg.AllowedGroups, nfo) })
 }
 
 func validate(idToken idToken) userinfo.Info {

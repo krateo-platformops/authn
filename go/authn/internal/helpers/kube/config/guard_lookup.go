@@ -31,11 +31,15 @@ func newClusterLookup(rc *rest.Config) (*clusterLookup, error) {
 }
 
 func (l *clusterLookup) SessionSecret(ctx context.Context, username string) (*corev1.Secret, error) {
+	return l.Secret(ctx, storage.ClientConfigSecretName(username))
+}
+
+func (l *clusterLookup) Secret(ctx context.Context, name string) (*corev1.Secret, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
 	}
-	sec, err := l.cli.CoreV1().Secrets(ns).Get(ctx, storage.ClientConfigSecretName(username), metav1.GetOptions{})
+	sec, err := l.cli.CoreV1().Secrets(ns).Get(ctx, name, metav1.GetOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}

@@ -36,6 +36,8 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/plumbing/endpoints"
 	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
@@ -80,6 +82,9 @@ type Options struct {
 	Duration  time.Duration
 	Threshold float64
 	Log       zerolog.Logger
+	// Audit records each write of the certificate's Secret (AUDIT-4). Nil
+	// records nothing.
+	Audit *auditlog.Controller
 }
 
 // Renewer keeps one identity's clientconfig Secret holding a valid certificate.
@@ -94,6 +99,7 @@ type Renewer struct {
 	requested time.Duration
 	threshold float64
 	log       zerolog.Logger
+	audit     *auditlog.Controller
 }
 
 func New(o Options) (*Renewer, error) {
@@ -131,6 +137,7 @@ func New(o Options) (*Renewer, error) {
 		requested: o.Duration,
 		threshold: o.Threshold,
 		log:       o.Log,
+		audit:     o.Audit,
 	}, nil
 }
 
@@ -234,7 +241,7 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Dur("requested", r.requested).
 		Msg("issuing authn client certificate")
 
-	ep, err := signup.Do(ctx, signup.Options{
+	ep, written, err := signup.DoWritten(ctx, signup.Options{
 		RestConfig:   r.rc,
 		Namespace:    r.namespace,
 		CAData:       r.caData,
@@ -243,6 +250,13 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Username:     r.username,
 		UserGroups:   r.groups,
 	})
+	if err != nil && written.Verb == "" {
+		// Failed before the Secret write (at the CSR): the record names the
+		// write this renewal would have sent, as a login's does.
+		written = r.wouldWrite(ctx)
+	}
+	r.audit.ServiceCertIssued(ctx, auditlog.SecretRef{Namespace: written.Namespace, Name: written.Name,
+		UID: written.UID, ResourceVersion: written.ResourceVersion}, written.Verb, written.StatusCode, err)
 	if err != nil {
 		return retryInterval, fmt.Errorf("issuing a client certificate for %q: %w", r.username, err)
 	}
@@ -275,6 +289,23 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Msg("authn client certificate issued")
 
 	return sleepFor(time.Until(due)), nil
+}
+
+// wouldWrite names the clientconfig Secret and the write a renewal that stopped
+// before it would have sent: update when the Secret exists (Store's create is
+// answered 409, then it updates), create when it doesn't. When the Secret can't
+// be read the verb is left empty, so the record is marked incomplete rather
+// than guessed.
+func (r *Renewer) wouldWrite(ctx context.Context) endpoints.Written {
+	w := endpoints.Written{Namespace: r.namespace, Name: r.secret}
+	_, err := secrets.Get(ctx, r.rc, &core.SecretKeySelector{Name: r.secret, Namespace: r.namespace})
+	switch {
+	case err == nil:
+		w.Verb = "update"
+	case apierrors.IsNotFound(err):
+		w.Verb = "create"
+	}
+	return w
 }
 
 // current reads the stored certificate, returning it with the Secret that holds
@@ -375,9 +406,20 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 	for k, v := range want {
 		merged[k] = v
 	}
+	// Only a change to an authorization-bearing annotation is a change an
+	// audit record is owed for; the validity window alone is observability.
+	authz := storage.AuthorizationAnnotationsDiffer(have, merged)
 	sec.SetAnnotations(merged)
 
-	if err := secrets.Update(ctx, r.rc, sec); err != nil {
+	ref := auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name}
+	code, err := secrets.Update(ctx, r.rc, sec)
+	if err == nil {
+		ref.UID, ref.ResourceVersion = string(sec.UID), sec.ResourceVersion
+	}
+	if authz {
+		r.audit.IdentityWritten(ctx, auditlog.ActionServiceIdentityAnnotated, ref, code, err)
+	}
+	if err != nil {
 		r.log.Err(err).Str("secret", r.secret).Msg("recording the certificate validity window")
 	}
 }

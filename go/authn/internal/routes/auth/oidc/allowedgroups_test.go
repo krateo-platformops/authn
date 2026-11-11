@@ -3,6 +3,8 @@ package oidc
 import (
 	"encoding/json"
 	"errors"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -41,13 +43,15 @@ func TestCheckAllowedGroups(t *testing.T) {
 
 func loginRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptest.ResponseRecorder {
 	t.Helper()
-	route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
+	audit, records := auditlogtest.New(t)
+	gen.records = records
+	route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
 
 	req := httptest.NewRequest(http.MethodGet, Path+"?name=kc", nil)
 	req.Header.Set("X-Auth-Code", "code")
 	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
 	return rec
 }
 
@@ -76,6 +80,10 @@ func TestLoginHonoursAllowedGroups(t *testing.T) {
 		rec := loginRequest(t, oidcEnv(t, `"allowedGroups":["ops","devs"]`, fresh), gen)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Len(t, gen.sessions, 1)
+		r := auditlogtest.Only(t, gen.records)
+		assert.Equal(t, "authn.login.oidc", auditlogtest.String(r, "krateo.action"))
+		assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
+		assert.Equal(t, "/oidc/login?name=kc", auditlogtest.String(r, "krateo.request.uri"), "a callback keeps name, never code or state")
 	})
 
 	t.Run("not a member", func(t *testing.T) {
@@ -85,6 +93,9 @@ func TestLoginHonoursAllowedGroups(t *testing.T) {
 		assert.Equal(t, "GroupNotAllowed", causeOf(t, rec))
 		assert.Empty(t, gen.sessions, "nothing is minted for a refused user")
 		assert.NotContains(t, rec.Body.String(), "accessToken")
+		// A verified identity refused: a denied record (AUDIT-4).
+		r := auditlogtest.Only(t, gen.records)
+		assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
 	})
 
 	t.Run("the reserved group the IdP asserted never admits", func(t *testing.T) {
@@ -101,5 +112,9 @@ func TestLoginHonoursAllowedGroups(t *testing.T) {
 		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 		assert.Equal(t, "GroupNotAllowed", causeOf(t, rec))
 		assert.Empty(t, gen.stepUps)
+		r := auditlogtest.Only(t, gen.records)
+		assert.Equal(t, "authn.stepup.oidc", auditlogtest.String(r, "krateo.action"))
+		assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
+		assert.Equal(t, "alice-clientconfig-stepup", auditlogtest.String(r, "krateo.audit.object_ref.name"))
 	})
 }

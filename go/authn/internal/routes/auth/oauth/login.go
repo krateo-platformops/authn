@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
 	"strings"
@@ -30,15 +31,18 @@ import (
 
 type LoginOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
-	JwtDuration         time.Duration
-	JwtPrivateKey       *rsa.PrivateKey
-	JwtKeyID            string
+	// Audit records each verified identity\'s credential write (AUDIT-4). Nil records nothing.
+	Audit         *auditlog.Recorder
+	JwtDuration   time.Duration
+	JwtPrivateKey *rsa.PrivateKey
+	JwtKeyID      string
 }
 
 func Login(ctx context.Context, rc *rest.Config, opts LoginOptions) routes.Route {
 	return &loginRoute{
 		rc: rc, ctx: ctx,
 		gen:           opts.KubeconfigGenerator,
+		audit:         opts.Audit,
 		jwtDuration:   opts.JwtDuration,
 		jwtPrivateKey: opts.JwtPrivateKey,
 		jwtKeyID:      opts.JwtKeyID,
@@ -74,6 +78,7 @@ const (
 type loginRoute struct {
 	rc            *rest.Config
 	gen           kubeconfig.Generator
+	audit         *auditlog.Recorder
 	ctx           context.Context
 	jwtDuration   time.Duration
 	jwtPrivateKey *rsa.PrivateKey
@@ -196,7 +201,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			Strs("groups", user.GetGroups()).
 			Msg("user info successfully fetched")
 
-		dat, notAfter, err := r.gen.Generate(storage.StrategyOAuth, user)
+		issued, err := r.gen.Generate(storage.StrategyOAuth, user)
+		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyOAuth), user, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)
 			status.LogFailure(log, err).Msg("kubeconfig creation failure")
@@ -204,13 +210,13 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		if err := encode.Success(wri, dat, &encode.Extras{
+		if err := encode.Success(wri, issued.Kubeconfig, &encode.Extras{
 			UserInfo:      user,
 			Strategy:      &encode.Strategy{Kind: string(storage.StrategyOAuth), Name: name},
 			JwtDuration:   r.jwtDuration,
 			JwtPrivateKey: r.jwtPrivateKey,
 			JwtKeyID:      r.jwtKeyID,
-			CertNotAfter:  notAfter,
+			CertNotAfter:  issued.NotAfter,
 			Principal:     jwtutil.PrincipalHuman,
 		}); err != nil {
 			// Success has already answered with IssuanceFailed.

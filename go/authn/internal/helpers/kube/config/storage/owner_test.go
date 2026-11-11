@@ -50,7 +50,14 @@ func (p *putRecorder) serve(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"AlreadyExists","code":409}`))
 		case r.Method == http.MethodPost, r.Method == http.MethodPut:
-			_, _ = w.Write(body)
+			// As the apiserver answers: the stored object, with its uid and
+			// resourceVersion, 201 for a create and 200 for a replace.
+			sec.UID, sec.ResourceVersion = "uid-stored", "7"
+			out, _ := json.Marshal(sec)
+			if r.Method == http.MethodPost {
+				w.WriteHeader(http.StatusCreated)
+			}
+			_, _ = w.Write(out)
 		default:
 			t.Errorf("unexpected apiserver call: %s %s", r.Method, r.URL.Path)
 		}
@@ -74,8 +81,9 @@ func TestPutWritesTheOwner(t *testing.T) {
 	for _, exists := range []bool{false, true} {
 		rec := &putRecorder{exists: exists}
 		store := Default(&rest.Config{Host: rec.serve(t).URL})
-		require.NoError(t, store.Put("cdc-krateo-system-fireworksapps-v1-0-0", &AuthInfo{Strategy: StrategyServiceAccount, Owner: &owner,
-			CertData: identityCert(t, "cdc-krateo-system-fireworksapps-v1-0-0", []string{"krateo:cdc:fireworksapps-v1-0-0"})}))
+		_, err := store.Put("cdc-krateo-system-fireworksapps-v1-0-0", &AuthInfo{Strategy: StrategyServiceAccount, Owner: &owner,
+			CertData: identityCert(t, "cdc-krateo-system-fireworksapps-v1-0-0", []string{"krateo:cdc:fireworksapps-v1-0-0"})})
+		require.NoError(t, err)
 
 		require.NotEmpty(t, rec.written)
 		for _, sec := range rec.written {
@@ -88,7 +96,8 @@ func TestPutWritesTheOwner(t *testing.T) {
 
 	rec := &putRecorder{}
 	store := Default(&rest.Config{Host: rec.serve(t).URL})
-	require.NoError(t, store.Put("alice", &AuthInfo{Strategy: StrategyBasic, CertData: identityCert(t, "alice", []string{"devs"})}))
+	_, err := store.Put("alice", &AuthInfo{Strategy: StrategyBasic, CertData: identityCert(t, "alice", []string{"devs"})})
+	require.NoError(t, err)
 	require.Len(t, rec.written, 1)
 	assert.Empty(t, rec.written[0].OwnerReferences, "a person's credential has no owner")
 }
