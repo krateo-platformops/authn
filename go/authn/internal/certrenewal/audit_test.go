@@ -50,6 +50,12 @@ func TestARenewalThatFailsBeforeTheWriteIsRecorded(t *testing.T) {
 				case r.URL.Path == "/apis/certificates.k8s.io/v1/certificatesigningrequests":
 					w.WriteHeader(http.StatusForbidden)
 					_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/apis/certificates.k8s.io/v1/certificatesigningrequests/authn":
+					// After a failed create, signup (plumbing v1.51.0) reads the CSR to
+					// clean up one the apiserver stored anyway; a refused create stored
+					// nothing.
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}`)
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/krateo-system/secrets/authn-clientconfig":
 					w.WriteHeader(tc.secretCode)
 					if tc.secretCode == http.StatusOK {
