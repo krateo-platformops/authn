@@ -36,6 +36,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
@@ -80,6 +81,9 @@ type Options struct {
 	Duration  time.Duration
 	Threshold float64
 	Log       zerolog.Logger
+	// Audit records each write of the certificate's Secret (AUDIT-4). Nil
+	// records nothing.
+	Audit *auditlog.Controller
 }
 
 // Renewer keeps one identity's clientconfig Secret holding a valid certificate.
@@ -94,6 +98,7 @@ type Renewer struct {
 	requested time.Duration
 	threshold float64
 	log       zerolog.Logger
+	audit     *auditlog.Controller
 }
 
 func New(o Options) (*Renewer, error) {
@@ -131,6 +136,7 @@ func New(o Options) (*Renewer, error) {
 		requested: o.Duration,
 		threshold: o.Threshold,
 		log:       o.Log,
+		audit:     o.Audit,
 	}, nil
 }
 
@@ -234,7 +240,7 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Dur("requested", r.requested).
 		Msg("issuing authn client certificate")
 
-	ep, err := signup.Do(ctx, signup.Options{
+	ep, written, err := signup.DoWritten(ctx, signup.Options{
 		RestConfig:   r.rc,
 		Namespace:    r.namespace,
 		CAData:       r.caData,
@@ -243,6 +249,8 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Username:     r.username,
 		UserGroups:   r.groups,
 	})
+	r.audit.ServiceCertIssued(ctx, auditlog.SecretRef{Namespace: written.Namespace, Name: written.Name,
+		UID: written.UID, ResourceVersion: written.ResourceVersion}, written.Verb, written.StatusCode, err)
 	if err != nil {
 		return retryInterval, fmt.Errorf("issuing a client certificate for %q: %w", r.username, err)
 	}

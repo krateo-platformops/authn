@@ -10,14 +10,21 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
-// ActionStepUpExpired is the krateo.action of the step-up sweep deleting an
-// expired step-up credential.
-const ActionStepUpExpired = "authn.stepup.expired"
+// The controller krateo.action literals.
+const (
+	// ActionStepUpExpired: the step-up sweep deleted an expired step-up credential.
+	ActionStepUpExpired = "authn.stepup.expired"
+	// ActionServiceCertIssued: authn issued (or renewed) its own client
+	// certificate and stored it in its clientconfig Secret.
+	ActionServiceCertIssued = "authn.servicecert.issued"
+)
 
 // The controller record bodies.
 const (
-	msgSwept      = "expired credential deleted"
-	msgSweepError = "expired credential not deleted"
+	msgSwept       = "expired credential deleted"
+	msgSweepError  = "expired credential not deleted"
+	msgCertStored  = "service credential stored"
+	msgCertFailure = "service credential not stored"
 )
 
 // Controller writes the records of authn's own background credential writes
@@ -83,4 +90,33 @@ func statusCodeOf(err error) int {
 		return int(s.Status().Code)
 	}
 	return 0
+}
+
+// ServiceCertIssued records the write of authn's own certificate to its
+// clientconfig Secret: the request that stored it, or failed to (plumbing
+// endpoints.StoreWritten). A renewal that failed before the Secret was written
+// (the CSR) sends nothing for it and is not recorded.
+func (c *Controller) ServiceCertIssued(ctx context.Context, ref SecretRef, verb string, code int, err error) {
+	if c == nil || c.e == nil || verb == "" {
+		return
+	}
+	ev := audit.Event{
+		Action:     ActionServiceCertIssued,
+		Verb:       verb,
+		HTTPMethod: methodOf(verb),
+		Outcome:    audit.OutcomeSuccess,
+		Message:    msgCertStored,
+		StatusCode: code,
+
+		Namespace: ref.Namespace, Version: "v1", Resource: "secrets", Kind: "Secret",
+		ObjectName: ref.Name, ObjectUID: ref.UID, ObjectResourceVersion: ref.ResourceVersion,
+	}
+	if err != nil {
+		ev.Outcome, ev.Message = audit.OutcomeFailure, msgCertFailure
+		if ev.StatusCode == 0 {
+			ev.StatusCode = statusCodeOf(err)
+		}
+	}
+	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
+	c.e.Emit(ctx, ev)
 }

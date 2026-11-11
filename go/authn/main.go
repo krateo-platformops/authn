@@ -328,6 +328,7 @@ func main() {
 		Duration:   *serviceCertExpiresIn,
 		Threshold:  *certRenewalThreshold,
 		Log:        log,
+		Audit:      auditCtl,
 	})
 	if err != nil {
 		// A clientconfig authn cannot create has never been a reason to refuse

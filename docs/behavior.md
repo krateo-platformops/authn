@@ -502,6 +502,7 @@ or a log line.
 | OIDC step-up | `authn.stepup.oidc` | the `<username>-clientconfig-stepup` Secret | `create` or `update` |
 | `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping | `get` |
 | step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
+| authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 
 - **Login, step-up.** A record is written right after the credential is issued, whatever
   the outcome:
@@ -520,11 +521,14 @@ or a log line.
   declares. A record carries `on_behalf_of` and the delegation chain once the subject token
   is read. It's `denied` for `DelegationNotAllowed` and `DelegationTooDeep`, and `failure`
   when signing fails.
-- **Background.** The sweep's records are `controller` rows from a second scope
+- **Background.** The sweep's deletes and the writes of authn's own certificate (its first
+  issue and every renewal) are `controller` rows from a second scope
   (`github.com/krateo-platformops/authn/audit/controller`), with authn's own
-  ServiceAccount (`POD_SERVICE_ACCOUNT`) as actor and the status the apiserver answered
-  the delete. Certificate renewal of authn's own credential is not recorded yet: plumbing's
-  `endpoints.Store` doesn't report what it wrote.
+  ServiceAccount (`POD_SERVICE_ACCOUNT`) as actor and the status the apiserver answered.
+  The certificate's write is reported by plumbing's `signup.DoWritten`
+  (`endpoints.StoreWritten`); a renewal that fails before the Secret write (the CSR) sends
+  nothing for it and has no record. The annotation updates that follow (the validity
+  window) change no data and are not recorded.
 - **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per
   request), the source IPs, the user agent and whether the target's namespace is a
   preview sandbox (from the Namespace's labels, read and cached for 5 minutes; the chart
