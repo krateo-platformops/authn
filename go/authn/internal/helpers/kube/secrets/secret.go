@@ -63,7 +63,9 @@ func Create(ctx context.Context, rc *rest.Config, secret *corev1.Secret) (int, e
 }
 
 // decodeInto reads res's status code and, on success, decodes the stored
-// Secret into secret.
+// Secret into secret. The write succeeded when res carries no error, and then
+// the error is nil whatever happens next: an answer that can't be decoded only
+// leaves secret as sent (no uid), so a done write never reads as failed.
 func decodeInto(res rest.Result, secret *corev1.Secret) (int, error) {
 	var code int
 	res.StatusCode(&code)
@@ -72,7 +74,7 @@ func decodeInto(res rest.Result, secret *corev1.Secret) (int, error) {
 	}
 	stored := &corev1.Secret{}
 	if err := res.Into(stored); err != nil {
-		return code, err
+		return code, nil
 	}
 	*secret = *stored
 	return code, nil
