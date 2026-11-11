@@ -17,6 +17,13 @@ const (
 	// ActionServiceCertIssued: authn issued (or renewed) its own client
 	// certificate and stored it in its clientconfig Secret.
 	ActionServiceCertIssued = "authn.servicecert.issued"
+	// ActionIdentityBackfilled: at startup, authn stamped the authorization-
+	// bearing identity annotations (strategy, groups) or the owner of a
+	// credential Secret written before it recorded them.
+	ActionIdentityBackfilled = "authn.identity.backfilled"
+	// ActionServiceIdentityAnnotated: authn brought the authorization-bearing
+	// identity annotations of its own credential in line with its certificate.
+	ActionServiceIdentityAnnotated = "authn.servicecert.annotated"
 )
 
 // The controller record bodies.
@@ -25,6 +32,8 @@ const (
 	msgSweepError  = "expired credential not deleted"
 	msgCertStored  = "service credential stored"
 	msgCertFailure = "service credential not stored"
+	msgIdentity    = "credential identity recorded"
+	msgIdentityErr = "credential identity not recorded"
 )
 
 // Controller writes the records of authn's own background credential writes
@@ -118,6 +127,32 @@ func (c *Controller) ServiceCertIssued(ctx context.Context, ref SecretRef, verb 
 		// request was sent for it. err may be an earlier step's (the CSR's), so
 		// its status is not the Secret's and is never borrowed.
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgCertFailure
+	}
+	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
+	c.e.Emit(ctx, ev)
+}
+
+// IdentityWritten records a background write of a credential Secret's
+// authorization-bearing identity (storage.AuthorizationAnnotations, or its
+// owner): action is ActionIdentityBackfilled or ActionServiceIdentityAnnotated.
+// The write is a full update (PUT), so verb update and the apiserver's answer.
+func (c *Controller) IdentityWritten(ctx context.Context, action string, ref SecretRef, code int, err error) {
+	if c == nil || c.e == nil {
+		return
+	}
+	ev := audit.Event{
+		Action:     action,
+		Verb:       "update",
+		HTTPMethod: http.MethodPut,
+		Outcome:    audit.OutcomeSuccess,
+		Message:    msgIdentity,
+		StatusCode: code,
+
+		Namespace: ref.Namespace, Version: "v1", Resource: "secrets", Kind: "Secret",
+		ObjectName: ref.Name, ObjectUID: ref.UID, ObjectResourceVersion: ref.ResourceVersion,
+	}
+	if err != nil {
+		ev.Outcome, ev.Message = audit.OutcomeFailure, msgIdentityErr
 	}
 	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
 	c.e.Emit(ctx, ev)

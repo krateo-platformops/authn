@@ -503,6 +503,8 @@ or a log line.
 | `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping | `get` |
 | step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
+| identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
+| authn's own identity annotations (background) | `authn.servicecert.annotated` | authn's `-clientconfig` Secret | `update` |
 
 - **Login, step-up.** A record is written right after the credential is issued, whatever
   the outcome:
@@ -536,7 +538,14 @@ or a log line.
   issuance (#119's scope), and the record names the credential Secret they produce. A
   login whose CSR step fails still has its record, a `failure` naming the Secret it would
   have written, so a failed issuance is never silent. The annotation updates that follow (the validity
-  window) change no data and are not recorded.
+  window) change no data; they are recorded only when they change an
+  authorization-bearing annotation (below).
+- **Authorization-bearing annotations are content.** Policy decides from a credential's
+  `authn.krateo.io/strategy` and `authn.krateo.io/groups` (tenant onboarding, for one),
+  so a write that changes one changes what the identity may do. `storage.AuthorizationAnnotations`
+  declares them, once. The startup backfill writes only to stamp one of them or an owner,
+  so every backfill write is a record. The renewer's annotation sync is recorded when it
+  changes one of them, not for the validity window alone.
 - **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per
   request), the source IPs, the user agent and whether the target's namespace is a
   preview sandbox (from the Namespace's labels, read and cached for 5 minutes; the chart

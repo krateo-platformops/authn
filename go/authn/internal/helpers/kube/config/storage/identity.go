@@ -29,6 +29,25 @@ const (
 	groupSeparator = "\n"
 )
 
+// AuthorizationAnnotations are the identity annotations authorization reads:
+// policy decides from a credential's strategy and groups (tenant onboarding,
+// for one), so changing them changes what the identity may do. A write that
+// changes one of them is desired state, and an audit record (AUDIT-4) is owed
+// for it even though the Secret's data is unchanged. The one declared list:
+// callers compare against it, never against ad hoc keys.
+var AuthorizationAnnotations = []string{StrategyAnnotation, GroupsAnnotation}
+
+// AuthorizationAnnotationsDiffer reports whether before and after disagree on
+// any of AuthorizationAnnotations.
+func AuthorizationAnnotationsDiffer(before, after map[string]string) bool {
+	for _, k := range AuthorizationAnnotations {
+		if before[k] != after[k] {
+			return true
+		}
+	}
+	return false
+}
+
 // Strategy is the value of StrategyAnnotation.
 type Strategy string
 

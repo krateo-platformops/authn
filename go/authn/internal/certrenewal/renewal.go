@@ -406,9 +406,20 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 	for k, v := range want {
 		merged[k] = v
 	}
+	// Only a change to an authorization-bearing annotation is a change an
+	// audit record is owed for; the validity window alone is observability.
+	authz := storage.AuthorizationAnnotationsDiffer(have, merged)
 	sec.SetAnnotations(merged)
 
-	if _, err := secrets.Update(ctx, r.rc, sec); err != nil {
+	ref := auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name}
+	code, err := secrets.Update(ctx, r.rc, sec)
+	if err == nil {
+		ref.UID, ref.ResourceVersion = string(sec.UID), sec.ResourceVersion
+	}
+	if authz {
+		r.audit.IdentityWritten(ctx, auditlog.ActionServiceIdentityAnnotated, ref, code, err)
+	}
+	if err != nil {
 		r.log.Err(err).Str("secret", r.secret).Msg("recording the certificate validity window")
 	}
 }

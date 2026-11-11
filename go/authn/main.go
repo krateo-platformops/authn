@@ -370,6 +370,7 @@ func main() {
 			SelfUsername:     *authnUsername,
 			MappingNamespace: operatorNamespace,
 			Log:              log,
+			Audit:            auditCtl,
 		})
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")

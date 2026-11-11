@@ -2,17 +2,28 @@ package certrenewal
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -71,6 +82,68 @@ func TestARenewalThatFailsBeforeTheWriteIsRecorded(t *testing.T) {
 			for _, kv := range audittest.Attributes(rec) {
 				assert.NotEqual(t, "http.response.status_code", string(kv.Key), "no request was sent for the Secret")
 			}
+		})
+	}
+}
+
+func authnCert(t *testing.T, groups []string) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	now := time.Now()
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "authn", Organization: groups},
+		NotBefore: now, NotAfter: now.Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	return base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// syncAnnotations writes whenever an annotation is stale, but an audit record
+// is owed only when an authorization-bearing one (strategy, groups) changes:
+// the validity window alone is observability (AUDIT-4, authorization-bearing
+// annotations ruling).
+func TestSyncAnnotationsRecordsOnlyAuthorizationChanges(t *testing.T) {
+	cert := authnCert(t, []string{"authn"})
+	identity, err := storage.IdentityAnnotations(storage.StrategySelf, cert)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		have   map[string]string
+		record bool
+	}{
+		{"only the validity window is stale: written, not recorded", identity, false},
+		{"the groups are stale: written and recorded", map[string]string{storage.StrategyAnnotation: "self", storage.GroupsAnnotation: "old"}, true},
+		{"the strategy is missing: written and recorded", map[string]string{storage.GroupsAnnotation: identity[storage.GroupsAnnotation]}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var puts int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.Method != http.MethodPut {
+					t.Errorf("unexpected call: %s %s", r.Method, r.URL.Path)
+					return
+				}
+				puts++
+				body, _ := io.ReadAll(r.Body)
+				_, _ = w.Write(body)
+			}))
+			t.Cleanup(srv.Close)
+			ctl, records := auditlogtest.NewController(t, "system:serviceaccount:krateo-system:authn")
+			r, err := New(Options{RestConfig: &rest.Config{Host: srv.URL}, Namespace: "krateo-system",
+				Username: "authn", Log: zerolog.Nop(), Audit: ctl})
+			require.NoError(t, err)
+			sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "authn-clientconfig", Namespace: "krateo-system",
+				Annotations: tc.have}, Data: map[string][]byte{storage.ClientCertLabel: []byte(cert)}}
+			r.syncAnnotations(context.Background(), sec)
+			require.Equal(t, 1, puts, "a stale annotation is written")
+			if !tc.record {
+				assert.Empty(t, records.Records())
+				return
+			}
+			rec := records.Only(t)
+			audittest.AssertConformant(t, audit.WriterController, rec)
+			assert.Equal(t, "authn.servicecert.annotated", auditlogtest.String(rec, "krateo.action"))
+			assert.Equal(t, "update", auditlogtest.String(rec, audit.KeyVerb))
 		})
 	}
 }
