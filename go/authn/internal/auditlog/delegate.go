@@ -16,18 +16,21 @@ const (
 )
 
 // DelegationDenial is why /delegate refused an authenticated actor, as the
-// record's schema denial reason. A refusal the schema has no reason for yet
-// (the subject token's, until audit v0.7.0) is NoDelegationDenial.
+// record's schema denial reason.
 type DelegationDenial string
 
 const (
-	// NoDelegationDenial: the outcome isn't denied, or the schema declares no
-	// reason for the refusal.
+	// NoDelegationDenial: the outcome isn't denied.
 	NoDelegationDenial DelegationDenial = ""
 	// DelegationNotAllowed: the actor's mapping doesn't allow delegation.
 	DelegationNotAllowed DelegationDenial = audit.DenialReasonDelegationNotAllowed
 	// DelegationTooDeep: the actor chain would exceed the mapping's depth bound.
 	DelegationTooDeep DelegationDenial = audit.DenialReasonDelegationTooDeep
+	// SubjectTokenExpired: the subject token verified but has expired, or is
+	// about to.
+	SubjectTokenExpired DelegationDenial = audit.DenialReasonSubjectTokenExpired
+	// SubjectTokenInvalid: the subject token didn't verify.
+	SubjectTokenInvalid DelegationDenial = audit.DenialReasonSubjectTokenInvalid
 )
 
 // Delegation records one /delegate decision about an authenticated actor

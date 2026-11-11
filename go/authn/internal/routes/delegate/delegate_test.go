@@ -298,6 +298,7 @@ func TestDelegationRefusals(t *testing.T) {
 		code     int
 		cause    string
 		apiCalls bool
+		reason   string // the record's denial_reason, when the actor was verified
 	}{
 		{name: "no bearer", mappings: mapping(`{"allowed":true}`), form: func(t *testing.T) url.Values { return form(valid(t)) },
 			code: http.StatusUnauthorized, cause: "MissingBearer"},
@@ -320,21 +321,27 @@ func TestDelegationRefusals(t *testing.T) {
 			code: http.StatusBadRequest, cause: "MissingSubjectToken"},
 		{name: "service not opted in", mappings: mapping(""), bearer: "sa",
 			form: func(t *testing.T) url.Values { return form(valid(t)) },
-			code: http.StatusForbidden, cause: "DelegationNotAllowed", apiCalls: true},
+			code: http.StatusForbidden, cause: "DelegationNotAllowed", apiCalls: true, reason: "delegation_not_allowed"},
 		{name: "opt-in set to false", mappings: mapping(`{"allowed":false}`), bearer: "sa",
 			form: func(t *testing.T) url.Values { return form(valid(t)) },
-			code: http.StatusForbidden, cause: "DelegationNotAllowed", apiCalls: true},
+			code: http.StatusForbidden, cause: "DelegationNotAllowed", apiCalls: true, reason: "delegation_not_allowed"},
 		{name: "subject signed by another key", mappings: mapping(`{"allowed":true}`), bearer: "sa",
 			form: func(t *testing.T) url.Values { return form(token(t, k.stranger, "current", time.Hour, nil)) },
-			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", apiCalls: true},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", apiCalls: true, reason: "subject_token_invalid"},
+		{name: "subject signed with a kid authn has no key for (a retired one)", mappings: mapping(`{"allowed":true}`), bearer: "sa",
+			form: func(t *testing.T) url.Values { return form(token(t, k.current, "retired", time.Hour, nil)) },
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", apiCalls: true, reason: "subject_token_invalid"},
 		{name: "subject expired", mappings: mapping(`{"allowed":true}`), bearer: "sa",
 			form: func(t *testing.T) url.Values { return form(token(t, k.current, "current", -time.Minute, nil)) },
-			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", apiCalls: true},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", apiCalls: true, reason: "subject_token_expired"},
+		{name: "subject about to expire", mappings: mapping(`{"allowed":true}`), bearer: "sa",
+			form: func(t *testing.T) url.Values { return form(token(t, k.current, "current", 500*time.Millisecond, nil)) },
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", apiCalls: true, reason: "subject_token_expired"},
 		{name: "chain deeper than the mapping allows", mappings: mapping(`{"allowed":true,"maxDepth":1}`), bearer: "sa",
 			form: func(t *testing.T) url.Values {
 				return form(token(t, k.current, "current", time.Hour, &jwtutil.Actor{Sub: "portal-agent"}))
 			},
-			code: http.StatusForbidden, cause: "DelegationTooDeep", apiCalls: true},
+			code: http.StatusForbidden, cause: "DelegationTooDeep", apiCalls: true, reason: "delegation_too_deep"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rc, calls := apiserver(t, tc.mappings)
@@ -355,15 +362,9 @@ func TestDelegationRefusals(t *testing.T) {
 			assert.Equal(t, "create", auditlogtest.String(r, "krateo.audit.verb"))
 			assert.Equal(t, "token", auditlogtest.String(r, "krateo.audit.object_ref.subresource"))
 			assert.Equal(t, "kagent", auditlogtest.String(r, "krateo.audit.object_ref.name"))
-			// The schema's reason for each refusal; the subject token's has none.
-			wantReason := map[string]string{
-				"DelegationNotAllowed": "delegation_not_allowed",
-				"DelegationTooDeep":    "delegation_too_deep",
-				"SubjectTokenInvalid":  "",
-			}
-			want, known := wantReason[tc.cause]
-			require.True(t, known, "every recorded refusal has an expected reason: %s", tc.cause)
-			assert.Equal(t, want, auditlogtest.String(r, "krateo.audit.denial_reason"))
+			// Every refusal of a verified actor names the schema's reason.
+			require.NotEmpty(t, tc.reason, "a recorded refusal needs its expected reason")
+			assert.Equal(t, tc.reason, auditlogtest.String(r, "krateo.audit.denial_reason"))
 		})
 	}
 }

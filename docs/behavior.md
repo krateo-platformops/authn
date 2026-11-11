@@ -528,8 +528,10 @@ or a log line.
   declares. A record carries `on_behalf_of` and the delegation chain once the subject token
   is read. It's `denied` for `DelegationNotAllowed` and `DelegationTooDeep`, with
   `krateo.audit.denial_reason` `delegation_not_allowed` or `delegation_too_deep`, and for a
-  refused subject token, which has no reason in the schema. It's `failure` when signing
-  fails.
+  refused subject token: `subject_token_expired` when it verified but has lapsed or is
+  about to, `subject_token_invalid` when it didn't verify (a bad signature, a kid authn
+  has no key for, including a retired one, or malformed). Both answer `401`
+  `SubjectTokenInvalid`. It's `failure` when signing fails.
 - **Background.** The sweep's deletes and the writes of authn's own certificate (its first
   issue and every renewal) are `controller` rows from a second scope
   (`github.com/krateo-platformops/authn/audit/controller`), with authn's own

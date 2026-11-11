@@ -32,7 +32,8 @@ func TestDelegationRecordsConform(t *testing.T) {
 	}{
 		{"issued", person, chain, audit.OutcomeSuccess, NoDelegationDenial},
 		{"refused: the mapping doesn't allow delegation", nil, nil, audit.OutcomeDenied, DelegationNotAllowed},
-		{"refused: the subject token", nil, nil, audit.OutcomeDenied, NoDelegationDenial},
+		{"refused: the subject token expired", nil, nil, audit.OutcomeDenied, SubjectTokenExpired},
+		{"refused: the subject token didn't verify", nil, nil, audit.OutcomeDenied, SubjectTokenInvalid},
 		{"refused: the chain would be too deep", person, chain, audit.OutcomeDenied, DelegationTooDeep},
 		{"signing failed", person, chain, audit.OutcomeFailure, NoDelegationDenial},
 	} {
@@ -65,7 +66,7 @@ func TestDelegationRecordsConform(t *testing.T) {
 			if tc.why != NoDelegationDenial {
 				assert.Equal(t, string(tc.why), reason.AsString())
 			} else {
-				assert.False(t, hasReason, "a reason only where the schema declares one")
+				assert.False(t, hasReason, "a reason on a denied record only")
 			}
 			dr, _ := attr(t, attrs, "krateo.audit.dry_run")
 			assert.False(t, dr.AsBool(), "a real issuance")
