@@ -273,10 +273,10 @@
       "additionalProperties": false,
       "description": "OpenTelemetry settings the chart wires. The OTEL_* gates themselves go in env.",
       "properties": {
-        "logsEndpoint": {
+        "endpoint": {
           "type": "string",
           "minLength": 1,
-          "description": "Where audit records go (OTLP/HTTP logs) when OTEL_LOGS_ENABLED is true. $(HOST_IP) expands to the node IP."
+          "description": "The OTLP/HTTP endpoint for every OpenTelemetry signal, audit records included. $(HOST_IP) expands to the node IP."
         }
       }
     },

@@ -17,10 +17,10 @@ import (
 // EnvLogsEnabled gates the OTLP logs pipeline, which carries authn's audit
 // records (AUDIT-4) and nothing else. Default: OTEL_ENABLED.
 //
-// Logs go to OTEL_EXPORTER_OTLP_LOGS_ENDPOINT when it is set (the chart points
-// it at the node-local collector agent, http://$(HOST_IP):4318, whose
-// logs/audit pipeline writes krateo_audit), else to OTEL_EXPORTER_OTLP_ENDPOINT,
-// as the OTLP exporter reads them.
+// Logs go to OTEL_EXPORTER_OTLP_LOGS_ENDPOINT when it is set, else to
+// OTEL_EXPORTER_OTLP_ENDPOINT, as the OTLP exporter reads them. The chart sets
+// the latter for every signal: the node-local collector agent,
+// http://$(HOST_IP):4318, whose logs/audit pipeline writes krateo_audit.
 const EnvLogsEnabled = "OTEL_LOGS_ENABLED"
 
 // LogsEnabled reports whether the logs pipeline is opted in. It defaults to the

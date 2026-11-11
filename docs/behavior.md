@@ -490,7 +490,7 @@ otherwise pass.
   is neither stored nor returned (`storage.ErrClaimedByAnother`).
 
 ### Audit records
-With `OTEL_LOGS_ENABLED` on (default `OTEL_ENABLED`), authn writes one audit record (audit
+With `OTEL_LOGS_ENABLED` on (default `OTEL_ENABLED`, which the chart turns on), authn writes one audit record (audit
 library schema v1, AUDIT-4) per credential it writes for a verified caller, and one per
 `/delegate` decision about an authenticated actor. Records go to the OTLP logs pipeline
 and nowhere else: their attributes carry identity on purpose, so they never reach a span

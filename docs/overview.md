@@ -72,4 +72,5 @@ controller, no cache and no state beyond the persisted `AuthInfo` Secrets.
 One Deployment, one container, one port (default `8082`) serving logins, probes and
 `/strategies` alike. All configuration arrives as env vars via a chart-managed
 ConfigMap plus the JWT signing-key Secret ([configuration](./configuration.md)).
-OpenTelemetry traces/metrics are built in but **default off** (`OTEL_ENABLED`).
+OpenTelemetry traces, metrics and audit records are built in. The binary keeps them
+off; the chart turns them on (`OTEL_ENABLED: "true"`, to the node-local agent).

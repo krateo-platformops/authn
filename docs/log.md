@@ -18,7 +18,11 @@ Curated history, newest first. Durable decisions live in
 
 authn wrote every credential later requests ride on and recorded none of it. Logins,
 step-up and `/delegate` now write schema-v1 audit records over OTLP logs, gated by
-`OTEL_LOGS_ENABLED`, and so does the step-up sweep, as authn's ServiceAccount. Decided
+`OTEL_LOGS_ENABLED`, and so does the step-up sweep, as authn's ServiceAccount. The
+chart now turns authn's OpenTelemetry on (`OTEL_ENABLED: "true"`, every signal to the
+node-local agent at `http://$(HOST_IP):4318`), as snowplow's does: before this, authn
+sent no traces or metrics on any cluster, because its chart never set the gate. Diego
+chose this default over a per-cluster opt-in. Decided
 with snowplow, the AUDIT-4 lead:
 - one record per verified login, right after issuance, naming the Secret written and the
   verb sent;

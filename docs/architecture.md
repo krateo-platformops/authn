@@ -34,10 +34,12 @@ API.
    (`JWT_SIGN_KEY_FILE` / `JWT_KID`), and the ServiceAccount-token audience
    (`AUTHN_SERVICEACCOUNT_AUDIENCE`, default `authn`, `main.go:78-80`).
 2. **Logger.** zerolog to stdout, `info` unless `--debug` (`main.go:94-105`).
-3. **OpenTelemetry (default OFF).** `telemetry.Setup` initializes the gated
-   traces/metrics pipelines (`main.go:135-147`); the master gate is `OTEL_ENABLED`
-   with per-signal overrides (`internal/telemetry/telemetry.go:36-44`). When both
-   signals are off the handler chain is left untouched.
+3. **OpenTelemetry (binary default off; the chart turns it on).** `telemetry.Setup`
+   initializes the gated traces/metrics pipelines and `telemetry.SetupLogs` the logs
+   pipeline that carries audit records; the master gate is `OTEL_ENABLED` with
+   per-signal overrides (`OTEL_TRACING_ENABLED`, `OTEL_METRICS_ENABLED`,
+   `OTEL_LOGS_ENABLED`). When tracing and metrics are off the handler chain carries
+   only the audit middleware, which writes nothing while logs are off.
 4. **Kube rest config.** In-cluster by default, or from `--kubeconfig`
    (`main.go:149-158`).
 5. **Kubeconfig generator.** `kubeconfig.NewGenerator(cfg, …)` (`main.go:160-165`) —
