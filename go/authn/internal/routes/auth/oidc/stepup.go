@@ -244,16 +244,19 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		// The step-up check runs inside issuance (admitStepUp), first, so
-		// every refusal of this verified identity is recorded. ttl is read only
-		// once the check has admitted it, when spec.stepUp is set.
+		// The step-up check runs inside issuance (admitStepUp), so every
+		// refusal of this verified identity is recorded. It runs last: the
+		// identity is refused for its groups (system:, krateo:, then the
+		// provider's allowedGroups) before its assurance is evaluated (authn#133
+		// review). ttl is read only once the check has admitted it, when
+		// spec.stepUp is set.
 		var ttl time.Duration
 		if cfg.StepUp != nil {
 			ttl = cfg.StepUp.ttl
 		}
 		up := userinfo.NewStepUpUser(nfo, StepUpLevel)
 		issued, err := r.gen.GenerateStepUp(storage.StrategyOIDC, up, ttl,
-			admitStepUp(cfg.StepUp, tok, time.Now()), admitGroups(cfg, nfo))
+			admitGroups(cfg, nfo), admitStepUp(cfg.StepUp, tok, time.Now()))
 		r.audit.Issuance(req, auditlog.ActionStepUp, up, jwtutil.PrincipalHuman, issued, err)
 		notAfter := issued.NotAfter
 		if err != nil {

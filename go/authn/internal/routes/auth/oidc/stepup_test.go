@@ -385,3 +385,34 @@ func logLine(t *testing.T, buf *bytes.Buffer, msg string) map[string]any {
 	t.Fatalf("no %q log line in:\n%s", msg, buf.String())
 	return nil
 }
+
+// A provider's allowedGroups refuses the identity before its step-up is
+// evaluated (authn#133 review): a person outside allowedGroups is
+// group_not_allowed whichever step-up refusal would also apply.
+func TestAllowedGroupsComeBeforeTheStepUpCheck(t *testing.T) {
+	fresh := float64(time.Now().Add(-time.Minute).Unix())
+	stale := float64(time.Now().Add(-time.Hour).Unix())
+	for _, tc := range []struct {
+		name   string
+		stepUp string
+		claims map[string]any
+	}{
+		{"step-up not enabled", "", map[string]any{"acr": "gold", "auth_time": fresh}},
+		{"acr too low", stepUpGold, map[string]any{"acr": "silver", "auth_time": fresh}},
+		{"stale authentication", stepUpGold, map[string]any{"acr": "gold", "auth_time": stale}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			extra := `"allowedGroups":["admins"]` // alice is in devs only
+			if tc.stepUp != "" {
+				extra += `,"stepUp":` + tc.stepUp
+			}
+			gen := &stepUpGenerator{notAfter: time.Now().Add(15 * time.Minute)}
+			rec := stepUpRequest(t, oidcEnv(t, extra, tc.claims), gen)
+			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+			assert.Contains(t, rec.Body.String(), "GroupNotAllowed")
+			r := auditlogtest.Only(t, gen.records)
+			assert.Equal(t, "group_not_allowed", auditlogtest.String(r, "krateo.audit.denial_reason"))
+			assert.Empty(t, gen.stepUps)
+		})
+	}
+}

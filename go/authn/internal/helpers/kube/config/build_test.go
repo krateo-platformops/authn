@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"github.com/krateo-platformops/authn/internal/status"
 	"testing"
 	"time"
 
@@ -70,4 +71,41 @@ func TestNoUsernameNamesNoSecret(t *testing.T) {
 
 	gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"}, Lookup(&fakeLookup{})).(*kubeconfigGenerator)
 	assert.Equal(t, storage.Written{Namespace: "krateo-system"}, gen.wouldWrite(""), "the namespace only: no name, no verb")
+}
+
+// An identity is refused for its own groups before any admission check
+// (Admit) evaluates it (authn#133 review): a system: group, or a krateo: group
+// from an identity source, is reported as such, never masked by a step-up's
+// assurance refusal or an OIDCConfig's allowedGroups, on both issuance paths.
+func TestGroupRefusalsComeBeforeAdmissionChecks(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	admits := map[string]IssueOption{
+		"a step-up assurance refusal": Admit(func(userinfo.Info) error {
+			return Refused(RefusalInsufficientAssurance, status.Refused("InsufficientAssurance", errors.New("acr too low")))
+		}),
+		"an allowedGroups refusal": Admit(func(userinfo.Info) error {
+			return Refused(RefusalGroupNotAllowed, status.Refused("GroupNotAllowed", errors.New("not admitted")))
+		}),
+	}
+	for _, id := range []struct {
+		name string
+		user userinfo.Info
+		want Refusal
+	}{
+		{"a system: group", userAs("alice", "kc", "1", "devs", "system:masters"), RefusalSystemGroup},
+		{"a krateo: group from an identity source", userAs("alice", "kc", "1", "devs", "krateo:admins"), RefusalPlatformGroup},
+	} {
+		for admitName, admit := range admits {
+			gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"}, Lookup(&fakeLookup{})).(*kubeconfigGenerator)
+			t.Run(id.name+" vs "+admitName+": login", func(t *testing.T) {
+				_, err := gen.Generate(storage.StrategyOIDC, id.user, admit)
+				assert.Equal(t, id.want, RefusalOf(err))
+			})
+			t.Run(id.name+" vs "+admitName+": step-up", func(t *testing.T) {
+				up := userinfo.NewStepUpUser(id.user, 2) // as the step-up route builds it
+				_, err := gen.GenerateStepUp(storage.StrategyOIDC, up, 15*time.Minute, admit)
+				assert.Equal(t, id.want, RefusalOf(err))
+			})
+		}
+	}
 }
