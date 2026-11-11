@@ -9,6 +9,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"github.com/krateo-platformops/audit"
+	"github.com/krateo-platformops/audit/audittest"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"math/big"
 	"sort"
 	"testing"
@@ -113,6 +116,41 @@ func TestSweepNeverDeletesARewrittenSecret(t *testing.T) {
 	assert.Equal(t, "1", *got.ResourceVersion)
 	assert.Equal(t, Result{Scanned: 1, Skipped: 1}, res)
 	assert.Equal(t, []string{"alice-clientconfig-stepup"}, names(t, c, "krateo-system"))
+}
+
+// Each delete writes one controller record of the Secret it targeted, with the
+// status the apiserver answered (AUDIT-4): a success, and a conflict.
+func TestSweepRecordsEachDelete(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		code    int
+		err     error
+		outcome string
+	}{
+		{"deleted", 202, nil, "success"},
+		{"rewritten meanwhile", 409, apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, "alice-clientconfig-stepup", nil), "failure"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := fake.NewSimpleClientset(secret("alice-clientconfig-stepup", "krateo-system", certData(t, now.Add(-time.Hour))))
+			ctl, records := auditlogtest.NewController(t, "system:serviceaccount:krateo-system:authn")
+			_, err := Sweep(context.Background(), Options{Client: c, Namespaces: []string{"krateo-system"},
+				Now: func() time.Time { return now }, Log: zerolog.Nop(), Audit: ctl,
+				Delete: func(context.Context, string, string, metav1.DeleteOptions) (int, error) { return tc.code, tc.err },
+			})
+			require.NoError(t, err)
+			r := records.Only(t)
+			audittest.AssertConformant(t, audit.WriterController, r)
+			audittest.AssertRequiredKeysDetected(t, audit.WriterController, r)
+			assert.Equal(t, tc.outcome, auditlogtest.String(r, "krateo.audit.outcome"))
+			assert.Equal(t, "alice-clientconfig-stepup", auditlogtest.String(r, "krateo.audit.object_ref.name"))
+			assert.Equal(t, "alice-clientconfig-stepup-uid", auditlogtest.String(r, "krateo.audit.object_ref.uid"))
+			for _, kv := range audittest.Attributes(r) {
+				if kv.Key == "http.response.status_code" {
+					assert.Equal(t, int64(tc.code), kv.Value.AsInt64())
+				}
+			}
+		})
+	}
 }
 
 func TestRunSweepsAtOnceAndStopsWithItsContext(t *testing.T) {

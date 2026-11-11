@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/audit"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"time"
 
@@ -63,6 +65,9 @@ type Options struct {
 	PreviousKeys []jwks.Key
 	// TTL is the longest a delegated token lives; defaults to DefaultTTL.
 	TTL time.Duration
+	// Audit records each decision about an authenticated actor (AUDIT-4).
+	// Nil records nothing.
+	Audit *auditlog.Recorder
 }
 
 func Route(rc *rest.Config, opts Options) routes.Route {
@@ -119,8 +124,10 @@ func (r *route) Handler() http.HandlerFunc {
 			fail(err, "delegation actor not authenticated")
 			return
 		}
+		actorPrincipal := serviceaccount.Principal(actor)
 		maxDepth, err := delegationDepth(actor)
 		if err != nil {
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied)
 			fail(err, "delegation refused")
 			return
 		}
@@ -131,9 +138,10 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
-		act := &jwtutil.Actor{Sub: actor.Name, Act: subject.Act, Principal: serviceaccount.Principal(actor)}
+		act := &jwtutil.Actor{Sub: actor.Name, Act: subject.Act, Principal: actorPrincipal}
 		depth := chainDepth(act)
 		if depth > maxDepth {
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied)
 			fail(status.Refused(CauseDelegationTooDeep,
 				fmt.Errorf("the actor chain would be %d deep; %s allows %d", depth, actor.Name, maxDepth)),
 				"delegation refused")
@@ -151,9 +159,11 @@ func (r *route) Handler() http.HandlerFunc {
 			Principal:  subject.Principal,
 		})
 		if err != nil {
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure)
 			fail(status.Failed(CauseIssuanceFailed, fmt.Errorf("signing the delegated token: %w", err)), "delegation failed")
 			return
 		}
+		r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeSuccess)
 
 		log.Info().Str("actor", actor.Name).Str("subject", subject.Username).Int("depth", depth).
 			Msg("delegated token issued")

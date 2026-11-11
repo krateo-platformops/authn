@@ -22,6 +22,12 @@ rules:
 - apiGroups: ["rbac.authorization.k8s.io"]
   resources: ["rolebindings", "clusterrolebindings"]
   verbs: ["list"]
+# An audit record states whether its target's namespace is a preview sandbox,
+# read from the Namespace's labels. authn writes only into its own.
+- apiGroups: [""]
+  resources: ["namespaces"]
+  resourceNames: ["demo-system"]
+  verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

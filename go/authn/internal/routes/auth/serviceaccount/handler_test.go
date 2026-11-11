@@ -6,6 +6,8 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,18 +35,18 @@ type fakeGenerator struct {
 	err        error
 }
 
-func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, opts ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.strategies = append(g.strategies, strategy)
 	g.owners = append(g.owners, kubeconfig.NewIssueOptions(opts...).Owner)
 	g.calls = append(g.calls, user.GetUserName())
 	g.subjects = append(g.subjects, user.GetSubject())
 	if g.err != nil {
-		return nil, time.Time{}, g.err
+		return kubeconfig.Issued{}, g.err
 	}
-	return []byte(`{"kind":"Config","users":[{"name":"x","user":{"client-key-data":"LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"}}]}`), time.Now().Add(time.Hour), nil
+	return kubeconfig.Issued{Kubeconfig: []byte(`{"kind":"Config","users":[{"name":"x","user":{"client-key-data":"LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"}}]}`), NotAfter: time.Now().Add(time.Hour), Secret: auditlogtest.Created(user.GetUserName())}, nil
 }
 
-func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration) (time.Time, error) {
+func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	panic("serviceaccount login never issues a step-up credential")
 }
 
@@ -115,8 +117,10 @@ func TestHandlerOmitsKubeconfigFromResponse(t *testing.T) {
 	require.NoError(t, err)
 
 	gen := &fakeGenerator{}
+	audit, records := auditlogtest.New(t)
 	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{
 		KubeconfigGenerator: gen,
+		Audit:               audit,
 		JwtDuration:         time.Hour,
 		JwtPrivateKey:       key,
 		JwtKeyID:            "test-key",
@@ -125,9 +129,13 @@ func TestHandlerOmitsKubeconfigFromResponse(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, Path, nil)
 	req.Header.Set("Authorization", "Bearer projected-sa-token")
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// One conformant record of the Secret written, as the mapping's principal (AUDIT-4).
+	r := auditlogtest.Only(t, records)
+	assert.Equal(t, "authn.login.serviceaccount", auditlogtest.String(r, "krateo.action"))
+	assert.Equal(t, "cdc-identity-clientconfig", auditlogtest.String(r, "krateo.audit.object_ref.name"))
 	assert.Equal(t, []string{"cdc-identity"}, gen.calls, "the clientconfig Secret must still be minted")
 	assert.Equal(t, []storage.Strategy{storage.StrategyServiceAccount}, gen.strategies, "issued as the serviceaccount strategy")
 	require.Len(t, gen.owners, 1)

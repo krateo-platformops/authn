@@ -37,6 +37,17 @@ spec:
             - configMapRef:
                 name: {{ include "authn.fullname" . }}
           env:
+            # Audit records (AUDIT-4) go over OTLP logs to the node-local
+            # collector agent, whose logs/audit pipeline writes krateo_audit.
+            # Sent only when OTEL_LOGS_ENABLED (default OTEL_ENABLED) is true.
+            # HOST_IP must come first: Kubernetes expands $(HOST_IP) only from
+            # a variable declared before it.
+            - name: HOST_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              value: {{ .Values.otel.logsEndpoint | quote }}
             - name: JWT_SIGN_KEY_FILE
               value: "{{ .Values.jwt.mountPath }}/{{ .Values.jwt.signKeySecretKey }}"
             - name: JWT_KID

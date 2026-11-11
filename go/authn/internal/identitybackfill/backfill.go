@@ -148,7 +148,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			// sec carries the resourceVersion from the list, so a concurrent
 			// writer (a login rewriting the Secret) wins with a conflict
 			// instead of being clobbered.
-			if err := secrets.Update(ctx, o.RestConfig, sec); err != nil {
+			if _, err := secrets.Update(ctx, o.RestConfig, sec); err != nil {
 				res.Skipped++
 				o.Log.Warn().Err(err).Str("secret", sec.Name).Str("namespace", ns).
 					Msg("identity annotations not backfilled")

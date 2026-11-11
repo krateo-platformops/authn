@@ -489,6 +489,50 @@ otherwise pass.
   another identity is refused (`UsernameUnavailable`), and the certificate just minted
   is neither stored nor returned (`storage.ErrClaimedByAnother`).
 
+### Audit records
+With `OTEL_LOGS_ENABLED` on (default `OTEL_ENABLED`), authn writes one audit record (audit
+library schema v1, AUDIT-4) per credential it writes for a verified caller, and one per
+`/delegate` decision about an authenticated actor. Records go to the OTLP logs pipeline
+and nowhere else: their attributes carry identity on purpose, so they never reach a span
+or a log line.
+
+| Emit site | `krateo.action` | Target | Verb |
+|---|---|---|---|
+| basic, LDAP, OAuth, OIDC, ServiceAccount login | `authn.login.<strategy>` | the `<username>-clientconfig` Secret | `create` or `update`, as sent |
+| OIDC step-up | `authn.stepup.oidc` | the `<username>-clientconfig-stepup` Secret | `create` or `update` |
+| `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping | `get` |
+| step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
+
+- **Login, step-up.** A record is written right after the credential is issued, whatever
+  the outcome:
+  - `success`, with the apiserver's status for the request that stored the Secret (201 or
+    200) and the stored uid;
+  - `denied` when authn refused the verified identity: the name guard, a `system:` group,
+    or an OIDCConfig's `allowedGroups`. The target is the Secret it would have written,
+    with the verb it would have sent, and no status code, since authn refused before
+    asking the apiserver;
+  - `failure` when the issuance failed after verification.
+
+  A caller refused before verification (wrong password, invalid token) gets no record. On
+  an OAuth or OIDC callback the record keeps the path only, because the query carries the
+  authorization code and state.
+- **`/delegate`.** The actor is the mapping's name, of the class its `spec.principal`
+  declares. A record carries `on_behalf_of` and the delegation chain once the subject token
+  is read. It's `denied` for `DelegationNotAllowed` and `DelegationTooDeep`, and `failure`
+  when signing fails.
+- **Background.** The sweep's records are `controller` rows from a second scope
+  (`github.com/krateo-platformops/authn/audit/controller`), with authn's own
+  ServiceAccount (`POD_SERVICE_ACCOUNT`) as actor and the status the apiserver answered
+  the delete. Certificate renewal of authn's own credential is not recorded yet: plumbing's
+  `endpoints.Store` doesn't report what it wrote.
+- **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per
+  request), the source IPs, the user agent and whether the target's namespace is a
+  preview sandbox (from the Namespace's labels, read and cached for 5 minutes; the chart
+  grants `get` on authn's own Namespace only). Its body is a closed set of texts, never an
+  error's. A request that wrote a record marks its Server span
+  `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
+  then drops, and `authn.audit.export.failed` counts the dropped records.
+
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response
 (`data` + `accessToken`) to authenticate the user. CORS is enabled by default with

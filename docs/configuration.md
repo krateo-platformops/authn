@@ -78,6 +78,9 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `OTEL_ENABLED` | `false` | Master OpenTelemetry gate; tracing and metrics each default to it. |
 | `OTEL_TRACING_ENABLED` / `OTEL_METRICS_ENABLED` | = `OTEL_ENABLED` | Per-signal overrides (`go/authn/internal/telemetry/telemetry.go:36-44`). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (SDK standard) | OTLP/HTTP collector endpoint when telemetry is on. |
+| `OTEL_LOGS_ENABLED` | = `OTEL_ENABLED` | Sends audit records over OTLP logs (AUDIT-4). Off: no record is written, and authn reads nothing extra. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | chart: `otel.logsEndpoint`, `http://$(HOST_IP):4318` | Where audit records go: the node-local collector agent, whose `logs/audit` pipeline writes `krateo_audit`. `HOST_IP` comes from `status.hostIP`. |
+| `POD_SERVICE_ACCOUNT` | chart: authn's ServiceAccount | The actor of the audit records of authn's own background writes. Required when `OTEL_LOGS_ENABLED` is true; authn exits at boot without it. |
 
 Flags mirror all of the above (`--port`, `--cert-expires`, `--jwt-sign-key-file`,
 `--jwt-kid`, `--jwt-previous-keys`, `--serviceaccount-audience`, `--service-cert-expires`,

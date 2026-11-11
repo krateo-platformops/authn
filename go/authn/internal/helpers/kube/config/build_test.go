@@ -16,7 +16,7 @@ func TestGenerateRefusesReservedGroups(t *testing.T) {
 	gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"})
 	user := &userinfo.DefaultUser{Name: "alice", ID: "1", Groups: []string{"devs", "krateo:loa:2"}}
 
-	_, _, err := gen.Generate(storage.StrategyOIDC, user)
+	_, err := gen.Generate(storage.StrategyOIDC, user)
 	require.ErrorContains(t, err, `group "krateo:loa:2" is reserved`)
 }
 

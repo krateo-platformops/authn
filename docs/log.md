@@ -14,6 +14,26 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-11 — authn records the credentials it issues (AUDIT-4, #119)
+
+authn wrote every credential later requests ride on and recorded none of it. Logins,
+step-up and `/delegate` now write schema-v1 audit records over OTLP logs, gated by
+`OTEL_LOGS_ENABLED`, and so does the step-up sweep, as authn's ServiceAccount. Decided
+with snowplow, the AUDIT-4 lead:
+- one record per verified login, right after issuance, naming the Secret written and the
+  verb sent;
+- a refusal of a verified identity is `denied`, with the Secret it would have written and
+  no status code;
+- step-up is its own action, `authn.stepup.oidc`.
+
+To make the verb and the uid known, `storage.Put` now returns what it wrote, and
+`Generate` returns it in `Issued`. The guard's refusals carry a closed-set reason
+(`config.RefusalOf`), which goes into the record once audit v0.5.0 adds the key. An
+OIDCConfig's `allowedGroups` check moved from the route into `Generate` (`Admit`), so its
+refusal is recorded like the guard's. Certificate renewal of authn's own credential is
+recorded in a second change, after plumbing's `endpoints.Store` reports the verb and uid
+it wrote: the record must state what was sent, not guess it.
+
 ## 2026-11-10 — A retired signing key signs the user out instead of failing as 503
 
 Rotating authn's key to revoke the tokens it signed left every signed-in user on an

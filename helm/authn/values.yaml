@@ -138,6 +138,11 @@ tolerations: []
 
 affinity: {}
 
+otel:
+  # Where audit records go when OTEL_LOGS_ENABLED (default OTEL_ENABLED) is
+  # true: the node-local collector agent. $(HOST_IP) is the node's IP.
+  logsEndpoint: "http://$(HOST_IP):4318"
+
 env:
   # Debug logs carry each OIDC and OAuth sign-in's name, username, email, groups and
   # avatar URL, and the values a RESTAction adds. Turn it on to debug, not in production.

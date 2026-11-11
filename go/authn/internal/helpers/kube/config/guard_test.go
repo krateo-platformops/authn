@@ -34,6 +34,11 @@ func (f *fakeLookup) SessionSecret(_ context.Context, _ string) (*corev1.Secret,
 	return f.secret, f.err
 }
 
+func (f *fakeLookup) Secret(_ context.Context, _ string) (*corev1.Secret, error) {
+	f.asked = append(f.asked, "target")
+	return f.secret, f.err
+}
+
 func (f *fakeLookup) Provisioned(_ context.Context, _ string) (bool, error) {
 	f.asked = append(f.asked, "provisioned")
 	return f.provisioned, f.err

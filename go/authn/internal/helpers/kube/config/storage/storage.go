@@ -104,7 +104,30 @@ type AuthInfo struct {
 // AuthInfoStorage stores issued credentials. authn never reads one back over
 // HTTP: the Secrets are read in-cluster, under RBAC.
 type AuthInfoStorage interface {
-	Put(name string, nfo *AuthInfo) error
+	// Put stores nfo and reports the write. On an error, Written still names
+	// the Secret and, when a request was sent, its verb and the apiserver's
+	// status code.
+	Put(name string, nfo *AuthInfo) (Written, error)
+}
+
+// Written is one credential write: the Secret, the verb that was sent for it,
+// and the apiserver's answer (AUDIT-4: an audit record names the object authn
+// wrote and the verb it sent). Names only, never data.
+type Written struct {
+	Namespace string
+	Name      string
+	// UID and ResourceVersion are the stored Secret's, empty when nothing was
+	// stored.
+	UID             string
+	ResourceVersion string
+	// Verb is "create" or "update", the request that stored the Secret or
+	// failed to. An existing Secret is first answered 409 to its create; that
+	// is a step, not the write, so the verb is update. Empty when nothing was
+	// sent.
+	Verb string
+	// StatusCode is the apiserver's HTTP status for that request, 0 when no
+	// response arrived.
+	StatusCode int
 }
 
 func Default(rc *rest.Config) AuthInfoStorage {
@@ -117,10 +140,10 @@ type secretStore struct {
 	rc *rest.Config
 }
 
-func (st *secretStore) Put(name string, nfo *AuthInfo) error {
+func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
-		return fmt.Errorf("unable to resolve service namespace: %w", err)
+		return Written{}, fmt.Errorf("unable to resolve service namespace: %w", err)
 	}
 
 	sec := corev1.Secret{}
@@ -130,9 +153,10 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 		sec.SetName(ClientConfigSecretName(name))
 	}
 	sec.SetNamespace(ns)
+	w := Written{Namespace: ns, Name: sec.Name}
 	identity, err := IdentityAnnotations(nfo.Strategy, nfo.CertData)
 	if err != nil {
-		return err
+		return w, err
 	}
 	annotations := CertValidityAnnotations(nfo.CertData)
 	if annotations == nil {
@@ -156,13 +180,13 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 		ProxyUrlLabel:   nfo.ProxyURL,
 	}
 
-	err = secrets.Create(context.TODO(), st.rc, &sec)
+	code, err := secrets.Create(context.TODO(), st.rc, &sec)
 	if err == nil {
-		return nil
+		return written(w, "create", code, &sec), nil
 	}
 
 	if !errors.IsAlreadyExists(err) {
-		return err
+		return written(w, "create", code, nil), err
 	}
 
 	// The Secret exists. If it is claimed by another identity, this write would
@@ -171,14 +195,30 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) error {
 	if nfo.Claim != "" {
 		have, err := secrets.Get(context.TODO(), st.rc, &core.SecretKeySelector{Name: sec.Name, Namespace: ns})
 		if err != nil {
-			return fmt.Errorf("reading the existing Secret %s: %w", sec.Name, err)
+			return w, fmt.Errorf("reading the existing Secret %s: %w", sec.Name, err)
 		}
 		if c := have.GetAnnotations()[ClaimAnnotation]; c != "" && c != nfo.Claim {
-			return fmt.Errorf("%w: %s is claimed by %s", ErrClaimedByAnother, sec.Name, c)
+			// Nothing written; the update this login would have sent is its verb.
+			w.Verb = "update"
+			return w, fmt.Errorf("%w: %s is claimed by %s", ErrClaimedByAnother, sec.Name, c)
 		}
 	}
 
-	return secrets.Update(context.TODO(), st.rc, &sec)
+	code, err = secrets.Update(context.TODO(), st.rc, &sec)
+	if err != nil {
+		return written(w, "update", code, nil), err
+	}
+	return written(w, "update", code, &sec), nil
+}
+
+// written completes w with the request sent and, when it stored one, the
+// stored Secret's uid and resourceVersion.
+func written(w Written, verb string, code int, stored *corev1.Secret) Written {
+	w.Verb, w.StatusCode = verb, code
+	if stored != nil {
+		w.UID, w.ResourceVersion = string(stored.UID), stored.ResourceVersion
+	}
+	return w
 }
 
 // ErrClaimedByAnother: Put found the Secret claimed by another identity, and

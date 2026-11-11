@@ -4,6 +4,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"github.com/krateo-platformops/audit/audittest"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -82,6 +85,17 @@ func (k keys) route(rc *rest.Config) http.Handler {
 	}).Handler()
 }
 
+// recorded is route with an audit Recorder, served as main serves it.
+func (k keys) recorded(t *testing.T, rc *rest.Config) (http.Handler, *audittest.Recorder) {
+	audit, records := auditlogtest.New(t)
+	return auditlog.Middleware(Route(rc, Options{
+		PrivateKey:   k.current,
+		KeyID:        "current",
+		PreviousKeys: []jwks.Key{{KID: "previous", Pub: &k.previous.PublicKey}},
+		Audit:        audit,
+	}).Handler()), records
+}
+
 // token is alice's authn token, as a person's sign-in issues it.
 func token(t *testing.T, key *rsa.PrivateKey, kid string, ttl time.Duration, act *jwtutil.Actor) string {
 	return tokenAs(t, key, kid, ttl, act, jwtutil.PrincipalHuman)
@@ -150,7 +164,16 @@ func issued(t *testing.T, k keys, rec *httptest.ResponseRecorder) (exchanged, jw
 func TestDelegationIssuesActorToken(t *testing.T) {
 	k := newKeys(t)
 	rc, _ := apiserver(t, mapping(`{"allowed":true}`))
-	rec := exchange(k.route(rc), "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil)))
+	h, records := k.recorded(t, rc)
+	rec := exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil)))
+
+	// One conformant record: the actor, acting for alice, through its mapping (AUDIT-4).
+	r := auditlogtest.Only(t, records)
+	assert.Equal(t, "authn.delegate", auditlogtest.String(r, "krateo.action"))
+	assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, "kagent", auditlogtest.String(r, "user.name"))
+	assert.Equal(t, "alice", auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
+	assert.Equal(t, "serviceaccounts", auditlogtest.String(r, "krateo.audit.object_ref.resource"))
 
 	out, nfo := issued(t, k, rec)
 	assert.Equal(t, TokenTypeJWT, out.IssuedTokenType)
@@ -216,6 +239,24 @@ func TestDelegationAcceptsAPreviousKey(t *testing.T) {
 }
 
 // Refusals: each carries its cause, and none issues a token.
+// An authenticated actor whose mapping doesn't allow delegation is a denied
+// record of that mapping; a caller with no bearer at all is not recorded.
+func TestDelegationRefusalsAreRecorded(t *testing.T) {
+	k := newKeys(t)
+	rc, _ := apiserver(t, mapping(`{"allowed":false}`))
+	h, records := k.recorded(t, rc)
+	rec := exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil)))
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	r := auditlogtest.Only(t, records)
+	assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, "kagent", auditlogtest.String(r, "krateo.audit.object_ref.name"))
+
+	h, records = k.recorded(t, rc)
+	rec = exchange(h, "", form(token(t, k.current, "current", time.Hour, nil)))
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Empty(t, records.Records(), "no actor was verified, so there is no record")
+}
+
 func TestDelegationRefusals(t *testing.T) {
 	k := newKeys(t)
 	valid := func(t *testing.T) string { return token(t, k.current, "current", time.Hour, nil) }

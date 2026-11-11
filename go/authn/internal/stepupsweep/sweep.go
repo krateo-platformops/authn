@@ -22,12 +22,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/rs/zerolog"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 const (
@@ -48,6 +50,23 @@ type Options struct {
 	// Now defaults to time.Now.
 	Now func() time.Time
 	Log zerolog.Logger
+	// Delete deletes one Secret and returns the apiserver's HTTP status (0
+	// when it isn't known). Default: Client's typed delete, which doesn't
+	// expose the status. Production passes RESTDelete, so each audit record
+	// carries the status the apiserver answered.
+	Delete func(ctx context.Context, namespace, name string, opts metav1.DeleteOptions) (int, error)
+	// Audit records each delete (AUDIT-4). Nil records nothing.
+	Audit *auditlog.Controller
+}
+
+// RESTDelete deletes a Secret through rc and reports the apiserver's status.
+func RESTDelete(rc rest.Interface) func(context.Context, string, string, metav1.DeleteOptions) (int, error) {
+	return func(ctx context.Context, namespace, name string, opts metav1.DeleteOptions) (int, error) {
+		var code int
+		res := rc.Delete().Namespace(namespace).Resource("secrets").Name(name).Body(&opts).Do(ctx)
+		res.StatusCode(&code)
+		return code, res.Error()
+	}
 }
 
 // Result counts what a pass did, for the log line and for tests.
@@ -67,6 +86,12 @@ func Sweep(ctx context.Context, o Options) (Result, error) {
 	grace := o.Grace
 	if grace <= 0 {
 		grace = DefaultGrace
+	}
+	del := o.Delete
+	if del == nil {
+		del = func(ctx context.Context, namespace, name string, opts metav1.DeleteOptions) (int, error) {
+			return 0, o.Client.CoreV1().Secrets(namespace).Delete(ctx, name, opts)
+		}
 	}
 
 	seen := map[string]bool{}
@@ -98,9 +123,10 @@ func Sweep(ctx context.Context, o Options) (Result, error) {
 			}
 
 			uid, rv := sec.UID, sec.ResourceVersion
-			err = o.Client.CoreV1().Secrets(ns).Delete(ctx, sec.Name, metav1.DeleteOptions{
+			code, err := del(ctx, ns, sec.Name, metav1.DeleteOptions{
 				Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv},
 			})
+			o.Audit.StepUpExpired(ctx, auditlog.SecretRef{Namespace: ns, Name: sec.Name, UID: string(uid), ResourceVersion: rv}, code, err)
 			switch {
 			case err == nil:
 				res.Deleted++

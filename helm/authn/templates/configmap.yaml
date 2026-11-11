@@ -8,6 +8,8 @@ data:
   AUTHN_PORT: "{{ .Values.service.port }}"
   AUTHN_NAMESPACE: {{ .Release.Namespace }}
   POD_NAMESPACE: {{ .Release.Namespace }}
+  # The actor of the audit records of authn's own background writes (AUDIT-4).
+  POD_SERVICE_ACCOUNT: {{ include "authn.serviceAccountName" . }}
   AUTHN_BASIC_DECOY_SECRET: {{ include "authn.fullname" . }}-basic-decoy
   {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}

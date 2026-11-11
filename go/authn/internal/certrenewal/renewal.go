@@ -377,7 +377,7 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 	}
 	sec.SetAnnotations(merged)
 
-	if err := secrets.Update(ctx, r.rc, sec); err != nil {
+	if _, err := secrets.Update(ctx, r.rc, sec); err != nil {
 		r.log.Err(err).Str("secret", r.secret).Msg("recording the certificate validity window")
 	}
 }
