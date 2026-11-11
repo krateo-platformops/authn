@@ -27,6 +27,8 @@ const (
 	// RefusalGroupNotAllowed: the identity is in none of the groups its
 	// provider admits (an OIDCConfig's allowedGroups).
 	RefusalGroupNotAllowed Refusal = "group_not_allowed"
+	// RefusalPlatformGroup: an identity source asserted a `krateo:` group.
+	RefusalPlatformGroup Refusal = "platform_group"
 )
 
 // refusedError carries a Refusal beside the status error the caller answers
@@ -45,7 +47,7 @@ func refused(reason Refusal, err error) error { return refusedError{reason: reas
 // Refusals lists every Refusal, for a caller that maps them (the audit record's
 // denial reason) to prove its map complete.
 var Refusals = []Refusal{RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
-	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed}
+	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup}
 
 // Refused marks err, the status error a caller answers with, as a refusal of a
 // verified identity for reason (see Admit).

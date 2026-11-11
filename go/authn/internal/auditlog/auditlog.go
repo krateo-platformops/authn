@@ -94,7 +94,7 @@ func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info
 		// authn refused before asking the apiserver: no status code, which in
 		// schema v1 is the authority's answer.
 		ev.Outcome, ev.Message = audit.OutcomeDenied, msgRefused
-		ev.DenialReason = denialReasons[config.RefusalOf(err)]
+		ev.DenialReason = denialReasons[config.RefusalOf(err)] // "" while the schema has no value for it
 	default:
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgFailed
 	}
@@ -259,4 +259,7 @@ var denialReasons = map[config.Refusal]string{
 	config.RefusalBound:           audit.DenialReasonNameBound,
 	config.RefusalSystemGroup:     audit.DenialReasonSystemGroup,
 	config.RefusalGroupNotAllowed: audit.DenialReasonGroupNotAllowed,
+	// audit v0.6.0 adds platform_group (audit#12). Until then the record
+	// carries no reason, which the schema allows.
+	config.RefusalPlatformGroup: "",
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/usernames"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -62,29 +63,33 @@ func fromIdentitySource(strategy storage.Strategy) bool {
 	return false
 }
 
-// reservedNames and reservedPrefixes are usernames an identity source may never
-// take, whether or not any binding names them yet: the names Kubernetes and the
-// managed platforms give their own components, and administrator names. The
-// RBAC check is the general rule; this list covers names the cluster may grant
-// rights to later.
-var (
-	reservedNames    = []string{"admin", "administrator", "root", "masterclient", "nodeclient", "aksservice"}
-	reservedPrefixes = []string{"system", "kube-", "kubelet", "cluster-", "gke-", "eks-", "aks-"}
-)
+// reservedName reports whether username is one an identity source may not
+// take. The rules are plumbing's usernames package, the one definition every
+// component checks names against (an access-request form, an approval
+// controller): the names Kubernetes and the managed platforms give their own
+// components, administrator names, and the `krateo:` platform identities authn
+// never issues.
+func reservedName(username string) bool { return usernames.Reserved(username) }
 
-// reservedName reports whether username is one an identity source may not take.
-func reservedName(username string) bool {
-	for _, n := range reservedNames {
-		if username == n {
-			return true
+// platformGroupPrefix marks the platform's own groups (krateo:services,
+// krateo:cdc:...): granted by administrator-provisioned identities only.
+const platformGroupPrefix = "krateo:"
+
+// checkPlatformGroups refuses an identity source's identity carrying a
+// `krateo:` group: an IdP, a directory or a RESTAction may not grant itself the
+// platform's rights. authn's own step-up group (userinfo.ReservedGroupPrefix)
+// is authn's, never the source's: the source's are stripped before this.
+func checkPlatformGroups(strategy storage.Strategy, user userinfo.Info) error {
+	if !fromIdentitySource(strategy) {
+		return nil
+	}
+	for _, g := range user.GetGroups() {
+		if strings.HasPrefix(g, platformGroupPrefix) && !userinfo.IsReserved(g) {
+			return refused(RefusalPlatformGroup, status.Refused(status.CausePlatformGroupNotAllowed,
+				fmt.Errorf("group %q can't be asserted by an identity source: the %s prefix is the platform's", g, platformGroupPrefix)))
 		}
 	}
-	for _, p := range reservedPrefixes {
-		if strings.HasPrefix(username, p) {
-			return true
-		}
-	}
-	return false
+	return nil
 }
 
 // checkSystemGroups refuses an identity carrying a `system:` group, whatever

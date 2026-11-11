@@ -222,6 +222,48 @@ func TestClusterLookup(t *testing.T) {
 	assert.Nil(t, sec)
 }
 
+// An identity source may not assert a `krateo:` group: those carry platform
+// rights and come only from identities an administrator provisions. authn's own
+// step-up group isn't the source's (Diego, 2026-11-11).
+func TestIdentitySourcesCantAssertPlatformGroups(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		strategy storage.Strategy
+		groups   []string
+		refused  bool
+	}{
+		{"an IdP asserting krateo:services", storage.StrategyOIDC, []string{"devs", "krateo:services"}, true},
+		{"a directory asserting krateo:public", storage.StrategyLDAP, []string{"krateo:public"}, true},
+		{"a RESTAction asserting krateo:cdc:x", storage.StrategyOAuth, []string{"krateo:cdc:x"}, true},
+		{"authn's own step-up group", storage.StrategyOIDC, []string{"devs", "krateo:loa:2"}, false},
+		{"a ServiceAccount mapping's platform group", storage.StrategyServiceAccount, []string{"krateo:services"}, false},
+		{"a basic User's platform group", storage.StrategyBasic, []string{"krateo:admins"}, false},
+		{"no krateo group", storage.StrategyOIDC, []string{"devs", "krateo"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := &userinfo.DefaultUser{Name: "alice", ID: "1", Groups: tc.groups}
+			err := checkPlatformGroups(tc.strategy, user)
+			if !tc.refused {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, RefusalPlatformGroup, RefusalOf(err))
+			assert.Equal(t, status.CausePlatformGroupNotAllowed, status.FromError(err).Details.Causes[0].Type)
+		})
+	}
+}
+
+// A `krateo:` platform identity is never issued to an identity source, even
+// one that issues names as-is (LDAP's uid): snowplow impersonates
+// krateo:public and relies on it.
+func TestPlatformIdentitiesAreNeverIssued(t *testing.T) {
+	g := nameGuard{lookup: &fakeLookup{}, log: zerolog.Nop()}
+	_, err := g.admit(context.Background(), storage.StrategyLDAP, userAs("krateo:public", "dir", "cn=public"))
+	require.Error(t, err)
+	assert.Equal(t, RefusalReserved, RefusalOf(err))
+}
+
 // Moving an existing name to a new identity without touching anything the name
 // carries: an administrator writes the new identity's claim onto the EXISTING
 // Secret (authn.krateo.io/claim, storage.EncodeClaim), and that identity's
@@ -231,7 +273,9 @@ func TestClusterLookup(t *testing.T) {
 // name; any other, or none, is refused (docs/behavior.md, "Moving a name to a
 // new identity").
 func TestAnAdminClaimMovesALegacyNameToANewIdentity(t *testing.T) {
-	kc := func(id string) *userinfo.DefaultUser { return userAs("braghettos", "https://kc.example/realms/krateo", id) }
+	kc := func(id string) *userinfo.DefaultUser {
+		return userAs("braghettos", "https://kc.example/realms/krateo", id)
+	}
 	newcomer := kc("2f6c-new-sub")
 	adminClaim := storage.EncodeClaim(storage.StrategyOIDC, newcomer.Subject.Issuer, newcomer.Subject.ID)
 	legacy := func(extra map[string]string) *corev1.Secret {

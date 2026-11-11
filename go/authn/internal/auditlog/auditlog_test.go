@@ -250,7 +250,12 @@ func TestEveryRefusalHasADenialReason(t *testing.T) {
 			r.Issuance(get("/oidc/login"), LoginAction(storage.StrategyOIDC), alice(), jwtutil.PrincipalHuman, wouldUpdate(), err)
 			got := rec.Only(t)
 			audittest.AssertConformant(t, audit.WriterRequest, got)
-			v, _ := attr(t, audittest.Attributes(got), audit.KeyDenialReason)
+			v, has := attr(t, audittest.Attributes(got), audit.KeyDenialReason)
+			if want == "" {
+				// The schema has no value for it yet (platform_group: audit v0.6.0).
+				assert.False(t, has, "no reason the schema doesn't know")
+				return
+			}
 			assert.Equal(t, want, v.AsString())
 			assert.Equal(t, string(why), v.AsString(), "authn's refusal names are the schema's")
 		})

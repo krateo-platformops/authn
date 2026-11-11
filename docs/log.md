@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-11 — `krateo:` names and groups are the platform's
+
+snowplow#1334 impersonates the identity `krateo:public` for token-less public widgets, and
+its safety rests on authn never issuing that name. That didn't hold: LDAP issues the
+entry's `uid` as-is, and any identity source could assert a `krateo:` group. The guard now
+takes its reserved names from plumbing v1.46.0's `usernames` (one definition, shared with
+demo's access-request form), which reserves `krateo:`. An identity source asserting a
+`krateo:` group is refused with `403 PlatformGroupNotAllowed` (Diego), while administrator-
+provisioned identities keep theirs. The audit record's `denial_reason` for it,
+`platform_group`, comes with audit v0.6.0; until then the denied record carries none.
+
 ## 2026-11-11 — authn records the credentials it issues (AUDIT-4, #119)
 
 authn wrote every credential later requests ride on and recorded none of it. Logins,
