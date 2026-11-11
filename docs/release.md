@@ -18,7 +18,11 @@ One tag ships everything. This monorepo has a single version line: the app image
    ([`release-pullrequest.yaml`](../.github/workflows/release-pullrequest.yaml):
    validate-only multi-arch image build, Go tests + CRD-drift guard, docs lint;
    plus chart lint ([`lint.yaml`](../.github/workflows/lint.yaml)) and security
-   scanning). The merge commit then runs the same Go tests and CRD-drift guard again on
+   scanning). A PR that touches `go/authn/internal/helpers/kube/` or the module's
+   dependencies also runs the storage suite against a real apiserver, on a kind cluster
+   of its own ([`storage-integration.yaml`](../.github/workflows/storage-integration.yaml));
+   it is the only proof of `storage.Put`'s create/update and the `Written` the audit
+   records are built from. The merge commit then runs the same Go tests and CRD-drift guard again on
    `main` ([`checks-main.yaml`](../.github/workflows/checks-main.yaml)). **Tag only a
    commit whose `checks / test` is green.** PR CI tests the PR head, not the squash
    commit you tag, and consumers' pin gates (installer's `pin-ci`) read the check-runs
