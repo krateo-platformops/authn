@@ -97,7 +97,7 @@ was cancelled once the tokens it targeted had expired, and Diego chose to fix th
 first. plumbing v1.36.0 (#107, closing plumbing#63) reports a `kid` missing from a
 key set fetched after the token was issued as an invalid token (`ErrKeyNotPublished`);
 an unreachable JWKS, a failed fetch and the rotation moment stay `503`. snowplow 1.12.69
-answers `401` `KeyNotPublished`, portal 1.8.36 shows "Sign-in revoked", and the installer
+answers `401` `KeyNotPublished`, frontend 1.8.36 shows "Sign-in revoked", and the installer
 chart's `authn.jwt.keyGeneration` (installer#782) makes a revoking rotation one value.
 [jwt-jwks](./jwt-jwks.md#revoking-tokens) describes the procedure.
 
