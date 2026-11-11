@@ -526,8 +526,14 @@ or a log line.
   (`github.com/krateo-platformops/authn/audit/controller`), with authn's own
   ServiceAccount (`POD_SERVICE_ACCOUNT`) as actor and the status the apiserver answered.
   The certificate's write is reported by plumbing's `signup.DoWritten`
-  (`endpoints.StoreWritten`); a renewal that fails before the Secret write (the CSR) sends
-  nothing for it and has no record. The annotation updates that follow (the validity
+  (`endpoints.StoreWritten`). A renewal that fails before the Secret write (at the CSR)
+  sends nothing for the Secret, so there is nothing to record. Its failure shows in authn's
+  log (`issuing a client certificate`), and the renewer retries a minute later.
+- **The CSR is a step, not a record.** Every login and renewal creates, approves and
+  deletes a `certificates.k8s.io` CertificateSigningRequest. Those are steps of one
+  issuance (#119's scope), and the record names the credential Secret they produce. A
+  login whose CSR step fails still has its record, a `failure` naming the Secret it would
+  have written, so a failed issuance is never silent. The annotation updates that follow (the validity
   window) change no data and are not recorded.
 - **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per
   request), the source IPs, the user agent and whether the target's namespace is a
