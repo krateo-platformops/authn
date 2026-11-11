@@ -17,7 +17,7 @@ const (
 
 // DelegationDenial is why /delegate refused an authenticated actor, as the
 // record's schema denial reason. A refusal the schema has no reason for yet
-// (the subject token's, until audit v0.6.1) is NoDelegationDenial.
+// (the subject token's, until audit v0.7.0) is NoDelegationDenial.
 type DelegationDenial string
 
 const (

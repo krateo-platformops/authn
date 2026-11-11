@@ -137,7 +137,7 @@ func (r *route) Handler() http.HandlerFunc {
 			// The actor is verified: refusing its subject token is a decision
 			// about it, and the most security-relevant one.
 			// audit v0.6.0 declares no reason for it, so the record carries none
-			// until v0.6.1 adds the subject token's reasons (snowplow, 2026-11-11).
+			// until v0.7.0 adds the subject token's reasons (snowplow, 2026-11-11).
 			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied, auditlog.NoDelegationDenial)
 			fail(err, "delegation subject token refused")
 			return
