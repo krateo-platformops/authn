@@ -143,6 +143,16 @@ func TestNameGuard(t *testing.T) {
 	}
 }
 
+// A verified identity with no username is a refusal of that identity, like the
+// guard's others, so its record is denied rather than failed (#127).
+func TestAnIdentityWithoutAUsernameIsRefused(t *testing.T) {
+	g := nameGuard{lookup: &fakeLookup{}, log: zerolog.Nop()}
+	_, err := g.admit(context.Background(), storage.StrategyOIDC, userAs("", "kc", "9"))
+	require.Error(t, err)
+	assert.Equal(t, RefusalNameMissing, RefusalOf(err))
+	assert.Equal(t, status.CauseUsernameUnavailable, status.FromError(err).Details.Causes[0].Type)
+}
+
 // A refusal doesn't tell the caller why: a probe can't learn which names the
 // cluster grants rights to, or who holds a name.
 func TestNameGuardRefusalIsOpaque(t *testing.T) {

@@ -133,7 +133,7 @@ func (c *Controller) ServiceCertIssued(ctx context.Context, ref SecretRef, verb 
 }
 
 // IdentityWritten records a background write of a credential Secret's
-// authorization-bearing identity (storage.AuthorizationAnnotations, or its
+// authorization-bearing identity (audit.AuthorizationAnnotations, or its
 // owner): action is ActionIdentityBackfilled or ActionServiceIdentityAnnotated.
 // The write is a full update (PUT), so verb update and the apiserver's answer.
 func (c *Controller) IdentityWritten(ctx context.Context, action string, ref SecretRef, code int, err error) {

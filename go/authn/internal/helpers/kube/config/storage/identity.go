@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 )
 
@@ -29,18 +30,16 @@ const (
 	groupSeparator = "\n"
 )
 
-// AuthorizationAnnotations are the identity annotations authorization reads:
-// policy decides from a credential's strategy and groups (tenant onboarding,
-// for one), so changing them changes what the identity may do. A write that
-// changes one of them is desired state, and an audit record (AUDIT-4) is owed
-// for it even though the Secret's data is unchanged. The one declared list:
-// callers compare against it, never against ad hoc keys.
-var AuthorizationAnnotations = []string{StrategyAnnotation, GroupsAnnotation}
-
 // AuthorizationAnnotationsDiffer reports whether before and after disagree on
-// any of AuthorizationAnnotations.
+// any identity annotation authorization reads: policy decides from a
+// credential's strategy and groups (tenant onboarding, for one), so changing
+// them changes what the identity may do. A write that changes one of them is
+// desired state, and an audit record (AUDIT-4) is owed for it even though the
+// Secret's data is unchanged. The one declared list is the audit schema's
+// (audit.AuthorizationAnnotations, schema v1's content_annotations), which the
+// content hash counts too; callers compare through it, never ad hoc keys.
 func AuthorizationAnnotationsDiffer(before, after map[string]string) bool {
-	for _, k := range AuthorizationAnnotations {
+	for _, k := range audit.AuthorizationAnnotations() {
 		if before[k] != after[k] {
 			return true
 		}

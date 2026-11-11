@@ -94,7 +94,7 @@ func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info
 		// authn refused before asking the apiserver: no status code, which in
 		// schema v1 is the authority's answer.
 		ev.Outcome, ev.Message = audit.OutcomeDenied, msgRefused
-		ev.DenialReason = denialReasons[config.RefusalOf(err)] // "" while the schema has no value for it
+		ev.DenialReason = denialReasons[config.RefusalOf(err)]
 	default:
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgFailed
 	}
@@ -105,12 +105,14 @@ func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info
 
 // secretTarget names the credential Secret as the record's object.
 func (r *Recorder) secretTarget(ctx context.Context, ev *audit.Event, w storage.Written, withStatus bool) {
-	if w.Name == "" {
-		// No Secret could be named (an identity with no username): the record
-		// names no object, and its verb and method are marked missing.
+	if w.Namespace == "" && w.Name == "" {
+		// Nothing about the Secret is known: the record names no object.
 		return
 	}
 	ev.Namespace, ev.Version, ev.Resource, ev.Kind = w.Namespace, "v1", "secrets", "Secret"
+	// An identity with no username names no Secret: the record names the
+	// resource without its name (schema v1, name_missing), and its verb and
+	// method are marked missing.
 	ev.ObjectName = w.Name
 	ev.Verb, ev.HTTPMethod = w.Verb, methodOf(w.Verb)
 	if withStatus {
@@ -252,6 +254,7 @@ const (
 // value fails TestEveryRefusalHasADenialReason instead of writing an invalid
 // one.
 var denialReasons = map[config.Refusal]string{
+	config.RefusalNameMissing:     audit.DenialReasonNameMissing,
 	config.RefusalReserved:        audit.DenialReasonNameReserved,
 	config.RefusalClaimed:         audit.DenialReasonNameClaimed,
 	config.RefusalHeldLegacy:      audit.DenialReasonNameHeldLegacy,
@@ -259,7 +262,5 @@ var denialReasons = map[config.Refusal]string{
 	config.RefusalBound:           audit.DenialReasonNameBound,
 	config.RefusalSystemGroup:     audit.DenialReasonSystemGroup,
 	config.RefusalGroupNotAllowed: audit.DenialReasonGroupNotAllowed,
-	// audit v0.6.0 adds platform_group (audit#12). Until then the record
-	// carries no reason, which the schema allows.
-	config.RefusalPlatformGroup: "",
+	config.RefusalPlatformGroup:   audit.DenialReasonPlatformGroup,
 }

@@ -127,16 +127,16 @@ func (r *route) Handler() http.HandlerFunc {
 		actorPrincipal := serviceaccount.Principal(actor)
 		maxDepth, err := delegationDepth(actor)
 		if err != nil {
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied, auditlog.DelegationNotAllowed)
 			fail(err, "delegation refused")
 			return
 		}
 
-		subject, exp, err := r.verifySubject(subjectToken)
+		subject, exp, why, err := r.verifySubject(subjectToken)
 		if err != nil {
 			// The actor is verified: refusing its subject token is a decision
 			// about it, and the most security-relevant one.
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied, why)
 			fail(err, "delegation subject token refused")
 			return
 		}
@@ -144,7 +144,7 @@ func (r *route) Handler() http.HandlerFunc {
 		act := &jwtutil.Actor{Sub: actor.Name, Act: subject.Act, Principal: actorPrincipal}
 		depth := chainDepth(act)
 		if depth > maxDepth {
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied, auditlog.DelegationTooDeep)
 			fail(status.Refused(CauseDelegationTooDeep,
 				fmt.Errorf("the actor chain would be %d deep; %s allows %d", depth, actor.Name, maxDepth)),
 				"delegation refused")
@@ -162,11 +162,11 @@ func (r *route) Handler() http.HandlerFunc {
 			Principal:  subject.Principal,
 		})
 		if err != nil {
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure, auditlog.NoDelegationDenial)
 			fail(status.Failed(CauseIssuanceFailed, fmt.Errorf("signing the delegated token: %w", err)), "delegation failed")
 			return
 		}
-		r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeSuccess)
+		r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeSuccess, auditlog.NoDelegationDenial)
 
 		log.Info().Str("actor", actor.Name).Str("subject", subject.Username).Int("depth", depth).
 			Msg("delegated token issued")
@@ -226,21 +226,30 @@ func delegationDepth(actor *sav1alpha1.ServiceAccount) (int, error) {
 
 // verifySubject checks that authn signed the subject token, with its current
 // key or a previous one, and that it hasn't expired. It returns the token's
-// identity and expiry.
-func (r *route) verifySubject(token string) (jwtutil.UserInfo, time.Time, error) {
+// identity and expiry, or the refusal with its record's reason: expired for a
+// token that verified but has lapsed or is about to, invalid for one that
+// didn't verify (a bad signature, a kid authn has no key for, a retired one
+// among them, malformed, or no expiry, which authn never issues). The answer is
+// SubjectTokenInvalid either way; only the record tells them apart.
+func (r *route) verifySubject(token string) (jwtutil.UserInfo, time.Time, auditlog.DelegationDenial, error) {
+	refuse := func(why auditlog.DelegationDenial, err error) (jwtutil.UserInfo, time.Time, auditlog.DelegationDenial, error) {
+		return jwtutil.UserInfo{}, time.Time{}, why, subjectInvalid(err)
+	}
 	claims, err := jwtutil.ValidateClaimsWithKeySource(r.keys, token)
-	if err != nil {
-		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(
-			fmt.Errorf("the subject token isn't a valid authn token: %w", err))
+	switch {
+	case errors.Is(err, jwtutil.ErrTokenExpired):
+		return refuse(auditlog.SubjectTokenExpired, fmt.Errorf("the subject token has expired: %w", err))
+	case err != nil:
+		return refuse(auditlog.SubjectTokenInvalid, fmt.Errorf("the subject token isn't a valid authn token: %w", err))
 	}
 	if claims.ExpiresAt == nil {
-		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(errors.New("the subject token has no expiry"))
+		return refuse(auditlog.SubjectTokenInvalid, errors.New("the subject token has no expiry"))
 	}
 	exp := claims.ExpiresAt.Time
 	if time.Until(exp) < time.Second {
-		return jwtutil.UserInfo{}, time.Time{}, subjectInvalid(errors.New("the subject token is about to expire"))
+		return refuse(auditlog.SubjectTokenExpired, errors.New("the subject token is about to expire"))
 	}
-	return claims.UserInfo, exp, nil
+	return claims.UserInfo, exp, auditlog.NoDelegationDenial, nil
 }
 
 // withoutReserved drops reserved groups: a krateo:loa: step-up group proves a

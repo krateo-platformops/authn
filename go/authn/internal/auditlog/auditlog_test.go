@@ -251,11 +251,7 @@ func TestEveryRefusalHasADenialReason(t *testing.T) {
 			got := rec.Only(t)
 			audittest.AssertConformant(t, audit.WriterRequest, got)
 			v, has := attr(t, audittest.Attributes(got), audit.KeyDenialReason)
-			if want == "" {
-				// The schema has no value for it yet (platform_group: audit v0.6.0).
-				assert.False(t, has, "no reason the schema doesn't know")
-				return
-			}
+			require.True(t, has, "every refusal carries its reason")
 			assert.Equal(t, want, v.AsString())
 			assert.Equal(t, string(why), v.AsString(), "authn's refusal names are the schema's")
 		})
@@ -319,16 +315,36 @@ func TestPreviewComesFromTheNamespace(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
-// An identity source that verified someone without a username: the record is a
-// failure naming no object and no actor, each gap marked, rather than a made-up
-// "-clientconfig".
+// An identity source that verified someone without a username: authn refuses
+// it, so the record is denied with name_missing (#127). It names the Secret
+// resource in its namespace but no object name and no actor, each gap marked,
+// rather than a made-up "-clientconfig".
 func TestAnIdentityWithoutAUsernameNamesNoSecret(t *testing.T) {
 	r, rec := newRecorder(t)
 	nobody := userinfo.NewDefaultUser("", "1", nil, nil)
-	r.Issuance(get("/x"), LoginAction(storage.StrategyOIDC), nobody, jwtutil.PrincipalHuman, config.Issued{}, errors.New("no username"))
+	err := config.Refused(config.RefusalNameMissing,
+		status.Refused(status.CauseUsernameUnavailable, errors.New("the identity has no username")))
+	issued := config.Issued{Secret: storage.Written{Namespace: "krateo-system"}} // what wouldWrite("") gives
+	r.Issuance(get("/x"), LoginAction(storage.StrategyOIDC), nobody, jwtutil.PrincipalHuman, issued, err)
 	got := rec.Only(t)
 	audittest.AssertConformant(t, audit.WriterRequest, got,
-		audittest.AllowIncomplete("user.name", audit.KeyVerb, "http.request.method", "krateo.audit.preview", "target"))
-	_, has := attr(t, audittest.Attributes(got), "krateo.audit.object_ref.name")
-	assert.False(t, has)
+		audittest.AllowIncomplete("user.name", audit.KeyVerb, "http.request.method", "krateo.audit.preview"))
+	attrs := audittest.Attributes(got)
+	_, has := attr(t, attrs, "krateo.audit.object_ref.name")
+	assert.False(t, has, "never a bare -clientconfig")
+	for key, want := range map[string]string{
+		"k8s.namespace.name":                  "krateo-system",
+		"krateo.audit.object_ref.resource":    "secrets",
+		"krateo.audit.object_ref.kind":        "Secret",
+		"krateo.audit.object_ref.api_version": "v1",
+	} {
+		v, _ := attr(t, attrs, key)
+		assert.Equal(t, want, v.AsString(), key)
+	}
+	outcome, _ := attr(t, attrs, audit.KeyOutcome)
+	assert.Equal(t, audit.OutcomeDenied, outcome.AsString())
+	reason, _ := attr(t, attrs, audit.KeyDenialReason)
+	assert.Equal(t, "name_missing", reason.AsString())
+	_, has = attr(t, attrs, "http.response.status_code")
+	assert.False(t, has, "a refusal carries no status code")
 }

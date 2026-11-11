@@ -110,7 +110,7 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 	username := user.GetUserName()
 	subject := user.GetSubject()
 	if username == "" {
-		return "", status.Refused(status.CauseUsernameUnavailable, errors.New("the identity has no username"))
+		return "", refused(RefusalNameMissing, status.Refused(status.CauseUsernameUnavailable, errors.New("the identity has no username")))
 	}
 	if subject.ID == "" {
 		// Every login sets the subject. One that didn't can't be told apart

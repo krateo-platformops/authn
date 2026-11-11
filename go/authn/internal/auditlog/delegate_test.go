@@ -28,17 +28,20 @@ func TestDelegationRecordsConform(t *testing.T) {
 		subject *jwtutil.UserInfo
 		chain   *jwtutil.Actor
 		outcome string
+		why     DelegationDenial
 	}{
-		{"issued", person, chain, audit.OutcomeSuccess},
-		{"refused: the mapping doesn't allow delegation", nil, nil, audit.OutcomeDenied},
-		{"refused: the chain would be too deep", person, chain, audit.OutcomeDenied},
-		{"signing failed", person, chain, audit.OutcomeFailure},
+		{"issued", person, chain, audit.OutcomeSuccess, NoDelegationDenial},
+		{"refused: the mapping doesn't allow delegation", nil, nil, audit.OutcomeDenied, DelegationNotAllowed},
+		{"refused: the subject token expired", nil, nil, audit.OutcomeDenied, SubjectTokenExpired},
+		{"refused: the subject token didn't verify", nil, nil, audit.OutcomeDenied, SubjectTokenInvalid},
+		{"refused: the chain would be too deep", person, chain, audit.OutcomeDenied, DelegationTooDeep},
+		{"signing failed", person, chain, audit.OutcomeFailure, NoDelegationDenial},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r, rec := newRecorder(t)
 			req := get("/delegate")
 			req.Method = http.MethodPost
-			r.Delegation(req, agentMapping(), jwtutil.PrincipalAgent, tc.subject, tc.chain, tc.outcome)
+			r.Delegation(req, agentMapping(), jwtutil.PrincipalAgent, tc.subject, tc.chain, tc.outcome, tc.why)
 			got := rec.Only(t)
 			audittest.AssertConformant(t, audit.WriterRequest, got)
 			audittest.AssertRequiredKeysDetected(t, audit.WriterRequest, got)
@@ -59,6 +62,12 @@ func TestDelegationRecordsConform(t *testing.T) {
 			}
 			_, hasStatus := attr(t, attrs, "http.response.status_code")
 			assert.False(t, hasStatus, "authn issues the token itself: no authority answered")
+			reason, hasReason := attr(t, attrs, audit.KeyDenialReason)
+			if tc.why != NoDelegationDenial {
+				assert.Equal(t, string(tc.why), reason.AsString())
+			} else {
+				assert.False(t, hasReason, "a reason on a denied record only")
+			}
 			dr, _ := attr(t, attrs, "krateo.audit.dry_run")
 			assert.False(t, dr.AsBool(), "a real issuance")
 			_, hasDryRun := attr(t, attrs, "krateo.audit.dry_run")
