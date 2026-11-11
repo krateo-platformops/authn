@@ -554,6 +554,34 @@ or a log line.
   `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
   then drops, and `authn.audit.export.failed` counts the dropped records.
 
+### Moving a name to a new identity
+An existing username can move to a new identity, for example a person's sign-in
+moving from a retired GitHub OAuthConfig to a Keycloak OIDC login with the same
+username. The supported way is an **administrator-written claim on the existing
+Secret**:
+
+1. Create the new identity first, so its stable id is known: for OIDC, the `sub`
+   (Keycloak: the user's id) and the issuer (`iss`, the realm URL exactly as the ID
+   token carries it).
+2. Write that identity's claim onto the existing `<username>-clientconfig` Secret, as
+   the annotation `authn.krateo.io/claim`, a JSON array in `storage.EncodeClaim`'s
+   form: `["oidc","<iss>","<sub>"]`.
+3. The new identity's first sign-in finds its own claim, is admitted, and rewrites the
+   Secret in place. It is admitted even though bindings already name the user: a name's
+   claim is checked before anything else, and a matching claim is the identity the name
+   was given to.
+
+Any other identity with the same username is refused (`name_claimed`), and so is the
+new one when no claim was written (`name_held_legacy`). The Secret is never deleted,
+so anything generated from it survives (a tenant namespace that a policy creates from
+the Secret, for one), and the user's bindings stay. Whoever writes the claim records
+that write in its own audit trail: it decides who may sign in as that name.
+
+**Don't delete the Secret to free the name** where a policy generates from it. With
+Kyverno's `synchronize: true`, deleting the trigger deletes everything it generated
+(demo's `tenant-namespace-on-login` generates the user's tenant namespace this way).
+Deleting it also doesn't free a name that bindings grant rights to (`name_bound`).
+
 ### Frontend
 The frontend consumes `/strategies` to render the login page and the login response
 (`data` + `accessToken`) to authenticate the user. CORS is enabled by default with

@@ -39,6 +39,17 @@ plumbing v1.43.0's `signup.DoWritten`. `endpoints.Store` sends a create, then an
 after a 409, and used to report neither, and the record must state what was sent, not
 guess it.
 
+## 2026-11-11 — Moving a name to a new identity: an admin-written claim, never a delete
+
+Demo's sign-in moves from GitHub to Keycloak-local users with the same usernames (Diego,
+2026-11-11). A first proposal, deleting the old `<user>-clientconfig` Secret and the
+bindings that name the user, would have deleted each user's tenant: demo's Kyverno
+policy generates the tenant namespace from that Secret with `synchronize: true` (caught
+by acmp). The supported path, which 0.41.0 already allows, is an administrator writing
+the new identity's claim onto the existing Secret. The new identity's first sign-in
+adopts the name in place, while any other identity, or the new one without the claim,
+is refused. Pinned by `TestAnAdminClaimMovesALegacyNameToANewIdentity`.
+
 ## 2026-11-10 — A retired signing key signs the user out instead of failing as 503
 
 Rotating authn's key to revoke the tokens it signed left every signed-in user on an

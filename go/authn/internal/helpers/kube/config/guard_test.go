@@ -221,3 +221,47 @@ func TestClusterLookup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, sec)
 }
+
+// Moving an existing name to a new identity without touching anything the name
+// carries: an administrator writes the new identity's claim onto the EXISTING
+// Secret (authn.krateo.io/claim, storage.EncodeClaim), and that identity's
+// first sign-in adopts it. The Secret is rewritten in place, so whatever hangs
+// off it survives (a tenant namespace a policy generates from it, say), and the
+// bindings that name the user stay. Only the identity the claim names gets the
+// name; any other, or none, is refused (docs/behavior.md, "Moving a name to a
+// new identity").
+func TestAnAdminClaimMovesALegacyNameToANewIdentity(t *testing.T) {
+	kc := func(id string) *userinfo.DefaultUser { return userAs("braghettos", "https://kc.example/realms/krateo", id) }
+	newcomer := kc("2f6c-new-sub")
+	adminClaim := storage.EncodeClaim(storage.StrategyOIDC, newcomer.Subject.Issuer, newcomer.Subject.ID)
+	legacy := func(extra map[string]string) *corev1.Secret {
+		ann := map[string]string{storage.StrategyAnnotation: "oauth"} // written by the retired GitHub login
+		for k, v := range extra {
+			ann[k] = v
+		}
+		return secretWith(ann)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		user     *userinfo.DefaultUser
+		secret   *corev1.Secret
+		admitted bool
+	}{
+		{"the identity the admin's claim names is admitted, though bindings name the user", newcomer, legacy(map[string]string{storage.ClaimAnnotation: adminClaim}), true},
+		{"another sub with the same username is refused", kc("6666-other"), legacy(map[string]string{storage.ClaimAnnotation: adminClaim}), false},
+		{"without the admin's claim the legacy Secret is refused", newcomer, legacy(nil), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := nameGuard{lookup: &fakeLookup{secret: tc.secret, bound: true}, log: zerolog.Nop()}
+			claim, err := g.admit(context.Background(), storage.StrategyOIDC, tc.user)
+			if !tc.admitted {
+				require.Error(t, err)
+				assert.Equal(t, status.CauseUsernameUnavailable, status.FromError(err).Details.Causes[0].Type)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, adminClaim, claim, "the claim the sign-in keeps is the admin's")
+		})
+	}
+}

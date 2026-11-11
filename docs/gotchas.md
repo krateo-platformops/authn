@@ -221,3 +221,11 @@ dropped, and logins still succeed (export never blocks one). `authn.audit.export
 counts the dropped records, but it is exported to the same endpoint, so on that node the
 count is lost too. Check that the agent DaemonSet is ready on every node that runs authn
 (on 057 and demo, `otel-collector-daemonset` is ready on all nodes as of 2026-11-11).
+
+## Deleting a clientconfig Secret can delete a tenant
+A policy may generate objects from `<username>-clientconfig` (demo's Kyverno
+`tenant-namespace-on-login` generates the user's tenant namespace, Role, RoleBinding,
+LimitRange and ResourceQuota, with `synchronize: true`). Deleting the Secret then
+deletes all of it. To move a name to a new identity, write the new identity's claim
+onto the existing Secret instead ([behavior](./behavior.md), "Moving a name to a new
+identity").
