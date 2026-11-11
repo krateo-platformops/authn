@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 
 	"github.com/krateo-platformops/plumbing/e2e"
@@ -27,8 +29,14 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// First, before any cluster exists: kind must never touch the developer's
+	// kubeconfig, and this suite destroys its cluster at the end.
+	restore := e2e.PinKubeconfig("authn-storage")
 	namespace = "demo-system"
-	clusterName = "krateo"
+	// A name only this suite uses: it destroys the cluster at the end, so a
+	// common name (it was "krateo") deletes whatever cluster a developer has
+	// by that name.
+	clusterName = "authn-storage-test"
 	testenv = env.New()
 
 	testenv.Setup(
@@ -46,7 +54,9 @@ func TestMain(m *testing.M) {
 		envfuncs.DestroyCluster(clusterName),
 	)
 
-	os.Exit(testenv.Run(m))
+	code := testenv.Run(m)
+	restore() // not deferred: os.Exit does not run defers
+	os.Exit(code)
 }
 
 func TestStorage(t *testing.T) {
@@ -61,7 +71,8 @@ func TestStorage(t *testing.T) {
 			)
 
 			want := &AuthInfo{
-				CertData: "XXX",
+				Strategy: StrategyBasic,
+				CertData: identityCert(t, username, []string{"devs"}),
 				KeyData:  "YYY",
 				CAData:   "ZZZ",
 				Server:   "AAA",
@@ -70,18 +81,37 @@ func TestStorage(t *testing.T) {
 
 			store := Default(cfg.Client().RESTConfig())
 
-			err := store.Put(username, want)
+			// Twice: the first Put creates the Secret, the second finds it and
+			// updates it.
+			for range 2 {
+				if err := store.Put(username, want); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Read back from the apiserver, as every consumer does: authn never
+			// reads a credential back itself.
+			sec, err := secrets.Get(ctx, cfg.Client().RESTConfig(),
+				&core.SecretKeySelector{Name: ClientConfigSecretName(username), Namespace: namespace})
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			got, err := store.Get(username)
-			if err != nil {
-				t.Fatal(err)
+			got := map[string]string{}
+			for k, v := range sec.Data {
+				got[k] = string(v)
 			}
-
-			if diff := cmp.Diff(got, want); len(diff) > 0 {
+			wantData := map[string]string{
+				CALabel:         want.CAData,
+				ClientCertLabel: want.CertData,
+				ClientKeyLabel:  want.KeyData,
+				ServerUrlLabel:  want.Server,
+				ProxyUrlLabel:   want.ProxyURL,
+			}
+			if diff := cmp.Diff(wantData, got); len(diff) > 0 {
 				t.Fatal(diff)
+			}
+			if s := sec.Annotations[StrategyAnnotation]; s != string(StrategyBasic) {
+				t.Fatalf("strategy annotation %q, want %q", s, StrategyBasic)
 			}
 
 			return ctx
