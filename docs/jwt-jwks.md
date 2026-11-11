@@ -238,7 +238,7 @@ token a key signed, rotate **without** keeping the old key in `jwt.previousKeys`
 the old `kid` is no longer published. The installer chart's `authn.jwt.keyGeneration`
 (installer#782) generates a new key and `kid` for this; check its docs for the roll.
 Within the validators' cache TTL (5m for snowplow) the old key stops verifying.
-- With snowplow ≥ 1.12.69 and portal ≥ 1.8.36, every signed-in user is asked to sign in
+- With snowplow ≥ 1.12.69 and frontend ≥ 1.8.36 (frontend#660), every signed-in user is asked to sign in
   again ("Sign-in revoked").
 - Composition controllers and core-provider cache their authn token until it expires
   and don't re-exchange it on `401` before core-provider#425 ships. Restart them after
