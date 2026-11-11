@@ -121,8 +121,9 @@ anything is minted ([behavior](./behavior.md#the-name-guard)):
 
 | `details.causes[0].reason` | Code | Meaning | Caller should |
 |---|---|---|---|
-| `UsernameUnavailable` | 403 | authn won't issue this username to this identity: it was issued to another identity, an administrator provisioned it as a basic User or ServiceAccount mapping, a RoleBinding or ClusterRoleBinding already grants rights to it, or it is reserved (`system*`, `kube-*`, `kubelet*`, `cluster-*`, `admin`, …). The last three apply to identity sources (ldap, oauth, oidc) only. The message says only that the name isn't available; the warn line `username refused` says why | Tell an administrator |
+| `UsernameUnavailable` | 403 | authn won't issue this username to this identity: it was issued to another identity, an administrator provisioned it as a basic User or ServiceAccount mapping, a RoleBinding or ClusterRoleBinding already grants rights to it, or it is reserved (`system*`, `kube-*`, `kubelet*`, `cluster-*`, `krateo:*`, `admin`, …; plumbing's `usernames` package). The last three apply to identity sources (ldap, oauth, oidc) only. The message says only that the name isn't available; the warn line `username refused` says why | Tell an administrator |
 | `SystemGroupNotAllowed` | 403 | The identity carries a `system:` group (from an IdP claim, a RESTAction, LDAP, a basic User or a mapping). Kubernetes reserves that prefix for identities the apiserver vouches for | Tell an administrator |
+| `PlatformGroupNotAllowed` | 403 | An identity source (ldap, oauth, oidc) asserted a `krateo:` group (from an IdP claim, a RESTAction or LDAP group search). Those carry platform rights and come only from identities an administrator provisions (basic Users, ServiceAccount mappings). authn's own `krateo:loa:` step-up group doesn't count | Tell an administrator |
 
 A cause means the same in every table, with two exceptions. `AudienceMismatch` is the
 service account's token on `/serviceaccount/login` (fix the client) and the IdP's ID

@@ -194,6 +194,9 @@ func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Inf
 	if err := checkSystemGroups(user); err != nil {
 		return "", err
 	}
+	if err := checkPlatformGroups(strategy, user); err != nil {
+		return "", err
+	}
 	if g.lookupErr != nil {
 		return "", fmt.Errorf("building the name guard's cluster client: %w", g.lookupErr)
 	}

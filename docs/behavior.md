@@ -554,6 +554,18 @@ or a log line.
   `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
   then drops, and `authn.audit.export.failed` counts the dropped records.
 
+### Platform names and groups
+The `krateo:` prefix is the platform's. A username starting with it is reserved
+(plumbing's `usernames.Reserved`, the list authn's guard, an access-request form
+and an approval controller share): it names platform identities authn never issues,
+such as snowplow's `krateo:public` for token-less public widgets. That matters for a
+source that issues names as-is, like LDAP's `uid`. An identity source (ldap, oauth,
+oidc) also may not assert a `krateo:` group: `403 PlatformGroupNotAllowed`, before
+anything is minted, and a `denied` audit record. Those groups (`krateo:services`,
+`krateo:cdc:*`) carry platform rights, and only identities an administrator
+provisions (basic Users, ServiceAccount mappings) may carry them. authn's own
+step-up group, `krateo:loa:2`, is authn's and doesn't count.
+
 ### Moving a name to a new identity
 An existing username can move to a new identity, for example a person's sign-in
 moving from a retired GitHub OAuthConfig to a Keycloak OIDC login with the same

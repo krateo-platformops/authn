@@ -141,6 +141,10 @@ const (
 	// CauseSystemGroupNotAllowed: the identity carries a `system:` group,
 	// which Kubernetes reserves for identities the apiserver vouches for.
 	CauseSystemGroupNotAllowed CauseType = "SystemGroupNotAllowed"
+	// CausePlatformGroupNotAllowed: an identity source (LDAP, OAuth, OIDC)
+	// asserted a `krateo:` group. Those carry platform rights and come only
+	// from identities an administrator provisions.
+	CausePlatformGroupNotAllowed CauseType = "PlatformGroupNotAllowed"
 )
 
 // Causes of a 400 shared by the logins that take a config name and an
