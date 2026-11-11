@@ -14,7 +14,8 @@ import (
 
 func agentMapping() *sav1alpha1.ServiceAccount {
 	return &sav1alpha1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{
-		Name: "kagent", Namespace: "krateo-system", UID: "uid-map", ResourceVersion: "3", Generation: 2}}
+		Name: "kagent", Namespace: "krateo-system", UID: "uid-map", ResourceVersion: "3", Generation: 2},
+		Spec: sav1alpha1.ServiceAccountSpec{Groups: []string{"krateo:agents", "devs"}}}
 }
 
 // Every /delegate record shape conforms for the request writer, and Check
@@ -62,6 +63,9 @@ func TestDelegationRecordsConform(t *testing.T) {
 			assert.False(t, dr.AsBool(), "a real issuance")
 			_, hasDryRun := attr(t, attrs, "krateo.audit.dry_run")
 			assert.True(t, hasDryRun, "an issuance is a write, so it says whether it persisted")
+			roles, _ := attr(t, attrs, "user.roles")
+			assert.Equal(t, []string{"krateo:agents", "devs"}, roles.AsStringSlice(),
+				"the actor's roles are its mapping's groups (authn#127, N7)")
 			v, ok := attr(t, attrs, "krateo.audit.on_behalf_of.user.name")
 			if tc.subject != nil {
 				assert.Equal(t, "alice", v.AsString())

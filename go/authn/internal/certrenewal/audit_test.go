@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,6 +115,7 @@ func TestSyncAnnotationsRecordsOnlyAuthorizationChanges(t *testing.T) {
 		{"only the validity window is stale: written, not recorded", identity, false},
 		{"the groups are stale: written and recorded", map[string]string{storage.StrategyAnnotation: "self", storage.GroupsAnnotation: "old"}, true},
 		{"the strategy is missing: written and recorded", map[string]string{storage.GroupsAnnotation: identity[storage.GroupsAnnotation]}, true},
+		{"the groups are stale and the write is refused: a failure", map[string]string{storage.StrategyAnnotation: "self", storage.GroupsAnnotation: "old"}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var puts int
@@ -125,6 +127,11 @@ func TestSyncAnnotationsRecordsOnlyAuthorizationChanges(t *testing.T) {
 				}
 				puts++
 				body, _ := io.ReadAll(r.Body)
+				if strings.Contains(tc.name, "refused") {
+					w.WriteHeader(http.StatusConflict)
+					_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","code":409}`)
+					return
+				}
 				_, _ = w.Write(body)
 			}))
 			t.Cleanup(srv.Close)
@@ -144,6 +151,11 @@ func TestSyncAnnotationsRecordsOnlyAuthorizationChanges(t *testing.T) {
 			audittest.AssertConformant(t, audit.WriterController, rec)
 			assert.Equal(t, "authn.servicecert.annotated", auditlogtest.String(rec, "krateo.action"))
 			assert.Equal(t, "update", auditlogtest.String(rec, audit.KeyVerb))
+			want := "success"
+			if strings.Contains(tc.name, "refused") {
+				want = "failure" // authn#127, N17: a refused write is never a success
+			}
+			assert.Equal(t, want, auditlogtest.String(rec, "krateo.audit.outcome"))
 		})
 	}
 }
