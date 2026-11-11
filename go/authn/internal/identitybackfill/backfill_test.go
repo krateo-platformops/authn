@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
@@ -61,6 +62,9 @@ type fakeAPIServer struct {
 	mu      sync.Mutex
 	updates map[string]map[string]string // secret name -> annotations written
 	owners  map[string][]metav1.OwnerReference
+	// refuse answers the PUT of these Secrets with that HTTP status, as the
+	// apiserver does for a conflict or a forbidden write.
+	refuse map[string]int
 }
 
 func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
@@ -79,6 +83,11 @@ func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
 			body, _ := io.ReadAll(r.Body)
 			sec := corev1.Secret{}
 			require.NoError(t, json.Unmarshal(body, &sec))
+			if code := f.refuse[sec.Name]; code != 0 {
+				w.WriteHeader(code)
+				_, _ = fmt.Fprintf(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","code":%d}`, code)
+				return
+			}
 			f.mu.Lock()
 			f.updates[sec.Name] = sec.Annotations
 			f.owners[sec.Name] = sec.OwnerReferences
@@ -253,4 +262,33 @@ func cert(t *testing.T, cn string, groups []string) string {
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
 	require.NoError(t, err)
 	return base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// A write the apiserver refuses is a failure record with the apiserver's
+// status, never a success: the annotation that policy decides from wasn't
+// stamped (authn#127, N17).
+func TestRunRecordsARefusedWriteAsAFailure(t *testing.T) {
+	for _, code := range []int{http.StatusConflict, http.StatusForbidden} {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			api := newFakeAPIServer(t, []corev1.Secret{
+				clientConfig(t, "bob-clientconfig", cert(t, "bob", []string{"devs"}), nil),
+			})
+			api.refuse = map[string]int{"bob-clientconfig": code}
+			ctl, records := auditlogtest.NewController(t, "system:serviceaccount:"+ns+":authn")
+			res, err := Run(context.Background(), Options{
+				RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns}, SelfUsername: "authn",
+				Lookup: fakeLookup{basic: map[string]bool{"bob": true}}, Log: zerolog.Nop(), Audit: ctl,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Skipped)
+			r := records.Only(t)
+			audittest.AssertConformant(t, audit.WriterController, r)
+			assert.Equal(t, "failure", auditlogtest.String(r, "krateo.audit.outcome"))
+			for _, kv := range audittest.Attributes(r) {
+				if kv.Key == "http.response.status_code" {
+					assert.Equal(t, int64(code), kv.Value.AsInt64())
+				}
+			}
+		})
+	}
 }
