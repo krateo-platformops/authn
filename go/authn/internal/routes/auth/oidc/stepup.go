@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"net/url"
 	"os"
@@ -172,14 +173,17 @@ func StepUpExtensions(spec *oidcv1alpha1.OIDCStepUp, authCodeURL string) (map[st
 
 type StepUpOptions struct {
 	KubeconfigGenerator kubeconfig.Generator
-	JwtPrivateKey       *rsa.PrivateKey
-	JwtKeyID            string
+	// Audit records each verified identity\'s credential write (AUDIT-4). Nil records nothing.
+	Audit         *auditlog.Recorder
+	JwtPrivateKey *rsa.PrivateKey
+	JwtKeyID      string
 }
 
 func StepUp(ctx context.Context, rc *rest.Config, opts StepUpOptions) routes.Route {
 	return &stepUpRoute{
 		rc: rc, ctx: ctx,
 		gen:           opts.KubeconfigGenerator,
+		audit:         opts.Audit,
 		jwtPrivateKey: opts.JwtPrivateKey,
 		jwtKeyID:      opts.JwtKeyID,
 	}
@@ -191,6 +195,7 @@ type stepUpRoute struct {
 	rc            *rest.Config
 	ctx           context.Context
 	gen           kubeconfig.Generator
+	audit         *auditlog.Recorder
 	jwtPrivateKey *rsa.PrivateKey
 	jwtKeyID      string
 }
@@ -217,7 +222,9 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 		}
 
 		up := userinfo.NewStepUpUser(nfo, StepUpLevel)
-		notAfter, err := r.gen.GenerateStepUp(storage.StrategyOIDC, up, cfg.StepUp.ttl)
+		issued, err := r.gen.GenerateStepUp(storage.StrategyOIDC, up, cfg.StepUp.ttl, admitGroups(cfg, nfo))
+		r.audit.Issuance(req, auditlog.ActionStepUp, up, jwtutil.PrincipalHuman, issued, err)
+		notAfter := issued.NotAfter
 		if err != nil {
 			err = status.IssueFailure("step-up credential", err)
 			status.LogFailure(log, err).Str("username", up.GetUserName()).Msg("step-up credential creation failure")

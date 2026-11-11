@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,16 +31,18 @@ type fakeGenerator struct {
 	info  userinfo.Info // the identity of the last Generate
 }
 
-func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls++
 	g.info = nfo
 	if g.err != nil {
-		return nil, time.Time{}, g.err
+		// As Generate reports a refusal: the Secret it would have written.
+		return kubeconfig.Issued{Secret: storage.Written{Namespace: "krateo-system",
+			Name: storage.ClientConfigSecretName(nfo.GetUserName()), Verb: "update"}}, g.err
 	}
-	return []byte(`{}`), time.Now().Add(time.Hour), nil
+	return kubeconfig.Issued{Kubeconfig: []byte(`{}`), NotAfter: time.Now().Add(time.Hour), Secret: auditlogtest.Created(nfo.GetUserName())}, nil
 }
 
-func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration) (time.Time, error) {
+func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	panic("basic login never issues a step-up credential")
 }
 
@@ -248,15 +252,22 @@ func TestLoginSucceeds(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	gen := &fakeGenerator{}
-	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+	audit, records := auditlogtest.New(t)
+	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 
 	req := httptest.NewRequest(http.MethodGet, Path, nil)
 	req.SetBasicAuth("admin", "s3cret")
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, 1, gen.calls)
+	// One conformant record of the Secret written (AUDIT-4).
+	r := auditlogtest.Only(t, records)
+	assert.Equal(t, "authn.login.basic", auditlogtest.String(r, "krateo.action"))
+	assert.Equal(t, "admin-clientconfig", auditlogtest.String(r, "krateo.audit.object_ref.name"))
+	assert.Equal(t, "admin", auditlogtest.String(r, "user.name"))
+	assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Contains(t, rec.Body.String(), "accessToken")
 	assert.Contains(t, rec.Body.String(), `"strategy":{"kind":"basic"}`, "basic has no config to name")
 	assert.Equal(t, userinfo.Subject{Issuer: "krateo-system", ID: "admin"}, gen.info.GetSubject(),
@@ -276,15 +287,21 @@ func TestLoginAnswersTheNameGuardsRefusal(t *testing.T) {
 	srv := fakeAPIServer(t, reply{code: 200, body: userAdmin}, reply{code: 200, body: secretWith("password", "s3cret")})
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	gen := &fakeGenerator{err: status.Refused(status.CauseUsernameUnavailable, errors.New(`the username "admin" isn't available to this identity`))}
-	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+	gen := &fakeGenerator{err: kubeconfig.Refused(kubeconfig.RefusalProvisioned,
+		status.Refused(status.CauseUsernameUnavailable, errors.New(`the username "admin" isn't available to this identity`)))}
+	audit, records := auditlogtest.New(t)
+	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 
 	req := httptest.NewRequest(http.MethodGet, Path, nil)
 	req.SetBasicAuth("admin", "s3cret")
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"reason":"UsernameUnavailable"`)
 	assert.NotContains(t, rec.Body.String(), "accessToken")
+	// A denied record of the Secret it would have written, with no status code.
+	r := auditlogtest.Only(t, records)
+	assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, "admin-clientconfig", auditlogtest.String(r, "krateo.audit.object_ref.name"))
 }

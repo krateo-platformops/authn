@@ -26,9 +26,17 @@ func TestPutWritesTheClaim(t *testing.T) {
 	for _, exists := range []bool{false, true} {
 		rec := &putRecorder{exists: exists}
 		store := Default(&rest.Config{Host: rec.serve(t).URL})
-		require.NoError(t, store.Put("alice", &AuthInfo{Strategy: StrategyOAuth, Claim: claim,
-			CertData: identityCert(t, "alice", []string{"tenants"})}))
+		w, err := store.Put("alice", &AuthInfo{Strategy: StrategyOAuth, Claim: claim,
+			CertData: identityCert(t, "alice", []string{"tenants"})})
+		require.NoError(t, err)
 		require.NotEmpty(t, rec.written)
+		// What Put reports is what an audit record names (AUDIT-4): the request
+		// that stored the Secret, never the 409 step before an update.
+		want := Written{Namespace: "krateo-system", Name: "alice-clientconfig", UID: "uid-stored", ResourceVersion: "7", Verb: "create", StatusCode: 201}
+		if exists {
+			want.Verb, want.StatusCode = "update", 200
+		}
+		assert.Equal(t, want, w, "exists=%v", exists)
 		for _, sec := range rec.written {
 			assert.Equal(t, claim, sec.Annotations[ClaimAnnotation], "exists=%v", exists)
 			assert.Equal(t, "oauth", sec.Annotations[StrategyAnnotation])
@@ -48,13 +56,16 @@ func TestPutRefusesASecretClaimedByAnother(t *testing.T) {
 	}
 
 	rec := &putRecorder{exists: true, existing: map[string]string{ClaimAnnotation: theirs}}
-	err := Default(&rest.Config{Host: rec.serve(t).URL}).Put("alice", nfo())
+	w, err := Default(&rest.Config{Host: rec.serve(t).URL}).Put("alice", nfo())
 	require.ErrorIs(t, err, ErrClaimedByAnother)
 	require.Len(t, rec.written, 1, "only the create that found the Secret; no update")
+	assert.Equal(t, Written{Namespace: "krateo-system", Name: "alice-clientconfig", Verb: "update"}, w,
+		"nothing stored: the update this login would have sent, no status, no uid")
 
 	for _, existing := range []map[string]string{nil, {ClaimAnnotation: mine}, {StrategyAnnotation: "oauth"}} {
 		rec := &putRecorder{exists: true, existing: existing}
-		require.NoError(t, Default(&rest.Config{Host: rec.serve(t).URL}).Put("alice", nfo()))
+		_, err := Default(&rest.Config{Host: rec.serve(t).URL}).Put("alice", nfo())
+		require.NoError(t, err)
 		assert.Len(t, rec.written, 2, "the create, then the update")
 	}
 }

@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,16 +34,18 @@ type fakeGenerator struct {
 	info  userinfo.Info // the identity of the last Generate
 }
 
-func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls++
 	g.info = nfo
 	if g.err != nil {
-		return nil, time.Time{}, g.err
+		// As Generate reports a failure before the write: the Secret it would have written.
+		return kubeconfig.Issued{Secret: storage.Written{Namespace: "krateo-system",
+			Name: storage.ClientConfigSecretName(nfo.GetUserName()), Verb: "create"}}, g.err
 	}
-	return []byte(`{}`), time.Now().Add(time.Hour), nil
+	return kubeconfig.Issued{Kubeconfig: []byte(`{}`), NotAfter: time.Now().Add(time.Hour), Secret: auditlogtest.Created(nfo.GetUserName())}, nil
 }
 
-func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration) (time.Time, error) {
+func (g *fakeGenerator) GenerateStepUp(storage.Strategy, userinfo.Info, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	panic("ldap login never issues a step-up credential")
 }
 
@@ -202,7 +206,8 @@ func loginAs(t *testing.T, name string, configCode, secretCode int, srvLDAP *fak
 		dialURL = "ldap://127.0.0.1:1" // nothing listens there
 	}
 	srv := fakeAPIServer(t, configCode, secretCode, dialURL, groupSearch)
-	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: testKey(t), JwtKeyID: "k"})
+	audit, records := auditlogtest.New(t)
+	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: testKey(t), JwtKeyID: "k"})
 
 	var buf bytes.Buffer
 	body, err := json.Marshal(loginInfo{Username: username, Password: "pw"})
@@ -211,7 +216,16 @@ func loginAs(t *testing.T, name string, configCode, secretCode int, srvLDAP *fak
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(zerolog.New(&buf).WithContext(req.Context()))
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
+
+	// AUDIT-4: every issuance writes one conformant record, and a login refused
+	// before verification writes none.
+	require.Len(t, records.Records(), gen.calls, "one record per issuance")
+	if gen.calls == 1 {
+		r := auditlogtest.Only(t, records)
+		assert.Equal(t, "authn.login.ldap", auditlogtest.String(r, "krateo.action"))
+		assert.Equal(t, storage.ClientConfigSecretName(gen.info.GetUserName()), auditlogtest.String(r, "krateo.audit.object_ref.name"))
+	}
 
 	res := result{code: rec.Code, minted: gen.calls, tokened: strings.Contains(rec.Body.String(), "accessToken"), body: rec.Body.String()}
 	if rec.Code == http.StatusOK {

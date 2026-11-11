@@ -14,6 +14,31 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-11 — authn records the credentials it issues (AUDIT-4, #119)
+
+authn wrote every credential later requests ride on and recorded none of it. Logins,
+step-up and `/delegate` now write schema-v1 audit records over OTLP logs, gated by
+`OTEL_LOGS_ENABLED`, and so does the step-up sweep, as authn's ServiceAccount. The
+chart now turns authn's OpenTelemetry on (`OTEL_ENABLED: "true"`, every signal to the
+node-local agent at `http://$(HOST_IP):4318`), as snowplow's does: before this, authn
+sent no traces or metrics on any cluster, because its chart never set the gate. Diego
+chose this default over a per-cluster opt-in. Decided
+with snowplow, the AUDIT-4 lead:
+- one record per verified login, right after issuance, naming the Secret written and the
+  verb sent;
+- a refusal of a verified identity is `denied`, with the Secret it would have written and
+  no status code;
+- step-up is its own action, `authn.stepup.oidc`.
+
+To make the verb and the uid known, `storage.Put` now returns what it wrote, and
+`Generate` returns it in `Issued`. The guard's refusals carry a closed-set reason
+(`config.RefusalOf`), recorded as audit v0.5.0's `krateo.audit.denial_reason`. An
+OIDCConfig's `allowedGroups` check moved from the route into `Generate` (`Admit`), so its
+refusal is recorded like the guard's. authn's own certificate writes are recorded from
+plumbing v1.43.0's `signup.DoWritten`. `endpoints.Store` sends a create, then an update
+after a 409, and used to report neither, and the record must state what was sent, not
+guess it.
+
 ## 2026-11-11 — Moving a name to a new identity: an admin-written claim, never a delete
 
 Demo's sign-in moves from GitHub to Keycloak-local users with the same usernames (Diego,

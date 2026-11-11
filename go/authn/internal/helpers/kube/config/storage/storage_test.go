@@ -70,7 +70,7 @@ func TestStorage(t *testing.T) {
 
 			store := Default(cfg.Client().RESTConfig())
 
-			err := store.Put(username, want)
+			_, err := store.Put(username, want)
 			if err != nil {
 				t.Fatal(err)
 			}

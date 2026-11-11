@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/krateo-platformops/audit/audittest"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -147,17 +150,28 @@ type stepUpGenerator struct {
 	stepUps  []userinfo.Info
 	ttls     []time.Duration
 	notAfter time.Time
+	// records holds what the route's audit Recorder wrote (AUDIT-4).
+	records *audittest.Recorder
 }
 
-func (g *stepUpGenerator) Generate(_ storage.Strategy, u userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *stepUpGenerator) Generate(_ storage.Strategy, u userinfo.Info, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	if err := kubeconfig.NewIssueOptions(opts...).CheckAdmit(u); err != nil {
+		return kubeconfig.Issued{Secret: storage.Written{Namespace: "krateo-system",
+			Name: storage.ClientConfigSecretName(u.GetUserName()), Verb: "create"}}, err
+	}
 	g.sessions = append(g.sessions, u)
-	return []byte(`{}`), g.notAfter, nil
+	return kubeconfig.Issued{Kubeconfig: []byte(`{}`), NotAfter: g.notAfter, Secret: auditlogtest.Created(u.GetUserName())}, nil
 }
 
-func (g *stepUpGenerator) GenerateStepUp(_ storage.Strategy, u userinfo.Info, ttl time.Duration) (time.Time, error) {
+func (g *stepUpGenerator) GenerateStepUp(_ storage.Strategy, u userinfo.Info, ttl time.Duration, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	stepUpSecret := storage.Written{Namespace: "krateo-system", Name: storage.StepUpSecretName(u.GetUserName()), Verb: "create"}
+	if err := kubeconfig.NewIssueOptions(opts...).CheckAdmit(u); err != nil {
+		return kubeconfig.Issued{Secret: stepUpSecret}, err
+	}
 	g.stepUps = append(g.stepUps, u)
 	g.ttls = append(g.ttls, ttl)
-	return g.notAfter, nil
+	stepUpSecret.UID, stepUpSecret.ResourceVersion, stepUpSecret.StatusCode = "uid-up", "1", 201
+	return kubeconfig.Issued{NotAfter: g.notAfter, Secret: stepUpSecret}, nil
 }
 
 // stepUpEnv serves an OIDCConfig named "kc" from a fake apiserver, and an
@@ -214,13 +228,15 @@ func stepUpRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptes
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
-	route := StepUp(t.Context(), rc, StepUpOptions{KubeconfigGenerator: gen, JwtPrivateKey: key, JwtKeyID: "k"})
+	audit, records := auditlogtest.New(t)
+	gen.records = records
+	route := StepUp(t.Context(), rc, StepUpOptions{KubeconfigGenerator: gen, Audit: audit, JwtPrivateKey: key, JwtKeyID: "k"})
 
 	req := httptest.NewRequest(http.MethodPost, StepUpPath+"?name=kc", nil)
 	req.Header.Set("X-Auth-Code", "code")
 	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
 	return rec
 }
 

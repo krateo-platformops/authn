@@ -21,6 +21,10 @@ type NameLookup interface {
 	// SessionSecret returns username's session credential Secret, or nil
 	// when there is none.
 	SessionSecret(ctx context.Context, username string) (*corev1.Secret, error)
+	// Secret returns the Secret named name in authn's namespace, or nil when
+	// there is none. It tells a refused or failed issuance which write it
+	// would have sent (AUDIT-4).
+	Secret(ctx context.Context, name string) (*corev1.Secret, error)
 	// Provisioned reports whether an administrator created an identity with
 	// this name in authn's namespace: a basic User or a ServiceAccount
 	// mapping.
@@ -88,8 +92,8 @@ func reservedName(username string) bool {
 func checkSystemGroups(user userinfo.Info) error {
 	for _, g := range user.GetGroups() {
 		if strings.HasPrefix(g, systemGroupPrefix) {
-			return status.Refused(status.CauseSystemGroupNotAllowed,
-				fmt.Errorf("group %q can't be issued: the %s prefix is reserved to Kubernetes", g, systemGroupPrefix))
+			return refused(RefusalSystemGroup, status.Refused(status.CauseSystemGroupNotAllowed,
+				fmt.Errorf("group %q can't be issued: the %s prefix is reserved to Kubernetes", g, systemGroupPrefix)))
 		}
 	}
 	return nil
@@ -111,19 +115,19 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 	claim := storage.EncodeClaim(strategy, subject.Issuer, subject.ID)
 	external := fromIdentitySource(strategy)
 
-	refuse := func(reason string, args ...any) error {
+	refuse := func(why Refusal, reason string, args ...any) error {
 		private := fmt.Errorf("username %q: "+reason, append([]any{username}, args...)...)
 		g.log.Warn().Str("username", username).Str("strategy", string(strategy)).Str("claim", claim).
 			Str("reason", private.Error()).Msg("username refused")
-		return status.RefusedPrivately(status.CauseUsernameUnavailable,
-			fmt.Errorf("the username %q isn't available to this identity", username), private)
+		return refused(why, status.RefusedPrivately(status.CauseUsernameUnavailable,
+			fmt.Errorf("the username %q isn't available to this identity", username), private))
 	}
 	failed := func(err error) error {
 		return status.Failed(status.CauseIssuanceFailed, fmt.Errorf("checking username %q: %w", username, err))
 	}
 
 	if external && reservedName(username) {
-		return "", refuse("reserved")
+		return "", refuse(RefusalReserved, "reserved")
 	}
 
 	sec, err := g.lookup.SessionSecret(ctx, username)
@@ -136,7 +140,7 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 			if have == claim {
 				return claim, nil
 			}
-			return "", refuse("claimed by another identity (%s)", have)
+			return "", refuse(RefusalClaimed, "claimed by another identity (%s)", have)
 		}
 		// Written before claims existed: the strategy that wrote it adopts it.
 		wrote := storage.Strategy(ann[storage.StrategyAnnotation])
@@ -150,7 +154,7 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 				Msg("username claimed by its provisioned identity")
 			return claim, nil
 		}
-		return "", refuse("its Secret was written by %q, not by a %s login", wrote, strategy)
+		return "", refuse(RefusalHeldLegacy, "its Secret was written by %q, not by a %s login", wrote, strategy)
 	}
 
 	if !external {
@@ -161,14 +165,14 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		return "", failed(err)
 	}
 	if provisioned {
-		return "", refuse("an administrator provisioned it as a basic User or ServiceAccount mapping")
+		return "", refuse(RefusalProvisioned, "an administrator provisioned it as a basic User or ServiceAccount mapping")
 	}
 	bound, err := g.lookup.BoundAsUser(ctx, username)
 	if err != nil {
 		return "", failed(err)
 	}
 	if bound {
-		return "", refuse("a RoleBinding or ClusterRoleBinding already grants rights to it")
+		return "", refuse(RefusalBound, "a RoleBinding or ClusterRoleBinding already grants rights to it")
 	}
 	return claim, nil
 }

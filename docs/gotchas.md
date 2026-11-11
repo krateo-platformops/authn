@@ -213,6 +213,15 @@ flips it back to `0` on shutdown (`main.go:315`). It reflects process lifecycle 
 — it does **not** check apiserver/snowplow/LDAP reachability, so a "healthy" authn
 can still fail every login if its dependencies are down.
 
+## Audit records go to the agent on the pod's own node
+The chart points every OpenTelemetry signal at `http://$(HOST_IP):4318`, the collector
+agent's hostPort on the node authn's pod runs on, not a cluster Service. On a node whose
+agent pod is missing or not ready, the exports fail: audit records are retried, then
+dropped, and logins still succeed (export never blocks one). `authn.audit.export.failed`
+counts the dropped records, but it is exported to the same endpoint, so on that node the
+count is lost too. Check that the agent DaemonSet is ready on every node that runs authn
+(on 057 and demo, `otel-collector-daemonset` is ready on all nodes as of 2026-11-11).
+
 ## Deleting a clientconfig Secret can delete a tenant
 A policy may generate objects from `<username>-clientconfig` (demo's Kyverno
 `tenant-namespace-on-login` generates the user's tenant namespace, Role, RoleBinding,

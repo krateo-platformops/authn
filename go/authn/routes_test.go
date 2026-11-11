@@ -54,14 +54,14 @@ const (
 // without a successful login may issue a credential.
 type mintCounter struct{ calls atomic.Int32 }
 
-func (g *mintCounter) Generate(_ storage.Strategy, _ userinfo.Info, _ ...kubeconfig.IssueOption) ([]byte, time.Time, error) {
+func (g *mintCounter) Generate(_ storage.Strategy, _ userinfo.Info, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls.Add(1)
-	return []byte(`{}`), time.Now().Add(time.Hour), nil
+	return kubeconfig.Issued{Kubeconfig: []byte(`{}`), NotAfter: time.Now().Add(time.Hour)}, nil
 }
 
-func (g *mintCounter) GenerateStepUp(_ storage.Strategy, _ userinfo.Info, _ time.Duration) (time.Time, error) {
+func (g *mintCounter) GenerateStepUp(_ storage.Strategy, _ userinfo.Info, _ time.Duration, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls.Add(1)
-	return time.Now().Add(time.Hour), nil
+	return kubeconfig.Issued{NotAfter: time.Now().Add(time.Hour)}, nil
 }
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }

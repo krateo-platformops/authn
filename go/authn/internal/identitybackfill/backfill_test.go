@@ -10,6 +10,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"github.com/krateo-platformops/audit"
+	"github.com/krateo-platformops/audit/audittest"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"io"
 	"math/big"
 	"net/http"
@@ -114,6 +117,7 @@ func TestRun(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Name: "authn-jwt-signing-key", Namespace: ns}},
 	}
 	api := newFakeAPIServer(t, items)
+	ctl, records := auditlogtest.NewController(t, "system:serviceaccount:"+ns+":authn")
 
 	res, err := Run(context.Background(), Options{
 		RestConfig:   &rest.Config{Host: api.URL},
@@ -124,7 +128,8 @@ func TestRun(t *testing.T) {
 			basic:    map[string]bool{"bob": true, "both": true},
 			failFor:  "flaky",
 		},
-		Log: zerolog.Nop(),
+		Log:   zerolog.Nop(),
+		Audit: ctl,
 	})
 	require.NoError(t, err)
 
@@ -149,6 +154,18 @@ func TestRun(t *testing.T) {
 	}
 	for _, name := range []string{"carol-clientconfig", "broken-clientconfig", "flaky-clientconfig", "authn-jwt-signing-key"} {
 		assert.NotContains(t, api.updates, name, "%s must not be written", name)
+	}
+
+	// Every write stamps an authorization-bearing annotation, so each one is a
+	// conformant controller record of that Secret, and nothing else is (AUDIT-4).
+	recs := records.Records()
+	require.Len(t, recs, len(want), "one record per write")
+	for _, r := range recs {
+		audittest.AssertConformant(t, audit.WriterController, r)
+		audittest.AssertRequiredKeysDetected(t, audit.WriterController, r)
+		assert.Equal(t, "authn.identity.backfilled", auditlogtest.String(r, "krateo.action"))
+		assert.Equal(t, "update", auditlogtest.String(r, "krateo.audit.verb"))
+		assert.Contains(t, want, auditlogtest.String(r, "krateo.audit.object_ref.name"))
 	}
 	for name, owners := range api.owners {
 		assert.Empty(t, owners, "%s: no owner without a MappingNamespace", name)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -150,10 +151,17 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("initializing OpenTelemetry")
 	}
-	if telemetry.TracingEnabled() || telemetry.MetricsEnabled() {
+	// Audit records (AUDIT-4) go over OTLP logs, gated by OTEL_LOGS_ENABLED
+	// (default OTEL_ENABLED). Off, the provider is nil and no record is written.
+	auditLogs, auditShutdown, err := telemetry.SetupLogs(context.Background(), serviceName, Version)
+	if err != nil {
+		log.Fatal().Err(err).Msg("initializing the OTLP logs pipeline for audit records")
+	}
+	if telemetry.TracingEnabled() || telemetry.MetricsEnabled() || telemetry.LogsEnabled() {
 		log.Info().
 			Bool("tracing", telemetry.TracingEnabled()).
 			Bool("metrics", telemetry.MetricsEnabled()).
+			Bool("auditLogs", telemetry.LogsEnabled()).
 			Msg("OpenTelemetry enabled")
 	}
 
@@ -211,6 +219,11 @@ func main() {
 
 	healthy := int32(0)
 
+	auditRec, auditCtl, err := newAudit(cfg, auditLogs)
+	if err != nil {
+		log.Fatal().Err(err).Msg("building the audit recorders")
+	}
+
 	all, err := buildRoutes(routeOptions{
 		RestConfig:             cfg,
 		Generator:              gen,
@@ -225,6 +238,7 @@ func main() {
 		Healthy:                &healthy,
 		Version:                Version,
 		ServiceName:            serviceName,
+		Audit:                  auditRec,
 	})
 	if err != nil {
 		log.Fatal().Err(err).Msg("building routes")
@@ -241,7 +255,8 @@ func main() {
 		}
 	}
 
-	var handler http.Handler = routes.Serve(all, log)
+	// Inside otelhttp, so the Server span is active when a record marks it.
+	var handler http.Handler = auditlog.Middleware(routes.Serve(all, log))
 
 	// OpenTelemetry HTTP server instrumentation (gated, default OFF). When
 	// metrics are opted in, emit http.server.* instruments; when tracing is
@@ -313,6 +328,7 @@ func main() {
 		Duration:   *serviceCertExpiresIn,
 		Threshold:  *certRenewalThreshold,
 		Log:        log,
+		Audit:      auditCtl,
 	})
 	if err != nil {
 		// A clientconfig authn cannot create has never been a reason to refuse
@@ -354,6 +370,7 @@ func main() {
 			SelfUsername:     *authnUsername,
 			MappingNamespace: operatorNamespace,
 			Log:              log,
+			Audit:            auditCtl,
 		})
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")
@@ -373,6 +390,8 @@ func main() {
 			Client:     leaderClient,
 			Namespaces: []string{operatorNamespace, *storageNamespace},
 			Log:        log,
+			Delete:     stepupsweep.RESTDelete(leaderClient.CoreV1().RESTClient()),
+			Audit:      auditCtl,
 		})
 
 		switch {
@@ -432,6 +451,10 @@ func main() {
 	server.SetKeepAlivesEnabled(false)
 	if err := server.Shutdown(ctx); err != nil {
 		log.Fatal().Err(err).Msg("server forced to shutdown")
+	}
+	// After the server: the requests it drained may still be writing records.
+	if err := auditShutdown(ctx); err != nil {
+		log.Err(err).Msg("flushing audit records")
 	}
 
 	log.Info().Msg("server gracefully stopped")

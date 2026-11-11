@@ -6,6 +6,8 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,11 +62,13 @@ func oauthLogin(t *testing.T, answer string, restAction bool) (*httptest.Respons
 	base := xcontext.BuildContext(context.Background(), xcontext.WithAccessToken("authn-token"))
 	base = context.WithValue(base, restaction.RestActionContextKey("snowplowURL"), snowplow.URL)
 	gen := &fakeGenerator{}
-	route := Login(base, &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+	audit, records := auditlogtest.New(t)
+	gen.records = records
+	route := Login(base, &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 	req := httptest.NewRequest(http.MethodGet, Path+"?name=gh", nil)
 	req.Header.Set("X-Auth-Code", "code")
 	rec := httptest.NewRecorder()
-	route.Handler().ServeHTTP(rec, req)
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
 	return rec, gen
 }
 
@@ -77,6 +81,10 @@ func TestLoginNamesTheSubject(t *testing.T) {
 	require.Equal(t, 1, gen.calls)
 	assert.Equal(t, "alice", gen.info.GetUserName())
 	assert.Equal(t, userinfo.Subject{Issuer: "gh", ID: "1001"}, gen.info.GetSubject())
+	// One conformant record, the callback's query (code, state) dropped (AUDIT-4).
+	r := auditlogtest.Only(t, gen.records)
+	assert.Equal(t, "authn.login.oauth", auditlogtest.String(r, "krateo.action"))
+	assert.Equal(t, "/oauth/login?name=gh", auditlogtest.String(r, "krateo.request.uri"), "a callback keeps name, never code or state")
 }
 
 // Without a subject, authn can't tell this user from one who takes the same

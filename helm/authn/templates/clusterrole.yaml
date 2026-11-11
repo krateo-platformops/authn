@@ -61,6 +61,16 @@ rules:
   - clusterrolebindings
   verbs:
   - list
+# An audit record (AUDIT-4) states whether its target's namespace is a preview
+# sandbox, read from the Namespace's labels. authn writes only into its own.
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  resourceNames:
+  - {{ .Release.Namespace }}
+  verbs:
+  - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
