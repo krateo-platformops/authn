@@ -44,17 +44,24 @@ func TestDelegationRecordsConform(t *testing.T) {
 
 			attrs := audittest.Attributes(got)
 			for key, want := range map[string]string{
-				"krateo.action":                     ActionDelegate,
-				"user.name":                         "kagent",
-				"krateo.audit.verb":                 "get",
-				"krateo.audit.object_ref.resource":  "serviceaccounts",
-				"krateo.audit.object_ref.api_group": sav1alpha1.Group,
-				"krateo.audit.object_ref.name":      "kagent",
-				"krateo.audit.outcome":              tc.outcome,
+				"krateo.action":                       ActionDelegate,
+				"user.name":                           "kagent",
+				"krateo.audit.verb":                   "create",
+				"krateo.audit.object_ref.resource":    "serviceaccounts",
+				"krateo.audit.object_ref.subresource": "token",
+				"krateo.audit.object_ref.api_group":   sav1alpha1.Group,
+				"krateo.audit.object_ref.name":        "kagent",
+				"krateo.audit.outcome":                tc.outcome,
 			} {
 				v, _ := attr(t, attrs, key)
 				assert.Equal(t, want, v.AsString(), key)
 			}
+			_, hasStatus := attr(t, attrs, "http.response.status_code")
+			assert.False(t, hasStatus, "authn issues the token itself: no authority answered")
+			dr, _ := attr(t, attrs, "krateo.audit.dry_run")
+			assert.False(t, dr.AsBool(), "a real issuance")
+			_, hasDryRun := attr(t, attrs, "krateo.audit.dry_run")
+			assert.True(t, hasDryRun, "an issuance is a write, so it says whether it persisted")
 			v, ok := attr(t, attrs, "krateo.audit.on_behalf_of.user.name")
 			if tc.subject != nil {
 				assert.Equal(t, "alice", v.AsString())

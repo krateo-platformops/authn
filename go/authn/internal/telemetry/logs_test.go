@@ -39,7 +39,9 @@ func TestLogsGate(t *testing.T) {
 
 type failingExporter struct{ sdklog.Exporter }
 
-func (failingExporter) Export(context.Context, []sdklog.Record) error { return errors.New("collector down") }
+func (failingExporter) Export(context.Context, []sdklog.Record) error {
+	return errors.New("collector down")
+}
 
 // A failed export counts the records it dropped, so a gap in the audit trail
 // shows up as a number.

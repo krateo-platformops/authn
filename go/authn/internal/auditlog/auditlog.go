@@ -8,6 +8,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -98,19 +99,26 @@ func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgFailed
 	}
 	r.secretTarget(ctx, &ev, issued.Secret, ev.Outcome != audit.OutcomeDenied)
-	r.request(req, &ev, action != LoginAction(storage.StrategyBasic) &&
-		action != LoginAction(storage.StrategyLDAP) && action != LoginAction(storage.StrategyServiceAccount))
+	r.request(req, &ev, queryParams[action])
 	r.req.Emit(ctx, ev)
 }
 
 // secretTarget names the credential Secret as the record's object.
 func (r *Recorder) secretTarget(ctx context.Context, ev *audit.Event, w storage.Written, withStatus bool) {
+	if w.Name == "" {
+		// No Secret could be named (an identity with no username): the record
+		// names no object, and its verb and method are marked missing.
+		return
+	}
 	ev.Namespace, ev.Version, ev.Resource, ev.Kind = w.Namespace, "v1", "secrets", "Secret"
-	ev.ObjectName, ev.ObjectUID, ev.ObjectResourceVersion = w.Name, w.UID, w.ResourceVersion
+	ev.ObjectName = w.Name
 	ev.Verb, ev.HTTPMethod = w.Verb, methodOf(w.Verb)
 	if withStatus {
 		ev.StatusCode = w.StatusCode
+		ev.ObjectUID, ev.ObjectResourceVersion = w.UID, w.ResourceVersion
 	}
+	// A denial wrote nothing, so it names no stored object's uid or version,
+	// whatever the caller handed in.
 	ev.Preview = r.previewOf(ctx, w.Namespace)
 }
 
@@ -146,13 +154,32 @@ func methodOf(verb string) string {
 	return ""
 }
 
-// request copies the inbound request's facts. dropQuery drops the query: on
-// an OAuth or OIDC callback it carries the authorization code and state, which
-// are credentials.
-func (r *Recorder) request(req *http.Request, ev *audit.Event, dropQuery bool) {
+// queryParams lists, per action, the query parameters its route reads; the
+// record keeps those and drops every other, so nothing a client adds to the
+// query (a token, an OAuth or OIDC callback's code and state) reaches it. An
+// action not listed keeps none.
+var queryParams = map[string][]string{
+	LoginAction(storage.StrategyBasic): {"d"},
+	LoginAction(storage.StrategyLDAP):  {"name"},
+	LoginAction(storage.StrategyOAuth): {"name"},
+	LoginAction(storage.StrategyOIDC):  {"name"},
+	ActionStepUp:                       {"name"},
+}
+
+// request copies the inbound request's facts. keep names the query parameters
+// the record may carry; the rest of the query is dropped.
+func (r *Recorder) request(req *http.Request, ev *audit.Event, keep []string) {
 	uri := req.URL.EscapedPath()
-	if !dropQuery && req.URL.RawQuery != "" {
-		uri += "?" + req.URL.RawQuery
+	if len(keep) > 0 {
+		in, kept := req.URL.Query(), url.Values{}
+		for _, k := range keep {
+			if vs, ok := in[k]; ok {
+				kept[k] = vs
+			}
+		}
+		if q := kept.Encode(); q != "" {
+			uri += "?" + q
+		}
 	}
 	ev.RequestURI = uri
 	ev.SourceIPs = sourceIPs(req)

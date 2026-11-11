@@ -37,6 +37,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"github.com/krateo-platformops/authn/internal/auditlog"
+	"github.com/krateo-platformops/plumbing/endpoints"
 	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
@@ -249,6 +250,11 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Username:     r.username,
 		UserGroups:   r.groups,
 	})
+	if err != nil && written.Verb == "" {
+		// Failed before the Secret write (at the CSR): the record names the
+		// write this renewal would have sent, as a login's does.
+		written = r.wouldWrite(ctx)
+	}
 	r.audit.ServiceCertIssued(ctx, auditlog.SecretRef{Namespace: written.Namespace, Name: written.Name,
 		UID: written.UID, ResourceVersion: written.ResourceVersion}, written.Verb, written.StatusCode, err)
 	if err != nil {
@@ -283,6 +289,23 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Msg("authn client certificate issued")
 
 	return sleepFor(time.Until(due)), nil
+}
+
+// wouldWrite names the clientconfig Secret and the write a renewal that stopped
+// before it would have sent: update when the Secret exists (Store's create is
+// answered 409, then it updates), create when it doesn't. When the Secret can't
+// be read the verb is left empty, so the record is marked incomplete rather
+// than guessed.
+func (r *Renewer) wouldWrite(ctx context.Context) endpoints.Written {
+	w := endpoints.Written{Namespace: r.namespace, Name: r.secret}
+	_, err := secrets.Get(ctx, r.rc, &core.SecretKeySelector{Name: r.secret, Namespace: r.namespace})
+	switch {
+	case err == nil:
+		w.Verb = "update"
+	case apierrors.IsNotFound(err):
+		w.Verb = "create"
+	}
+	return w
 }
 
 // current reads the stored certificate, returning it with the Secret that holds

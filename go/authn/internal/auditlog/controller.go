@@ -92,12 +92,14 @@ func statusCodeOf(err error) int {
 	return 0
 }
 
-// ServiceCertIssued records the write of authn's own certificate to its
-// clientconfig Secret: the request that stored it, or failed to (plumbing
-// endpoints.StoreWritten). A renewal that failed before the Secret was written
-// (the CSR) sends nothing for it and is not recorded.
+// ServiceCertIssued records one issue or renewal of authn's own certificate:
+// the write of its clientconfig Secret, as sent (plumbing
+// endpoints.StoreWritten), or, when it failed before that write (at the CSR),
+// the write it would have sent, as a failure with no status code (AUDIT-4
+// ruling 4, as for a login). An empty verb, when even that couldn't be told, is
+// omitted and the record marked incomplete, never guessed.
 func (c *Controller) ServiceCertIssued(ctx context.Context, ref SecretRef, verb string, code int, err error) {
-	if c == nil || c.e == nil || verb == "" {
+	if c == nil || c.e == nil {
 		return
 	}
 	ev := audit.Event{
@@ -112,10 +114,10 @@ func (c *Controller) ServiceCertIssued(ctx context.Context, ref SecretRef, verb 
 		ObjectName: ref.Name, ObjectUID: ref.UID, ObjectResourceVersion: ref.ResourceVersion,
 	}
 	if err != nil {
+		// code is the Secret write's own answer (StoreWritten), or 0 when no
+		// request was sent for it. err may be an earlier step's (the CSR's), so
+		// its status is not the Secret's and is never borrowed.
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgCertFailure
-		if ev.StatusCode == 0 {
-			ev.StatusCode = statusCodeOf(err)
-		}
 	}
 	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
 	c.e.Emit(ctx, ev)

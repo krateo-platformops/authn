@@ -7,6 +7,7 @@ import (
 	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -239,6 +240,35 @@ func TestDelegationAcceptsAPreviousKey(t *testing.T) {
 }
 
 // Refusals: each carries its cause, and none issues a token.
+// A signing failure after every check passed is a failure record of the
+// issuance, with no status code: authn itself failed.
+func TestDelegationSigningFailureIsRecorded(t *testing.T) {
+	k := newKeys(t)
+	rc, _ := apiserver(t, mapping(`{"allowed":true}`))
+	audit, records := auditlogtest.New(t)
+	// A key far too small to sign a JWT: every signature with it fails. The
+	// subject token verifies through the previous key, so only the signing fails.
+	tiny := &rsa.PrivateKey{
+		PublicKey: rsa.PublicKey{N: big.NewInt(3233), E: 17},
+		D:         big.NewInt(2753),
+		Primes:    []*big.Int{big.NewInt(61), big.NewInt(53)},
+	}
+	h := auditlog.Middleware(Route(rc, Options{
+		PrivateKey:   tiny,
+		KeyID:        "current",
+		PreviousKeys: []jwks.Key{{KID: "previous", Pub: &k.previous.PublicKey}},
+		Audit:        audit,
+	}).Handler())
+	rec := exchange(h, "projected-sa-token", form(token(t, k.previous, "previous", time.Hour, nil)))
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	r := auditlogtest.Only(t, records)
+	assert.Equal(t, "failure", auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, "alice", auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
+	for _, kv := range audittest.Attributes(r) {
+		assert.NotEqual(t, "http.response.status_code", string(kv.Key), "no authority answered")
+	}
+}
+
 // An authenticated actor whose mapping doesn't allow delegation is a denied
 // record of that mapping; a caller with no bearer at all is not recorded.
 func TestDelegationRefusalsAreRecorded(t *testing.T) {
@@ -308,13 +338,23 @@ func TestDelegationRefusals(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rc, calls := apiserver(t, tc.mappings)
-			rec := exchange(k.route(rc), tc.bearer, tc.form(t))
+			h, records := k.recorded(t, rc)
+			rec := exchange(h, tc.bearer, tc.form(t))
 			assert.Equal(t, tc.code, rec.Code, rec.Body.String())
 			assert.Equal(t, tc.cause, cause(t, rec))
 			assert.NotContains(t, rec.Body.String(), `"access_token":`, "no token is issued")
 			if !tc.apiCalls {
 				assert.Zero(t, calls.Load(), "a malformed request is refused before the apiserver is asked")
+				assert.Empty(t, records.Records(), "no actor was verified, so there is no record")
+				return
 			}
+			// The actor is verified: every refusal of it is one denied record of
+			// the issuance (AUDIT-4), whichever check refused it.
+			r := auditlogtest.Only(t, records)
+			assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
+			assert.Equal(t, "create", auditlogtest.String(r, "krateo.audit.verb"))
+			assert.Equal(t, "token", auditlogtest.String(r, "krateo.audit.object_ref.subresource"))
+			assert.Equal(t, "kagent", auditlogtest.String(r, "krateo.audit.object_ref.name"))
 		})
 	}
 }

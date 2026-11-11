@@ -134,6 +134,9 @@ func (r *route) Handler() http.HandlerFunc {
 
 		subject, exp, err := r.verifySubject(subjectToken)
 		if err != nil {
+			// The actor is verified: refusing its subject token is a decision
+			// about it, and the most security-relevant one.
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied)
 			fail(err, "delegation subject token refused")
 			return
 		}

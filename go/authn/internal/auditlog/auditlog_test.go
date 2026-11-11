@@ -135,19 +135,22 @@ func TestRecorderScope(t *testing.T) {
 	assert.Equal(t, "github.com/krateo-platformops/authn/audit", p.scope)
 }
 
-// An OAuth or OIDC callback's query carries the authorization code and state,
-// which are credentials: the record keeps the path only. Others keep the query.
+// A record keeps only the query parameters its route reads (name, d): an OAuth
+// or OIDC callback's code and state are credentials, and a client can add
+// anything else, a token included.
 func TestRequestURIDropsCallbackQueries(t *testing.T) {
 	for _, tc := range []struct {
 		action, want string
 	}{
-		{LoginAction(storage.StrategyOAuth), "/oauth/login"},
-		{LoginAction(storage.StrategyOIDC), "/oauth/login"},
-		{ActionStepUp, "/oauth/login"},
-		{LoginAction(storage.StrategyLDAP), "/oauth/login?name=kc&code=c&state=s"},
+		{LoginAction(storage.StrategyOAuth), "/x?name=kc"},
+		{LoginAction(storage.StrategyOIDC), "/x?name=kc"},
+		{ActionStepUp, "/x?name=kc"},
+		{LoginAction(storage.StrategyLDAP), "/x?name=kc"},
+		{LoginAction(storage.StrategyBasic), "/x?d=1"},
+		{LoginAction(storage.StrategyServiceAccount), "/x"},
 	} {
 		r, rec := newRecorder(t)
-		r.Issuance(get("/oauth/login?name=kc&code=c&state=s"), tc.action, alice(), jwtutil.PrincipalHuman, created(), nil)
+		r.Issuance(get("/x?name=kc&code=c&state=s&d=1&subject_token=eyJ.x.y"), tc.action, alice(), jwtutil.PrincipalHuman, created(), nil)
 		v, _ := attr(t, audittest.Attributes(rec.Only(t)), "krateo.request.uri")
 		assert.Equal(t, tc.want, v.AsString(), tc.action)
 	}
@@ -262,4 +265,65 @@ func TestEveryRefusalHasADenialReason(t *testing.T) {
 			assert.False(t, has)
 		}
 	})
+}
+
+// A denial wrote nothing: it names no uid or resourceVersion, whatever it was
+// handed.
+func TestADenialNamesNoStoredObject(t *testing.T) {
+	r, rec := newRecorder(t)
+	r.Issuance(get("/x"), LoginAction(storage.StrategyOIDC), alice(), jwtutil.PrincipalHuman, created(), refusal())
+	attrs := audittest.Attributes(rec.Only(t))
+	for _, k := range []string{"krateo.audit.object_ref.uid", "krateo.audit.object_ref.resource_version"} {
+		_, has := attr(t, attrs, k)
+		assert.False(t, has, k)
+	}
+}
+
+// The preview flag comes from the target namespace's label, read from the
+// apiserver: a sandbox reads true, anything else false, and an unreadable
+// namespace leaves it out (marked).
+func TestPreviewComesFromTheNamespace(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+		err    error
+		want   *bool
+	}{
+		{"sandbox", map[string]string{PreviewLabel: PreviewSandbox}, nil, ptr(true)},
+		{"ordinary", map[string]string{"x": "y"}, nil, ptr(false)},
+		{"unreadable", nil, errors.New("forbidden"), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := audittest.NewRecorder(t)
+			src := CachedPreview(func(context.Context, string) (map[string]string, error) { return tc.labels, tc.err }, time.Minute)
+			r := New(&provider{rec: rec}, src)
+			r.Issuance(get("/x"), LoginAction(storage.StrategyBasic), alice(), jwtutil.PrincipalHuman, created(), nil)
+			got := rec.Only(t)
+			v, has := attr(t, audittest.Attributes(got), "krateo.audit.preview")
+			if tc.want == nil {
+				assert.False(t, has)
+				audittest.AssertConformant(t, audit.WriterRequest, got, audittest.AllowIncomplete("krateo.audit.preview"))
+				return
+			}
+			require.True(t, has)
+			assert.Equal(t, *tc.want, v.AsBool())
+			audittest.AssertConformant(t, audit.WriterRequest, got)
+		})
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// An identity source that verified someone without a username: the record is a
+// failure naming no object and no actor, each gap marked, rather than a made-up
+// "-clientconfig".
+func TestAnIdentityWithoutAUsernameNamesNoSecret(t *testing.T) {
+	r, rec := newRecorder(t)
+	nobody := userinfo.NewDefaultUser("", "1", nil, nil)
+	r.Issuance(get("/x"), LoginAction(storage.StrategyOIDC), nobody, jwtutil.PrincipalHuman, config.Issued{}, errors.New("no username"))
+	got := rec.Only(t)
+	audittest.AssertConformant(t, audit.WriterRequest, got,
+		audittest.AllowIncomplete("user.name", audit.KeyVerb, "http.request.method", "krateo.audit.preview", "target"))
+	_, has := attr(t, audittest.Attributes(got), "krateo.audit.object_ref.name")
+	assert.False(t, has)
 }

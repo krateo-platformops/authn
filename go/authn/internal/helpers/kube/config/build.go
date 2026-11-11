@@ -55,7 +55,8 @@ type Issued struct {
 	// sent, the apiserver's status, the stored uid. On a refusal (RefusalOf
 	// the error) or a failure before the write, it is the Secret the issuance
 	// would have written and the verb it would have sent, with no status. It
-	// always names the Secret, since every caller passes a verified identity.
+	// names the Secret whenever the identity has a username; one without names
+	// none.
 	Secret storage.Written
 }
 
@@ -201,7 +202,7 @@ func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Inf
 }
 
 func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) (Issued, error) {
-	target := storage.ClientConfigSecretName(userInfo.GetUserName())
+	target := secretFor(userInfo, storage.ClientConfigSecretName)
 	o := NewIssueOptions(opts...)
 	if err := g.checkGroups(userInfo, false); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
@@ -256,7 +257,7 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 }
 
 func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error) {
-	target := storage.StepUpSecretName(userInfo.GetUserName())
+	target := secretFor(userInfo, storage.StepUpSecretName)
 	o := NewIssueOptions(opts...)
 	if err := g.checkGroups(userInfo, true); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
@@ -292,6 +293,10 @@ func (o IssueOptions) CheckAdmit(user userinfo.Info) error {
 // the namespace or the Secret can't be read, the verb is left empty rather
 // than guessed.
 func (g *kubeconfigGenerator) wouldWrite(name string) storage.Written {
+	if name == "" {
+		// An identity with no username names no Secret.
+		return storage.Written{}
+	}
 	w := storage.Written{Name: name}
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
@@ -310,6 +315,15 @@ func (g *kubeconfigGenerator) wouldWrite(name string) storage.Written {
 		w.Verb = "create"
 	}
 	return w
+}
+
+// secretFor is name(user's username), or "" for an identity with no username,
+// which no Secret can be named for.
+func secretFor(user userinfo.Info, name func(string) string) string {
+	if user.GetUserName() == "" {
+		return ""
+	}
+	return name(user.GetUserName())
 }
 
 // orWouldWrite is written when Put sent a request, else wouldWrite(name).

@@ -16,10 +16,14 @@ const (
 )
 
 // Delegation records one /delegate decision about an authenticated actor
-// (AUDIT-4): a token issued, refused (the actor's mapping doesn't allow
-// delegation, or the chain would be too deep) or failed. The target is the
-// actor's ServiceAccount mapping, the object an administrator edits to revoke
-// delegation; authn read it (get) and the apiserver answered.
+// (AUDIT-4): a delegated token issued, refused (the actor's mapping doesn't
+// allow delegation, the subject token is refused, or the chain would be too
+// deep) or failed. The record is the issuance of a credential, shaped as
+// Kubernetes' own (TokenRequest): verb create on the actor's ServiceAccount
+// mapping, subresource token. The mapping is what an administrator edits to
+// revoke delegation. authn issues the token itself, so no authority answers and
+// the record carries no status code; the mapping's lookup is a read and gets no
+// record (AUDIT-4 lead, 2026-11-11).
 //
 // subject is the person the token acts for, and chain the actor chain the token
 // carries (or would have), outermost first; both are nil when the refusal came
@@ -33,15 +37,15 @@ func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccoun
 		UserName:   actor.Name,
 		Action:     ActionDelegate,
 		Outcome:    outcome,
-		Verb:       "get",
-		HTTPMethod: http.MethodGet,
-		// The mapping's read was answered: Authenticate found it.
-		StatusCode: http.StatusOK,
+		Verb:       "create",
+		HTTPMethod: http.MethodPost,
+		UserRoles:  actor.Spec.Groups,
 
 		Namespace:             actor.Namespace,
 		Group:                 sav1alpha1.Group,
 		Version:               sav1alpha1.Version,
 		Resource:              "serviceaccounts",
+		Subresource:           "token",
 		Kind:                  sav1alpha1.ServiceAccountKind,
 		ObjectName:            actor.Name,
 		ObjectUID:             string(actor.UID),
@@ -69,6 +73,6 @@ func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccoun
 		ev.Delegation = append(ev.Delegation, audit.Link{Class: c, Subject: subject.Username})
 	}
 	ev.Preview = r.previewOf(ctx, actor.Namespace)
-	r.request(req, &ev, false)
+	r.request(req, &ev, nil) // /delegate reads its form from the body only
 	r.req.Emit(ctx, ev)
 }

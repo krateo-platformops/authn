@@ -92,10 +92,27 @@ func TestServiceCertIssuedRecordsConform(t *testing.T) {
 		})
 	}
 
-	t.Run("nothing written, nothing recorded", func(t *testing.T) {
+	t.Run("a verb that couldn't be told is omitted and marked, never guessed", func(t *testing.T) {
 		rec := audittest.NewRecorder(t)
-		c := NewController(&provider{rec: rec}, authnSA, nil)
-		c.ServiceCertIssued(context.Background(), SecretRef{}, "", 0, errors.New("the CSR was not approved"))
-		assert.Empty(t, rec.Records())
+		c := NewController(&provider{rec: rec}, authnSA, func(context.Context, string) (bool, bool) { return false, true })
+		c.ServiceCertIssued(context.Background(), SecretRef{Namespace: "krateo-system", Name: "authn-clientconfig"}, "", 0,
+			errors.New("the CSR was not approved"))
+		got := rec.Only(t)
+		audittest.AssertConformant(t, audit.WriterController, got, audittest.AllowIncomplete(audit.KeyVerb))
+		attrs := audittest.Attributes(got)
+		_, hasVerb := attr(t, attrs, audit.KeyVerb)
+		assert.False(t, hasVerb, "no verb is invented")
+		v, _ := attr(t, attrs, audit.KeyIncomplete)
+		assert.Contains(t, v.AsString(), "verb", "the gap is marked")
+		v, _ = attr(t, attrs, "krateo.audit.outcome")
+		assert.Equal(t, audit.OutcomeFailure, v.AsString())
+	})
+
+	t.Run("a status that isn't known is omitted, never assumed", func(t *testing.T) {
+		rec := audittest.NewRecorder(t)
+		c := NewController(&provider{rec: rec}, authnSA, func(context.Context, string) (bool, bool) { return false, true })
+		c.ServiceCertIssued(context.Background(), SecretRef{Namespace: "krateo-system", Name: "authn-clientconfig"}, "create", 0, nil)
+		_, has := attr(t, audittest.Attributes(rec.Only(t)), "http.response.status_code")
+		assert.False(t, has)
 	})
 }

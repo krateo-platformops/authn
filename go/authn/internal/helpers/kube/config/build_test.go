@@ -1,12 +1,16 @@
 package config
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -28,4 +32,26 @@ func TestGenerateStepUpRequiresAReservedGroup(t *testing.T) {
 
 	_, err := gen.GenerateStepUp(storage.StrategyOIDC, user, 15*time.Minute)
 	require.ErrorContains(t, err, "must carry a krateo:loa: group")
+}
+
+// The verb an issuance would have sent comes from reading its Secret. When that
+// read fails, the verb is left empty, so the audit record marks the gap, and is
+// never guessed (AUDIT-4).
+func TestTheWouldBeVerbIsNeverGuessed(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	for _, tc := range []struct {
+		name   string
+		lookup *fakeLookup
+		want   string
+	}{
+		{"the Secret exists: update", &fakeLookup{secret: &corev1.Secret{}}, "update"},
+		{"no Secret: create", &fakeLookup{}, "create"},
+		{"the read fails: no verb", &fakeLookup{err: errors.New("apiserver unreachable")}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"}, Lookup(tc.lookup)).(*kubeconfigGenerator)
+			got := gen.wouldWrite("alice-clientconfig")
+			assert.Equal(t, storage.Written{Namespace: "krateo-system", Name: "alice-clientconfig", Verb: tc.want}, got)
+		})
+	}
 }

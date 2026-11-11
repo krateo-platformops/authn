@@ -83,7 +83,7 @@ func TestLoginHonoursAllowedGroups(t *testing.T) {
 		r := auditlogtest.Only(t, gen.records)
 		assert.Equal(t, "authn.login.oidc", auditlogtest.String(r, "krateo.action"))
 		assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
-		assert.Equal(t, "/oidc/login", auditlogtest.String(r, "krateo.request.uri"), "a callback's query is dropped")
+		assert.Equal(t, "/oidc/login?name=kc", auditlogtest.String(r, "krateo.request.uri"), "a callback keeps name, never code or state")
 	})
 
 	t.Run("not a member", func(t *testing.T) {

@@ -84,7 +84,7 @@ func TestLoginNamesTheSubject(t *testing.T) {
 	// One conformant record, the callback's query (code, state) dropped (AUDIT-4).
 	r := auditlogtest.Only(t, gen.records)
 	assert.Equal(t, "authn.login.oauth", auditlogtest.String(r, "krateo.action"))
-	assert.Equal(t, "/oauth/login", auditlogtest.String(r, "krateo.request.uri"))
+	assert.Equal(t, "/oauth/login?name=gh", auditlogtest.String(r, "krateo.request.uri"), "a callback keeps name, never code or state")
 }
 
 // Without a subject, authn can't tell this user from one who takes the same
