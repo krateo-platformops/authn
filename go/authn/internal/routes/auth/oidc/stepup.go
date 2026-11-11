@@ -101,23 +101,52 @@ func (cfg *stepUpConfig) validate() error {
 // - step-up is enabled for the provider;
 // - its acr is one of the configured values;
 // - it authenticated within maxAge.
+//
+// Its refusals are of a verified identity, so each carries its Refusal and is
+// recorded denied (authn#132); a misconfigured spec.stepUp is authn's failure.
 func checkStepUp(cfg *stepUpConfig, tok idToken, now time.Time) error {
 	if cfg == nil {
-		return status.Refused(CauseStepUpNotEnabled, errors.New("step-up is not enabled for this OIDCConfig (spec.stepUp)"))
+		return kubeconfig.Refused(kubeconfig.RefusalStepUpNotEnabled,
+			status.Refused(CauseStepUpNotEnabled, errors.New("step-up is not enabled for this OIDCConfig (spec.stepUp)")))
 	}
 	if err := cfg.validate(); err != nil {
 		return err
 	}
 	if !slices.Contains(cfg.acrValues, tok.acr) {
-		return status.Refused(CauseInsufficientAssurance, fmt.Errorf("ID token acr %q is not one of %q", tok.acr, cfg.acrValues))
+		return kubeconfig.Refused(kubeconfig.RefusalInsufficientAssurance,
+			status.Refused(CauseInsufficientAssurance, fmt.Errorf("ID token acr %q is not one of %q", tok.acr, cfg.acrValues)))
 	}
 	if tok.authTime.IsZero() {
-		return status.Refused(CauseStaleAuthentication, errors.New("ID token has no auth_time, so the authentication's age is unknown"))
+		return kubeconfig.Refused(kubeconfig.RefusalStaleAuthentication,
+			status.Refused(CauseStaleAuthentication, errors.New("ID token has no auth_time, so the authentication's age is unknown")))
 	}
 	if age := now.Sub(tok.authTime); age > cfg.maxAge {
-		return status.Refused(CauseStaleAuthentication, fmt.Errorf("authenticated %s ago, more than the %s step-up allows", age.Truncate(time.Second), cfg.maxAge))
+		return kubeconfig.Refused(kubeconfig.RefusalStaleAuthentication,
+			status.Refused(CauseStaleAuthentication, fmt.Errorf("authenticated %s ago, more than the %s step-up allows", age.Truncate(time.Second), cfg.maxAge)))
 	}
 	return nil
+}
+
+// isStepUpCheck reports whether err is checkStepUp's own answer, which is
+// logged as "step-up refused" whatever its level, as before the check moved
+// into issuance.
+func isStepUpCheck(err error) bool {
+	var ce status.CauseError
+	if !errors.As(err, &ce) {
+		return false
+	}
+	switch ce.Cause {
+	case CauseStepUpNotEnabled, CauseInsufficientAssurance, CauseStaleAuthentication, CauseStepUpMisconfigured:
+		return true
+	}
+	return false
+}
+
+// admitStepUp is checkStepUp as a GenerateStepUp admission check, so a step-up
+// the ID token doesn't prove is refused inside issuance and recorded with the
+// step-up Secret it would have written, like the guard's refusals (authn#132).
+func admitStepUp(cfg *stepUpConfig, tok idToken, now time.Time) kubeconfig.IssueOption {
+	return kubeconfig.Admit(func(userinfo.Info) error { return checkStepUp(cfg, tok, now) })
 }
 
 // The /strategies extensions that tell the portal how to ask for a step-up
@@ -215,19 +244,25 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		if err := checkStepUp(cfg.StepUp, tok, time.Now()); err != nil {
-			status.LogFailure(log, err).Str("username", nfo.GetUserName()).Msg("step-up refused")
-			encode.Failure(wri, status.FromError(err))
-			return
+		// The step-up check runs inside issuance (admitStepUp), first, so
+		// every refusal of this verified identity is recorded. ttl is read only
+		// once the check has admitted it, when spec.stepUp is set.
+		var ttl time.Duration
+		if cfg.StepUp != nil {
+			ttl = cfg.StepUp.ttl
 		}
-
 		up := userinfo.NewStepUpUser(nfo, StepUpLevel)
-		issued, err := r.gen.GenerateStepUp(storage.StrategyOIDC, up, cfg.StepUp.ttl, admitGroups(cfg, nfo))
+		issued, err := r.gen.GenerateStepUp(storage.StrategyOIDC, up, ttl,
+			admitStepUp(cfg.StepUp, tok, time.Now()), admitGroups(cfg, nfo))
 		r.audit.Issuance(req, auditlog.ActionStepUp, up, jwtutil.PrincipalHuman, issued, err)
 		notAfter := issued.NotAfter
 		if err != nil {
 			err = status.IssueFailure("step-up credential", err)
-			status.LogFailure(log, err).Str("username", up.GetUserName()).Msg("step-up credential creation failure")
+			msg := "step-up credential creation failure"
+			if isStepUpCheck(err) {
+				msg = "step-up refused"
+			}
+			status.LogFailure(log, err).Str("username", up.GetUserName()).Msg(msg)
 			encode.Failure(wri, status.FromError(err))
 			return
 		}

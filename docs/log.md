@@ -14,6 +14,20 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-11 — a refusal after verification is always a record (audit v0.8.0, #132)
+
+Some refusals of an identity authn had already verified wrote nothing: a step-up the ID
+token doesn't prove, and a ServiceAccount the TokenReview authenticated but no single
+mapping names. The rule (snowplow, the schema lead) is that only a refusal *before*
+verification goes unrecorded. Step-up's check now runs inside issuance, like
+`allowedGroups`, so its refusals are `denied` with the step-up Secret they would have
+written: `stepup_not_enabled`, `insufficient_assurance`, `stale_authentication`. A
+misconfigured `spec.stepUp` is a `failure`. `serviceaccount.Authenticate` reports what it
+verified, so `/serviceaccount/login` and `/delegate` record `no_mapping`,
+`ambiguous_mapping` and `not_a_service_account`. A failed mapping lookup is a `failure` with
+the apiserver's code only when it answered. A ServiceAccount token addressed to another
+audience isn't verified for authn and stays unrecorded.
+
 ## 2026-11-11 — every refusal names its reason (audit v0.7.0, #127)
 
 Three refusals reached the audit trail without a reason. A verified identity with no

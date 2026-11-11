@@ -263,4 +263,8 @@ var denialReasons = map[config.Refusal]string{
 	config.RefusalSystemGroup:     audit.DenialReasonSystemGroup,
 	config.RefusalGroupNotAllowed: audit.DenialReasonGroupNotAllowed,
 	config.RefusalPlatformGroup:   audit.DenialReasonPlatformGroup,
+	// A step-up the verified ID token doesn't prove (authn#132, audit v0.8.0).
+	config.RefusalStepUpNotEnabled:      audit.DenialReasonStepupNotEnabled,
+	config.RefusalInsufficientAssurance: audit.DenialReasonInsufficientAssurance,
+	config.RefusalStaleAuthentication:   audit.DenialReasonStaleAuthentication,
 }
