@@ -58,7 +58,9 @@ func TestTheWouldBeVerbIsNeverGuessed(t *testing.T) {
 
 // An identity with no username names no Secret, at each of the two places that
 // could invent one (authn#127, N21): secretFor never builds "-clientconfig",
-// and wouldWrite never reports a verb for a Secret it can't name.
+// and wouldWrite never reports a verb for a Secret it can't name. wouldWrite
+// keeps the namespace, so the name_missing record names the Secret resource
+// without a name (audit v0.6.0).
 func TestNoUsernameNamesNoSecret(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
 	nobody := &userinfo.DefaultUser{ID: "1"}
@@ -67,5 +69,5 @@ func TestNoUsernameNamesNoSecret(t *testing.T) {
 	assert.Equal(t, "alice-clientconfig", secretFor(&userinfo.DefaultUser{Name: "alice"}, storage.ClientConfigSecretName))
 
 	gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"}, Lookup(&fakeLookup{})).(*kubeconfigGenerator)
-	assert.Equal(t, storage.Written{}, gen.wouldWrite(""), "no namespace, no verb, for no name")
+	assert.Equal(t, storage.Written{Namespace: "krateo-system"}, gen.wouldWrite(""), "the namespace only: no name, no verb")
 }

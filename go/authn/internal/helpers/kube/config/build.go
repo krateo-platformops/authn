@@ -296,17 +296,14 @@ func (o IssueOptions) CheckAdmit(user userinfo.Info) error {
 // the namespace or the Secret can't be read, the verb is left empty rather
 // than guessed.
 func (g *kubeconfigGenerator) wouldWrite(name string) storage.Written {
-	if name == "" {
-		// An identity with no username names no Secret.
-		return storage.Written{}
-	}
 	w := storage.Written{Name: name}
-	ns, err := util.GetOperatorNamespace()
-	if err != nil {
-		return w
+	if ns, err := util.GetOperatorNamespace(); err == nil {
+		w.Namespace = ns
 	}
-	w.Namespace = ns
-	if g.lookup == nil {
+	if name == "" || w.Namespace == "" || g.lookup == nil {
+		// With no name (an identity with no username) only the namespace is
+		// known; without the namespace or a lookup the Secret can't be read.
+		// Either way the verb isn't known, so it is left empty.
 		return w
 	}
 	sec, err := g.lookup.Secret(context.Background(), name)

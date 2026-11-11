@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krateo-platformops/audit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -78,4 +79,30 @@ func identityCert(t *testing.T, cn string, groups []string) string {
 
 	return base64.StdEncoding.EncodeToString(
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+}
+
+// The audit schema's list of authorization-bearing annotations is exactly the
+// two authn writes and policy reads: one it doesn't know would never be
+// compared, and a key renamed here would silently stop being recorded.
+func TestAuthorizationAnnotationsAreTheSchemas(t *testing.T) {
+	assert.ElementsMatch(t, []string{StrategyAnnotation, GroupsAnnotation}, audit.AuthorizationAnnotations())
+}
+
+// A change to either authorization-bearing annotation differs; the validity
+// window, the claim and any other annotation don't.
+func TestAuthorizationAnnotationsDiffer(t *testing.T) {
+	base := map[string]string{StrategyAnnotation: "oidc", GroupsAnnotation: "devs", ClaimAnnotation: "c"}
+	with := func(k, v string) map[string]string {
+		m := map[string]string{}
+		for kk, vv := range base {
+			m[kk] = vv
+		}
+		m[k] = v
+		return m
+	}
+	assert.False(t, AuthorizationAnnotationsDiffer(base, with("unrelated", "x")))
+	assert.False(t, AuthorizationAnnotationsDiffer(base, with(ClaimAnnotation, "other")))
+	assert.True(t, AuthorizationAnnotationsDiffer(base, with(StrategyAnnotation, "ldap")))
+	assert.True(t, AuthorizationAnnotationsDiffer(base, with(GroupsAnnotation, "devs\nops")))
+	assert.True(t, AuthorizationAnnotationsDiffer(nil, base), "stamping one is a change")
 }

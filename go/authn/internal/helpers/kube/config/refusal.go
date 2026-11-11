@@ -2,12 +2,15 @@ package config
 
 import "errors"
 
-// Refusal is why authn refused a verified identity a credential: the name
-// guard's reasons and a system: group. An audit record carries it as its
+// Refusal is why authn refused a verified identity a credential: no username,
+// the name guard's reasons, and a system: or krateo: group. An audit record carries it as its
 // closed-set denial reason (AUDIT-4); the HTTP answer stays opaque.
 type Refusal string
 
 const (
+	// RefusalNameMissing: the identity source verified someone but gave no
+	// username, so there is no name to issue or Secret to write.
+	RefusalNameMissing Refusal = "name_missing"
 	// RefusalReserved: an identity source asked for a reserved name.
 	RefusalReserved Refusal = "name_reserved"
 	// RefusalClaimed: another identity holds the name's claim. A login that
@@ -46,7 +49,7 @@ func refused(reason Refusal, err error) error { return refusedError{reason: reas
 
 // Refusals lists every Refusal, for a caller that maps them (the audit record's
 // denial reason) to prove its map complete.
-var Refusals = []Refusal{RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
+var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
 	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup}
 
 // Refused marks err, the status error a caller answers with, as a refusal of a

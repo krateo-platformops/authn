@@ -15,6 +15,21 @@ const (
 	msgDelegateError = "delegation failed"
 )
 
+// DelegationDenial is why /delegate refused an authenticated actor, as the
+// record's schema denial reason. A refusal the schema has no reason for yet
+// (the subject token's, until audit v0.6.1) is NoDelegationDenial.
+type DelegationDenial string
+
+const (
+	// NoDelegationDenial: the outcome isn't denied, or the schema declares no
+	// reason for the refusal.
+	NoDelegationDenial DelegationDenial = ""
+	// DelegationNotAllowed: the actor's mapping doesn't allow delegation.
+	DelegationNotAllowed DelegationDenial = audit.DenialReasonDelegationNotAllowed
+	// DelegationTooDeep: the actor chain would exceed the mapping's depth bound.
+	DelegationTooDeep DelegationDenial = audit.DenialReasonDelegationTooDeep
+)
+
 // Delegation records one /delegate decision about an authenticated actor
 // (AUDIT-4): a delegated token issued, refused (the actor's mapping doesn't
 // allow delegation, the subject token is refused, or the chain would be too
@@ -27,8 +42,9 @@ const (
 //
 // subject is the person the token acts for, and chain the actor chain the token
 // carries (or would have), outermost first; both are nil when the refusal came
-// before the subject token was read.
-func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccount, principal jwtutil.Principal, subject *jwtutil.UserInfo, chain *jwtutil.Actor, outcome string) {
+// before the subject token was read. why is the denial reason, written on a
+// denied record only.
+func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccount, principal jwtutil.Principal, subject *jwtutil.UserInfo, chain *jwtutil.Actor, outcome string, why DelegationDenial) {
 	if r == nil || r.req == nil || actor == nil {
 		return
 	}
@@ -57,6 +73,7 @@ func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccoun
 		ev.Message = msgDelegated
 	case audit.OutcomeDenied:
 		ev.Message = msgDelegateDeny
+		ev.DenialReason = string(why)
 	default:
 		ev.Message = msgDelegateError
 	}

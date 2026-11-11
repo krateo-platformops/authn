@@ -355,6 +355,15 @@ func TestDelegationRefusals(t *testing.T) {
 			assert.Equal(t, "create", auditlogtest.String(r, "krateo.audit.verb"))
 			assert.Equal(t, "token", auditlogtest.String(r, "krateo.audit.object_ref.subresource"))
 			assert.Equal(t, "kagent", auditlogtest.String(r, "krateo.audit.object_ref.name"))
+			// The schema's reason for each refusal; the subject token's has none.
+			wantReason := map[string]string{
+				"DelegationNotAllowed": "delegation_not_allowed",
+				"DelegationTooDeep":    "delegation_too_deep",
+				"SubjectTokenInvalid":  "",
+			}
+			want, known := wantReason[tc.cause]
+			require.True(t, known, "every recorded refusal has an expected reason: %s", tc.cause)
+			assert.Equal(t, want, auditlogtest.String(r, "krateo.audit.denial_reason"))
 		})
 	}
 }

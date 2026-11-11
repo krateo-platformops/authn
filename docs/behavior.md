@@ -510,12 +510,15 @@ or a log line.
   the outcome:
   - `success`, with the apiserver's status for the request that stored the Secret (201 or
     200) and the stored uid;
-  - `denied` when authn refused the verified identity: the name guard, a `system:` group,
-    or an OIDCConfig's `allowedGroups`. The target is the Secret it would have written,
-    with the verb it would have sent, and no status code, since authn refused before
-    asking the apiserver. `krateo.audit.denial_reason` says why, from a closed set:
-    `name_reserved`, `name_claimed`, `name_held_legacy`, `name_provisioned`, `name_bound`,
-    `system_group`, `group_not_allowed`. The HTTP answer stays opaque;
+  - `denied` when authn refused the verified identity: no username, the name guard, a
+    `system:` or `krateo:` group, or an OIDCConfig's `allowedGroups`. The target is the
+    Secret it would have written, with the verb it would have sent, and no status code,
+    since authn refused before asking the apiserver. An identity with no username has no
+    Secret name, so its record names the Secret resource in authn's namespace, without a
+    name or a verb. `krateo.audit.denial_reason` says why, from a
+    closed set: `name_missing`, `name_reserved`, `name_claimed`, `name_held_legacy`,
+    `name_provisioned`, `name_bound`, `system_group`, `platform_group`,
+    `group_not_allowed`. The HTTP answer stays opaque;
   - `failure` when the issuance failed after verification.
 
   A caller refused before verification (wrong password, invalid token) gets no record. On
@@ -523,8 +526,10 @@ or a log line.
   authorization code and state.
 - **`/delegate`.** The actor is the mapping's name, of the class its `spec.principal`
   declares. A record carries `on_behalf_of` and the delegation chain once the subject token
-  is read. It's `denied` for `DelegationNotAllowed` and `DelegationTooDeep`, and `failure`
-  when signing fails.
+  is read. It's `denied` for `DelegationNotAllowed` and `DelegationTooDeep`, with
+  `krateo.audit.denial_reason` `delegation_not_allowed` or `delegation_too_deep`, and for a
+  refused subject token, which has no reason in the schema. It's `failure` when signing
+  fails.
 - **Background.** The sweep's deletes and the writes of authn's own certificate (its first
   issue and every renewal) are `controller` rows from a second scope
   (`github.com/krateo-platformops/authn/audit/controller`), with authn's own
@@ -542,8 +547,8 @@ or a log line.
   authorization-bearing annotation (below).
 - **Authorization-bearing annotations are content.** Policy decides from a credential's
   `authn.krateo.io/strategy` and `authn.krateo.io/groups` (tenant onboarding, for one),
-  so a write that changes one changes what the identity may do. `storage.AuthorizationAnnotations`
-  declares them, once. The startup backfill writes only to stamp one of them or an owner,
+  so a write that changes one changes what the identity may do. The audit schema declares
+  them, once (`audit.AuthorizationAnnotations()`, schema v1's `content_annotations`). The startup backfill writes only to stamp one of them or an owner,
   so every backfill write is a record. The renewer's annotation sync is recorded when it
   changes one of them, not for the validity window alone.
 - **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per

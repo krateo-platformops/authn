@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-11 — every refusal names its reason (audit v0.6.0, #127)
+
+Three refusals reached the audit trail without a reason. A verified identity with no
+username was recorded as `failure`, although authn refused it; it is now `denied` with
+`name_missing`, and its record names the Secret resource in authn's namespace without a
+name, never a bare `-clientconfig`. An identity source's `krateo:` group now carries
+`platform_group`, and `/delegate`'s refusals carry `delegation_not_allowed` or
+`delegation_too_deep`; a refused subject token has no reason in the schema and carries
+none. The list of authorization-bearing annotations moved from authn's `storage` into the
+schema (`audit.AuthorizationAnnotations()`), the one list the content hash also counts,
+and a test pins it to the two annotations authn writes.
+
 ## 2026-11-11 — `krateo:` names and groups are the platform's
 
 snowplow#1334 impersonates the identity `krateo:public` for token-less public widgets, and

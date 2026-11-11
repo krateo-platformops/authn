@@ -127,7 +127,7 @@ func (r *route) Handler() http.HandlerFunc {
 		actorPrincipal := serviceaccount.Principal(actor)
 		maxDepth, err := delegationDepth(actor)
 		if err != nil {
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied, auditlog.DelegationNotAllowed)
 			fail(err, "delegation refused")
 			return
 		}
@@ -136,7 +136,9 @@ func (r *route) Handler() http.HandlerFunc {
 		if err != nil {
 			// The actor is verified: refusing its subject token is a decision
 			// about it, and the most security-relevant one.
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied)
+			// audit v0.6.0 declares no reason for it, so the record carries none
+			// until v0.6.1 adds the subject token's reasons (snowplow, 2026-11-11).
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied, auditlog.NoDelegationDenial)
 			fail(err, "delegation subject token refused")
 			return
 		}
@@ -144,7 +146,7 @@ func (r *route) Handler() http.HandlerFunc {
 		act := &jwtutil.Actor{Sub: actor.Name, Act: subject.Act, Principal: actorPrincipal}
 		depth := chainDepth(act)
 		if depth > maxDepth {
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied, auditlog.DelegationTooDeep)
 			fail(status.Refused(CauseDelegationTooDeep,
 				fmt.Errorf("the actor chain would be %d deep; %s allows %d", depth, actor.Name, maxDepth)),
 				"delegation refused")
@@ -162,11 +164,11 @@ func (r *route) Handler() http.HandlerFunc {
 			Principal:  subject.Principal,
 		})
 		if err != nil {
-			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure)
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure, auditlog.NoDelegationDenial)
 			fail(status.Failed(CauseIssuanceFailed, fmt.Errorf("signing the delegated token: %w", err)), "delegation failed")
 			return
 		}
-		r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeSuccess)
+		r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeSuccess, auditlog.NoDelegationDenial)
 
 		log.Info().Str("actor", actor.Name).Str("subject", subject.Username).Int("depth", depth).
 			Msg("delegated token issued")
