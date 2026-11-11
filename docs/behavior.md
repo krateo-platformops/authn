@@ -500,7 +500,7 @@ or a log line.
 |---|---|---|---|
 | basic, LDAP, OAuth, OIDC, ServiceAccount login | `authn.login.<strategy>` | the `<username>-clientconfig` Secret | `create` or `update`, as sent |
 | OIDC step-up | `authn.stepup.oidc` | the `<username>-clientconfig-stepup` Secret | `create` or `update` |
-| `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping | `get` |
+| `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping, subresource `token` | `create` (the issuance; no status code) |
 | step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 | identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
