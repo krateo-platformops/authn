@@ -18,10 +18,10 @@ Curated history, newest first. Durable decisions live in
 
 authn named itself `auth`: the OpenTelemetry resource's `service.name`, its audit records'
 service, the `service` field of its log lines and `/health`'s `name`. Everything else that
-names the component (the container, the chart, the collector's tail-sampling lists, alert
-exclusions, dashboards) says `authn`, so OTLP data filtered on `authn` missed authn's own
-signals. observability found it on 057 after 0.42.0, the first release that exports at all,
-so nothing could have been reading `auth` from OTLP. It is now `authn` everywhere.
+names the component (the container, the chart, the Deployment and its Service) says `authn`,
+so a query for `authn` in OTLP data found nothing. observability found it on 057 after
+0.42.0, the first release that exports at all, so nothing could have been reading `auth`
+from OTLP. It is now `authn` everywhere.
 
 ## 2026-11-11 — a refusal after verification is always a record (audit v0.8.0, #132)
 
