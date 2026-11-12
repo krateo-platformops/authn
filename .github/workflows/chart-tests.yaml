@@ -1,0 +1,39 @@
+# The Go tests that render the authn chart with helm (go/authn/chart_*_test.go).
+# They skip where helm is missing; here AUTHN_REQUIRE_HELM makes a missing helm
+# a failure, so a chart test can't pass by not running. lint.yaml is the
+# canonical, cross-repo chart lint and stays untouched.
+name: chart-tests
+
+on:
+  pull_request:
+    paths:
+      - helm/authn/**
+      - go/authn/chart_*_test.go
+      - .github/workflows/chart-tests.yaml
+  push:
+    branches: [main]
+    paths:
+      - helm/authn/**
+      - go/authn/chart_*_test.go
+      - .github/workflows/chart-tests.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  chart-tests:
+    name: chart tests (helm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/authn/go.mod
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - name: Chart tests
+        working-directory: go/authn
+        env:
+          AUTHN_REQUIRE_HELM: "1"
+        run: go test -count=1 -run '^TestChart' -v .

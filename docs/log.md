@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — /usernames/check says whose claim, and the internal port is fenced
+
+identity-lifecycle marked an access request onboarded when `/usernames/check` answered
+`name_claimed`, but anyone who took the name first would have counted. The request may now
+name the identity it expects (`claimant`: strategy, issuer, subject), and a claimed name's
+answer says `claimedBy: you` or `another`. No answer names who holds a name (Diego chose this
+over returning the claimant). The chart also adds a NetworkPolicy, on by default, admitting
+the internal port only from identity-lifecycle's controller and leaving the public port open;
+TLS on that listener is a follow-up (#145). A new `chart-tests` workflow runs the chart's Go tests
+with helm required.
+
 ## 2026-11-12 — a Secret from before claims is adopted only by the name its certificate names
 
 A session Secret's name is the username through a rewrite that drops dots and case, so

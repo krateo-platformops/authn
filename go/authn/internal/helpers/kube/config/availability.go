@@ -50,40 +50,72 @@ var Unavailables = []Unavailable{UnavailableInvalid, UnavailableReserved, Unavai
 // An error is a lookup that failed: the caller can't know, so it must treat
 // the name as unavailable and retry.
 func CheckUsername(ctx context.Context, lookup NameLookup, username string) (Unavailable, error) {
+	why, _, err := CheckUsernameFor(ctx, lookup, username, "")
+	return why, err
+}
+
+// ClaimedBy is whose claim holds a name, as CheckUsernameFor compares it with
+// the claim a caller expects. It names no identity: only whether it is the
+// expected one.
+type ClaimedBy string
+
+const (
+	// ClaimedByYou: the name's claim is the expected one.
+	ClaimedByYou ClaimedBy = "you"
+	// ClaimedByAnother: the name's claim is someone else's.
+	ClaimedByAnother ClaimedBy = "another"
+)
+
+// CheckUsernameFor is CheckUsername for a caller that expects a given
+// identity to hold the name: expected is that identity's claim
+// (storage.EncodeClaim), "" for none. When the name is claimed
+// (UnavailableClaimed) and expected is set, it also reports whether the
+// claim is expected's, so an access-request controller can tell that the
+// person it created has signed in, without learning who else holds a name it
+// doesn't. With expected "", or for any other answer, ClaimedBy is "".
+func CheckUsernameFor(ctx context.Context, lookup NameLookup, username, expected string) (Unavailable, ClaimedBy, error) {
 	if lookup == nil {
-		return "", errors.New("no name lookup")
+		return "", "", errors.New("no name lookup")
 	}
 	// Reserved first, so a reserved name is reported as such and not as an
 	// invalid shape (usernames.Check refuses both).
 	if username != "" && reservedName(username) {
-		return UnavailableReserved, nil
+		return UnavailableReserved, "", nil
 	}
 	if err := usernames.Check(username); err != nil {
-		return UnavailableInvalid, nil
+		return UnavailableInvalid, "", nil
 	}
 	sec, err := lookup.SessionSecret(ctx, username)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if sec != nil {
-		if sec.GetAnnotations()[storage.ClaimAnnotation] != "" {
-			return UnavailableClaimed, nil
+		have := sec.GetAnnotations()[storage.ClaimAnnotation]
+		if have == "" {
+			return UnavailableHeldLegacy, "", nil
 		}
-		return UnavailableHeldLegacy, nil
+		switch {
+		case expected == "":
+			return UnavailableClaimed, "", nil
+		case have == expected:
+			return UnavailableClaimed, ClaimedByYou, nil
+		default:
+			return UnavailableClaimed, ClaimedByAnother, nil
+		}
 	}
 	provisioned, err := lookup.Provisioned(ctx, username)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if provisioned {
-		return UnavailableProvisioned, nil
+		return UnavailableProvisioned, "", nil
 	}
 	bound, err := lookup.BoundAsUser(ctx, username)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if bound {
-		return UnavailableBound, nil
+		return UnavailableBound, "", nil
 	}
-	return "", nil
+	return "", "", nil
 }

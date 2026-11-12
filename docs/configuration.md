@@ -42,6 +42,8 @@ changes. Every flag of the binary has an env fallback (`go/authn/main.go:49-80`)
 | `image.tag` | `""` (= chart `appVersion`) | Pin only to diverge from the released pairing. |
 | `service.type` / `service.port` | `ClusterIP` / `8082` | The public port serves logins, `/strategies` and probes; the port value feeds `AUTHN_PORT`. |
 | `internal.port` | `8090` | The internal listener (`POST /usernames/check`), served by the ClusterIP Service `<release>-internal`; feeds `AUTHN_INTERNAL_PORT`. Never route it publicly. |
+| `internal.networkPolicy.enabled` | `true` | A NetworkPolicy on authn's pods: the public port (`http`) stays open, the internal port admits only `internal.networkPolicy.from`. Enforced only where the cluster's network enforces NetworkPolicies. |
+| `internal.networkPolicy.from` | identity-lifecycle's controller pods (`app.kubernetes.io/name` and `app.kubernetes.io/instance`: `identity-lifecycle`) in authn's namespace | NetworkPolicy ingress peers (`namespaceSelector` and/or `podSelector`) allowed to reach the internal port. Never empty: the chart refuses an empty list, which would admit everyone. |
 | `replicaCount` | `1` | With `autoscaling.enabled: false` (default). |
 | `livenessProbe` / `readinessProbe` | `GET /health` | `/health` flips 200 once the listener goroutine starts, 503 on shutdown — process lifecycle only ([gotchas](./gotchas.md)). |
 | `ingress` | `enabled: false` | Standard chart ingress if you need it. |

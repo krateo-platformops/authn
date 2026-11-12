@@ -684,6 +684,22 @@ as unavailable and retries. Only a mapping with `spec.usernameCheck.allowed` may
 refused caller learns nothing, since the guard isn't read for it. Every decision about a
 verified caller is an audit record (`authn.username.check`, [Audit records](#audit-records)).
 
+**Whose claim (`claimant`).** An access-request controller that created an identity (a Keycloak
+user) needs to know when *that* person has signed in, which is a `name_claimed` answer whose
+claim is theirs, not anyone's. So the request may name the identity it expects: `claimant`
+`{strategy, issuer, subject}`, which authn encodes as a claim (`storage.EncodeClaim`) and
+compares with the Secret's (`config.CheckUsernameFor`). The answer adds `claimedBy`: `you`
+when they're equal, `another` otherwise. It never returns who holds a name, so the endpoint
+discloses no more than before (Diego, 2026-11-12). Without a claimant, or for any answer
+other than `name_claimed`, there's no `claimedBy`. A claimant without all three fields, or
+with a strategy that records no claim (`self`, `unknown`), is a bad request.
+
+**Who may reach it (NetworkPolicy).** The internal listener is plain HTTP inside the cluster.
+The chart's `internal.networkPolicy` (on by default) admits ingress to the internal port only
+from the configured peers (identity-lifecycle's controller by default, never its public intake)
+and leaves the public port open, as without a policy. TLS on the internal listener is a
+follow-up (#145).
+
 ### Platform names and groups
 The `krateo:` prefix is the platform's. A username starting with it is reserved
 (plumbing's `usernames.Reserved`, the list authn's guard, an access-request form
