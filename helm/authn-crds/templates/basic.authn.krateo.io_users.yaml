@@ -79,5 +79,11 @@ spec:
         required:
         - spec
         type: object
+        x-kubernetes-validations:
+        - message: 'the name must be a lowercase DNS-1123 label of at most 63 characters
+            (a-z, 0-9, ''-'', starting with a letter or digit): authn names the user''s
+            Secret after it, and would rewrite any other name'
+          optionalOldSelf: true
+          rule: oldSelf.hasValue() || self.metadata.name.matches('^[a-z0-9][-a-z0-9]{0,62}$')
     served: true
     storage: true

@@ -14,6 +14,13 @@
 # findOrInstallKind fetches the kind binary when it is absent. Provisioning one here would add a
 # second, unused cluster (plumbing's test.yaml does the same).
 #
+# The crd-names job (authn#140) proves the User and ServiceAccount CRDs' name rule on a real
+# apiserver: a name authn's Secret naming would rewrite is refused at create, while an object
+# created before the rule stays updatable and deletable. Its suite (apis/, cluster
+# "authn-crdnames-test") pins kindest/node:v1.36.4, the shared clusters' version, which
+# e2e-framework's fallback kind (v0.26.0) can't be relied on to run, so the job installs a pinned
+# kind first and e2e-framework uses the one on PATH.
+#
 # A separate workflow rather than a job in release-pullrequest.yaml, because only it can filter by
 # path. It is not a required check, so a PR it doesn't run on isn't held. If it fails with
 # `failed to create cluster`, it is the runner's capacity, not the code.
@@ -25,6 +32,8 @@ on:
       - main
     paths:
       - go/authn/internal/helpers/kube/**
+      - go/authn/apis/**
+      - go/authn/crds/**
       - go/authn/go.mod
       - go/authn/go.sum
       - .github/workflows/storage-integration.yaml
@@ -33,6 +42,8 @@ on:
       - main
     paths:
       - go/authn/internal/helpers/kube/**
+      - go/authn/apis/**
+      - go/authn/crds/**
       - go/authn/go.mod
       - go/authn/go.sum
       - .github/workflows/storage-integration.yaml
@@ -61,3 +72,29 @@ jobs:
 
       - name: Storage integration suite (kind)
         run: go test -tags integration -count=1 -v ./internal/helpers/kube/config/storage/
+
+  crd-names:
+    name: crd names (real apiserver, kind)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: go/authn
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go/authn/go.mod
+          cache-dependency-path: go/authn/go.sum
+
+      - name: Install kind
+        run: |
+          go install sigs.k8s.io/kind@v0.33.0
+          test "$(command -v kind)" = "$(go env GOPATH)/bin/kind"
+          kind version
+
+      - name: CRD name rule suite (kind)
+        run: go test -tags integration -count=1 -v ./apis/

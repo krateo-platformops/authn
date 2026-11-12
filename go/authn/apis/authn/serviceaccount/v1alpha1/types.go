@@ -57,6 +57,15 @@ type Delegation struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced,categories={krateo,authn}
+// metadata.name is the issued username, and authn names the user's Secret
+// after it through plumbing's kubeutil.MakeDNS1123Compatible. The rule admits
+// at create exactly the names that transform leaves unchanged, so a new name
+// can't get a Secret, or a tenant, under another name (#140). It is checked
+// only at create (oldSelf.hasValue() is true on every update): the name is
+// immutable, and an existing object with such a name must stay updatable,
+// which CRD validation ratcheting doesn't give a root-level rule.
+// apis/names_test.go proves the pattern is the transform's.
+// +kubebuilder:validation:XValidation:rule="oldSelf.hasValue() || self.metadata.name.matches('^[a-z0-9][-a-z0-9]{0,62}$')",message="the name must be a lowercase DNS-1123 label of at most 63 characters (a-z, 0-9, '-', starting with a letter or digit): authn names the user's Secret after it, and would rewrite any other name",optionalOldSelf=true
 
 // ServiceAccount is an AuthN service-identity mapping for Kubernetes intra-service auth.
 // metadata.name is the issued username (exactly like basic.User).
