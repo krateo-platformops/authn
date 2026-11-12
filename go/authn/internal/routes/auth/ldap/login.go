@@ -126,7 +126,6 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		if err != nil {
 			status.LogFailure(log, err).Str("name", name).
 				Str("dialURL", cfg.dialURL).
-				Str("user", lo.Username).
 				Msg("login with ldap server failed")
 			encode.Failure(wri, status.FromError(err))
 			return

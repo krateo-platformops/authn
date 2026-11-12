@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	corev1 "k8s.io/api/core/v1"
@@ -43,16 +44,18 @@ func (l *clusterLookup) Secret(ctx context.Context, name string) (*corev1.Secret
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
-	return sec, err
+	// The Secret is named after its user: the error's text names neither.
+	return sec, kerr.Wrap("reading the credential Secret", err)
 }
 
 func (l *clusterLookup) Provisioned(_ context.Context, username string) (bool, error) {
+	// The resolvers' errors name neither the object nor the user (kerr).
 	_, err := resolvers.UserGet(l.rc, username)
 	switch {
 	case err == nil:
 		return true, nil
 	case !apierrors.IsNotFound(err):
-		return false, fmt.Errorf("reading User %q: %w", username, err)
+		return false, err
 	}
 	_, err = resolvers.ServiceAccountMappingGet(l.rc, username)
 	switch {
@@ -61,7 +64,7 @@ func (l *clusterLookup) Provisioned(_ context.Context, username string) (bool, e
 	case apierrors.IsNotFound(err):
 		return false, nil
 	default:
-		return false, fmt.Errorf("reading ServiceAccount mapping %q: %w", username, err)
+		return false, err
 	}
 }
 

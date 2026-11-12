@@ -164,7 +164,7 @@ func TestNameGuardRefusalIsOpaque(t *testing.T) {
 		g := nameGuard{lookup: &lookup, log: zerolog.Nop()}
 		_, err := g.admit(context.Background(), storage.StrategyOAuth, userAs("alice", "github", "2"))
 		st := status.FromError(err)
-		assert.Equal(t, `the username "alice" isn't available to this identity`, st.Details.Causes[0].Message)
+		assert.Equal(t, `the username isn't available to this identity`, st.Details.Causes[0].Message)
 	}
 }
 

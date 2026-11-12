@@ -4,7 +4,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/krateo-platformops/audit"
 	"github.com/rs/zerolog"
+	"go.opentelemetry.io/otel/baggage"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -37,6 +39,12 @@ func Serve(all []Route, log zerolog.Logger) http.Handler {
 				lc = lc.
 					Str("trace_id", sc.TraceID().String()).
 					Str("span_id", sc.SpanID().String())
+			}
+			// The session.id auditlog.Middleware put on the request joins a
+			// log line to the request's audit record, which is where the
+			// identity is: no log line carries one.
+			if m := baggage.FromContext(req.Context()).Member(audit.BaggageSessionKey); m.Key() != "" {
+				lc = lc.Str(audit.BaggageSessionKey, m.Value())
 			}
 			l := lc.Logger()
 			req = req.WithContext(l.WithContext(req.Context()))

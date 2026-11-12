@@ -265,7 +265,7 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 			if isStepUpCheck(err) {
 				msg = "step-up refused"
 			}
-			status.LogFailure(log, err).Str("username", up.GetUserName()).Msg(msg)
+			status.LogFailure(log, err).Str("name", req.URL.Query().Get("name")).Msg(msg)
 			encode.Failure(wri, status.FromError(err))
 			return
 		}
@@ -287,6 +287,6 @@ func (r *stepUpRoute) Handler() http.HandlerFunc {
 			log.Err(err).Msg("step-up access token creation failure")
 			return
 		}
-		log.Info().Str("username", up.GetUserName()).Time("notAfter", notAfter).Msg("step-up granted")
+		log.Info().Str("name", req.URL.Query().Get("name")).Time("notAfter", notAfter).Msg("step-up granted")
 	}
 }

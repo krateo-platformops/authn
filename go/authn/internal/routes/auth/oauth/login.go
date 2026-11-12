@@ -175,7 +175,8 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 				encode.Failure(wri, status.FromError(err))
 				return
 			}
-			log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
+			// The answer's values are the user's identity: only its keys are logged.
+			log.Debug().Str("name", name).Strs("fields", restaction.Keys(additionalFieldstoReplace)).Msg("values to replace")
 			userinfo, err = updateConfig(userinfo, additionalFieldstoReplace)
 			if err != nil {
 				err = status.Failed(CauseRESTActionFailed, fmt.Errorf("the RESTAction's answer is unusable: %w", err))
@@ -183,7 +184,6 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 				encode.Failure(wri, status.FromError(err))
 				return
 			}
-			log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", userinfo.name, userinfo.preferredUsername, userinfo.email, userinfo.groups, userinfo.avatarURL)
 		}
 
 		if restactionRef == nil {
@@ -196,9 +196,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		user := r.validate(name, userinfo)
-		log.Info().
-			Str("user", user.GetUserName()).
-			Strs("groups", user.GetGroups()).
+		log.Info().Str("name", name).Int("groups", len(user.GetGroups())).
 			Msg("user info successfully fetched")
 
 		issued, err := r.gen.Generate(storage.StrategyOAuth, user)

@@ -37,7 +37,7 @@ func TestLogFailure(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			LogFailure(zerolog.New(&buf), tc.err).Str("username", "alice").Msg("login refused")
+			LogFailure(zerolog.New(&buf), tc.err).Str("name", "keycloak").Msg("login refused")
 
 			var got map[string]any
 			require.NoError(t, json.Unmarshal(buf.Bytes(), &got), buf.String())
@@ -49,7 +49,7 @@ func TestLogFailure(t *testing.T) {
 			} else {
 				assert.Equal(t, tc.cause, got["cause"])
 			}
-			assert.Equal(t, "alice", got["username"], "the caller can add its own fields")
+			assert.Equal(t, "keycloak", got["name"], "the caller can add its own fields")
 			assert.Equal(t, "login refused", got["message"])
 			assert.NotContains(t, got, "reason", "no private reason was given")
 		})
@@ -72,4 +72,19 @@ func TestRefusedPrivately(t *testing.T) {
 	assert.Equal(t, "warn", got["level"])
 	assert.Equal(t, "invalid credentials", got["error"])
 	assert.Equal(t, `users "bob" not found`, got["reason"])
+}
+
+// Answered text reaches the caller, never the log.
+func TestAnsweredIsNeverLogged(t *testing.T) {
+	err := CauseError{Code: http.StatusForbidden, Cause: "TokenNotAuthenticated",
+		Err: errors.New("token not authenticated"), Answered: `serviceaccounts "zz-sentinel-user" not found`}
+
+	st := FromError(err)
+	assert.Equal(t, `token not authenticated: serviceaccounts "zz-sentinel-user" not found`, st.Message)
+	assert.Equal(t, st.Message, st.Details.Causes[0].Message)
+
+	var buf bytes.Buffer
+	LogFailure(zerolog.New(&buf), err).Msg("login refused")
+	assert.Contains(t, buf.String(), "token not authenticated")
+	assert.NotContains(t, buf.String(), "zz-sentinel-user")
 }

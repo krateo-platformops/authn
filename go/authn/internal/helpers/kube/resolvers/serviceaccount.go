@@ -7,6 +7,7 @@ import (
 
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
@@ -45,7 +46,7 @@ func ServiceAccountForSA(rc *rest.Config, saNamespace, saName string) (*sav1alph
 		Do(context.Background()).
 		Into(res)
 	if err != nil {
-		return nil, err
+		return nil, kerr.Wrap("listing the ServiceAccount mappings", err)
 	}
 
 	var match *sav1alpha1.ServiceAccount
@@ -53,13 +54,13 @@ func ServiceAccountForSA(rc *rest.Config, saNamespace, saName string) (*sav1alph
 		ref := res.Items[i].Spec.ServiceAccountRef
 		if ref != nil && ref.Namespace == saNamespace && ref.Name == saName {
 			if match != nil {
-				return nil, fmt.Errorf("%w: multiple ServiceAccount resources reference %s/%s", ErrAmbiguousMapping, saNamespace, saName)
+				return nil, fmt.Errorf("%w: several ServiceAccount mappings reference the caller's ServiceAccount", ErrAmbiguousMapping)
 			}
 			match = &res.Items[i]
 		}
 	}
 	if match == nil {
-		return nil, fmt.Errorf("%w for serviceaccount %s/%s (not in the exchange allowlist)", ErrNoMapping, saNamespace, saName)
+		return nil, fmt.Errorf("%w for the caller's ServiceAccount (not in the exchange allowlist)", ErrNoMapping)
 	}
 	return match, nil
 }
@@ -84,5 +85,6 @@ func ServiceAccountMappingGet(rc *rest.Config, name string) (*sav1alpha1.Service
 	err = cli.Get().Resource("serviceaccounts").
 		Namespace(ns).Name(name).
 		Do(context.Background()).Into(res)
-	return res, err
+	// A mapping is named after its identity: the error's text names neither.
+	return res, kerr.Wrap("reading the ServiceAccount mapping", err)
 }

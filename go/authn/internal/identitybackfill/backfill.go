@@ -35,6 +35,7 @@ import (
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/plumbing/endpoints"
@@ -116,7 +117,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			missing, err := missingAnnotations(ctx, sec, o.SelfUsername, lookup)
 			if err != nil {
 				res.Skipped++
-				o.Log.Warn().Err(err).Str("secret", sec.Name).Str("namespace", ns).
+				o.Log.Warn().Err(err).Str("secret.uid", string(sec.UID)).Str("namespace", ns).
 					Msg("identity annotations not backfilled")
 				continue
 			}
@@ -131,12 +132,12 @@ func Run(ctx context.Context, o Options) (Result, error) {
 
 			owner, orphan, err := missingOwner(ctx, sec, merged, o.MappingNamespace, lookup)
 			if err != nil {
-				o.Log.Warn().Err(err).Str("secret", sec.Name).Str("namespace", ns).
+				o.Log.Warn().Err(err).Str("secret.uid", string(sec.UID)).Str("namespace", ns).
 					Msg("clientconfig owner not backfilled")
 			}
 			if orphan {
 				res.Orphaned++
-				o.Log.Warn().Str("secret", sec.Name).Str("namespace", ns).
+				o.Log.Warn().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
 					Str("notAfter", merged[storage.NotAfterAnnotation]).
 					Msg("service clientconfig has no ServiceAccount mapping; left in place")
 			}
@@ -160,20 +161,22 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			o.Audit.IdentityWritten(ctx, auditlog.ActionIdentityBackfilled, ref, code, err)
 			if err != nil {
 				res.Skipped++
-				o.Log.Warn().Err(err).Str("secret", sec.Name).Str("namespace", ns).
+				// The apiserver's error names the Secret, which names its user.
+				o.Log.Warn().Err(kerr.Wrap("updating the credential Secret", err)).
+					Str("secret.uid", string(sec.UID)).Str("namespace", ns).
 					Msg("identity annotations not backfilled")
 				continue
 			}
 			if len(missing) > 0 {
 				res.Stamped++
-				o.Log.Info().Str("secret", sec.Name).Str("namespace", ns).
+				o.Log.Info().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
 					Str("strategy", merged[storage.StrategyAnnotation]).
 					Msg("identity annotations backfilled")
 			}
 			if owner != nil {
 				res.Owned++
-				o.Log.Info().Str("secret", sec.Name).Str("namespace", ns).
-					Str("mapping", owner.Name).Msg("clientconfig owner backfilled")
+				o.Log.Info().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
+					Str("mapping.uid", string(owner.UID)).Msg("clientconfig owner backfilled")
 			}
 		}
 	}
@@ -237,7 +240,7 @@ func missingOwner(ctx context.Context, sec *corev1.Secret, annotations map[strin
 	}
 	mapping, err := lookup.ServiceAccountMapping(ctx, crt.Subject.CommonName)
 	if err != nil {
-		return nil, false, fmt.Errorf("looking up a ServiceAccount mapping for %q: %w", crt.Subject.CommonName, err)
+		return nil, false, fmt.Errorf("looking up the certificate's ServiceAccount mapping: %w", err)
 	}
 	if mapping == nil {
 		return nil, true, nil
@@ -256,11 +259,11 @@ func strategyOf(ctx context.Context, username, self string, lookup Lookup) (stor
 	mapping, err := lookup.ServiceAccountMapping(ctx, username)
 	sa := mapping != nil
 	if err != nil {
-		return "", fmt.Errorf("looking up a ServiceAccount mapping for %q: %w", username, err)
+		return "", fmt.Errorf("looking up the certificate's ServiceAccount mapping: %w", err)
 	}
 	basic, err := lookup.BasicUserExists(ctx, username)
 	if err != nil {
-		return "", fmt.Errorf("looking up a basic User for %q: %w", username, err)
+		return "", fmt.Errorf("looking up the certificate's basic User: %w", err)
 	}
 
 	switch {

@@ -6,6 +6,7 @@ import (
 
 	basicv1alpha1 "github.com/krateo-platformops/authn/apis/authn/basic/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
@@ -62,5 +63,6 @@ func UserGet(rc *rest.Config, name string) (*basicv1alpha1.User, error) {
 	err = cli.Get().Resource("users").
 		Namespace(ns).Name(name).
 		Do(context.Background()).Into(res)
-	return res, err
+	// A User is named after its user: the error's text names neither.
+	return res, kerr.Wrap("reading the basic User", err)
 }

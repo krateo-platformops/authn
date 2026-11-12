@@ -25,6 +25,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/rs/zerolog"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -110,7 +111,8 @@ func Sweep(ctx context.Context, o Options) (Result, error) {
 				continue
 			}
 			res.Scanned++
-			log := o.Log.With().Str("namespace", ns).Str("secret", sec.Name).Logger()
+			// A step-up Secret is named after its user: the line names it by uid.
+			log := o.Log.With().Str("namespace", ns).Str("secret.uid", string(sec.UID)).Logger()
 
 			crt, err := kube.ParseCertificateBase64(string(sec.Data[storage.ClientCertLabel]))
 			if err != nil {
@@ -135,7 +137,7 @@ func Sweep(ctx context.Context, o Options) (Result, error) {
 				// Rewritten by a new step-up, or already gone.
 				res.Skipped++
 			default:
-				return res, err
+				return res, kerr.Wrap("deleting an expired step-up Secret", err)
 			}
 		}
 	}

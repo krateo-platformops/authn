@@ -32,7 +32,7 @@ func TestBadRequest(t *testing.T) {
 // cause: wrapping it as IssuanceFailed would turn a refusal into a 500. Any
 // other issuance error is IssuanceFailed.
 func TestIssueFailureKeepsTheIssuersRefusal(t *testing.T) {
-	refused := Refused(CauseUsernameUnavailable, errors.New(`the username "x" isn't available to this identity`))
+	refused := Refused(CauseUsernameUnavailable, errors.New(`the username isn't available to this identity`))
 	st := FromError(IssueFailure("clientconfig", refused))
 	assert.Equal(t, http.StatusForbidden, st.Code)
 	assert.Equal(t, CauseUsernameUnavailable, st.Details.Causes[0].Type)

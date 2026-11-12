@@ -185,6 +185,9 @@ type kubeconfigGenerator struct {
 	log           zerolog.Logger
 	lookup        NameLookup
 	lookupErr     error
+	// csrClient sends the CSRs. Nil builds one from restconfig; a test sets
+	// a fake signer.
+	csrClient kubernetes.Interface
 }
 
 // admit checks user's groups for `system:` ones, then asks the name guard
@@ -361,9 +364,9 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 	}
 
 	if dropped := userInfo.DroppedGroups(); len(dropped) > 0 {
+		// The groups are the person's: the line counts them.
 		g.log.Warn().
-			Str("username", userInfo.GetUserName()).
-			Strs("groups", dropped).
+			Int("dropped", len(dropped)).
 			Msg("dropped reserved groups asserted by the identity source")
 	}
 
@@ -403,9 +406,9 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 	if errors.Is(err, storage.ErrClaimedByAnother) {
 		// Another identity claimed the name between the guard and this write.
 		// The certificate just minted is never stored or returned.
-		g.log.Warn().Str("username", userInfo.GetUserName()).Str("claim", claim).Err(err).Msg("username refused")
-		err = refused(RefusalClaimed, status.RefusedPrivately(status.CauseUsernameUnavailable,
-			fmt.Errorf("the username %q isn't available to this identity", userInfo.GetUserName()), err))
+		g.log.Warn().Str("strategy", string(strategy)).Str("refusal", string(RefusalClaimed)).
+			Err(err).Msg("username refused")
+		err = refused(RefusalClaimed, status.RefusedPrivately(status.CauseUsernameUnavailable, errUsernameUnavailable, err))
 	}
 	return certInfo, clusterInfo, notAfter, written, err
 }
@@ -435,9 +438,13 @@ func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info,
 		g.kubernetesURL = "https://" + net.JoinHostPort(host, port)
 	}
 
-	cli, err := kubernetes.NewForConfig(g.restconfig)
-	if err != nil {
-		return certInfo, clusterInfo, notAfter, err
+	cli := g.csrClient
+	if cli == nil {
+		cs, err := kubernetes.NewForConfig(g.restconfig)
+		if err != nil {
+			return certInfo, clusterInfo, notAfter, err
+		}
+		cli = cs
 	}
 
 	cert, key, leaf, err := generateClientCertAndKey(cli, g.log, generateClientCertAndKeyOpts{

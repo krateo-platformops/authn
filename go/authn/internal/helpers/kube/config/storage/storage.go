@@ -9,6 +9,7 @@ import (
 
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/plumbing/endpoints"
@@ -180,13 +181,15 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 		ProxyUrlLabel:   nfo.ProxyURL,
 	}
 
+	// The Secret is named after its user, and so are the apiserver's errors
+	// about it: each one returned is wrapped to name neither (kerr).
 	code, err := secrets.Create(context.TODO(), st.rc, &sec)
 	if err == nil {
 		return written(w, "create", code, &sec), nil
 	}
 
 	if !errors.IsAlreadyExists(err) {
-		return written(w, "create", code, nil), err
+		return written(w, "create", code, nil), kerr.Wrap("creating the credential Secret", err)
 	}
 
 	// The Secret exists. If it is claimed by another identity, this write would
@@ -195,18 +198,18 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 	if nfo.Claim != "" {
 		have, err := secrets.Get(context.TODO(), st.rc, &core.SecretKeySelector{Name: sec.Name, Namespace: ns})
 		if err != nil {
-			return w, fmt.Errorf("reading the existing Secret %s: %w", sec.Name, err)
+			return w, kerr.Wrap("reading the existing credential Secret", err)
 		}
 		if c := have.GetAnnotations()[ClaimAnnotation]; c != "" && c != nfo.Claim {
 			// Nothing written; the update this login would have sent is its verb.
 			w.Verb = "update"
-			return w, fmt.Errorf("%w: %s is claimed by %s", ErrClaimedByAnother, sec.Name, c)
+			return w, fmt.Errorf("%w: the claim on the credential Secret belongs to another identity", ErrClaimedByAnother)
 		}
 	}
 
 	code, err = secrets.Update(context.TODO(), st.rc, &sec)
 	if err != nil {
-		return written(w, "update", code, nil), err
+		return written(w, "update", code, nil), kerr.Wrap("updating the credential Secret", err)
 	}
 	return written(w, "update", code, &sec), nil
 }

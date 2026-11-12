@@ -10,13 +10,13 @@ import (
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
@@ -144,14 +144,11 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 
 		user, err := r.validate(username, password)
 		if err != nil {
-			status.LogFailure(log, err).Str("username", username).Msg("basic auth failed")
+			status.LogFailure(log, err).Msg("basic auth failed")
 			encode.Failure(wri, status.FromError(err))
 			return
 		}
-		log.Debug().
-			Str("username", user.GetUserName()).
-			Str("groups", strings.Join(user.GetGroups(), ",")).
-			Msg("basic auth succeded")
+		log.Debug().Int("groups", len(user.GetGroups())).Msg("basic auth succeded")
 
 		issued, err := r.gen.Generate(storage.StrategyBasic, user)
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyBasic), user, jwtutil.PrincipalHuman, issued, err)
@@ -186,11 +183,13 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 // holding its password. An unknown user and a wrong password are the same
 // refusal, InvalidCredentials (403), with the same body, so a caller can't
 // probe which users exist; the real reason only reaches the log. A User or
-// Secret authn can't read is authn's failure (500).
+// Secret authn can't read is authn's failure (500). No error names the user,
+// the User or its Secret: the errors are logged, and no log line carries an
+// identity (the apiserver's are wrapped by kerr).
 func (r *loginRoute) validate(username, password string) (userinfo.Info, error) {
 	if len(rest.IsValidPathSegmentName(username)) > 0 || username == "" {
 		// No User can have this name; looking it up would fail client-side.
-		return nil, invalidCredentials(fmt.Errorf("%q is not a valid User name", username))
+		return nil, invalidCredentials(errors.New("the username is not a valid User name"))
 	}
 
 	usr, err := resolvers.UserGet(r.rc, username)
@@ -202,27 +201,29 @@ func (r *loginRoute) validate(username, password string) (userinfo.Info, error) 
 		_ = comparePassword(password, want)
 		return nil, invalidCredentials(errors.Join(err, decoyErr))
 	case err != nil:
-		return nil, status.Failed(CauseUserLookupFailed, fmt.Errorf("reading User %q: %w", username, err))
+		return nil, status.Failed(CauseUserLookupFailed, err)
 	}
 
 	ref := usr.Spec.PasswordRef
 	if ref == nil {
-		return nil, status.Failed(CausePasswordSecretMissing, fmt.Errorf("user '%s' has no passwordRef", username))
+		return nil, status.Failed(CausePasswordSecretMissing, errors.New("the User has no passwordRef"))
 	}
 	sec, err := secrets.Get(context.Background(), r.rc, ref)
+	// The password Secret is often named after its user.
+	err = kerr.Wrap("reading the User's password Secret", err)
 	switch {
 	case apierrors.IsNotFound(err):
 		return nil, status.Failed(CausePasswordSecretMissing, err)
 	case err != nil:
-		return nil, status.Failed(CausePasswordLookupFailed, fmt.Errorf("reading the password of user '%s': %w", username, err))
+		return nil, status.Failed(CausePasswordLookupFailed, err)
 	}
 	pwd, ok := sec.Data[ref.Key]
 	if !ok {
-		return nil, status.Failed(CausePasswordSecretMissing, fmt.Errorf("password for user '%s' not found", username))
+		return nil, status.Failed(CausePasswordSecretMissing, errors.New("the User's password Secret has no value under its passwordRef key"))
 	}
 
 	if !comparePassword(password, pwd) {
-		return nil, invalidCredentials(fmt.Errorf("wrong password for user %q", username))
+		return nil, invalidCredentials(errors.New("wrong password"))
 	}
 
 	exts := userinfo.Extensions{}

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"k8s.io/client-go/kubernetes"
 
 	certv1 "k8s.io/api/certificates/v1"
@@ -54,6 +55,10 @@ func NewCertificateRequest(key *rsa.PrivateKey, username string, groups []string
 	return enc, nil
 }
 
+// A CSR is named after its user (NewCertificateSigningRequest), and so are the
+// apiserver's errors about it: each one returned is wrapped to name neither
+// (kerr).
+
 // DeleteCertificateSigningRequest deletes a used CSR. CSR names are never
 // reused (see NewCertificateSigningRequest), so there is nothing to wait for.
 func DeleteCertificateSigningRequest(client kubernetes.Interface, name string) error {
@@ -62,14 +67,15 @@ func DeleteCertificateSigningRequest(client kubernetes.Interface, name string) e
 	if errors.IsNotFound(err) {
 		return nil
 	}
-	return err
+	return kerr.Wrap("deleting the CertificateSigningRequest", err)
 }
 
 // CreateCertificateSigningRequest creates csr and returns the stored object,
 // whose Name the apiserver generated (see NewCertificateSigningRequest).
 func CreateCertificateSigningRequest(client kubernetes.Interface, csr *certv1.CertificateSigningRequest) (*certv1.CertificateSigningRequest, error) {
-	return client.CertificatesV1().CertificateSigningRequests().
+	created, err := client.CertificatesV1().CertificateSigningRequests().
 		Create(context.Background(), csr, metav1.CreateOptions{})
+	return created, kerr.Wrap("creating the CertificateSigningRequest", err)
 }
 
 func ApproveCertificateSigningRequest(client kubernetes.Interface, csr *certv1.CertificateSigningRequest) error {
@@ -100,7 +106,7 @@ func ApproveCertificateSigningRequest(client kubernetes.Interface, csr *certv1.C
 	_, err := client.CertificatesV1().CertificateSigningRequests().
 		UpdateApproval(ctx, csr.Name, csr, metav1.UpdateOptions{})
 	if err != nil {
-		return fmt.Errorf("approving CertificateSigningRequest: %w", err)
+		return kerr.Wrap("approving the CertificateSigningRequest", err)
 	}
 	return nil
 }
@@ -116,7 +122,8 @@ func WaitForCertificate(client kubernetes.Interface, name string, uid types.UID)
 
 	crt, err := csrutil.WaitForCertificate(ctx, client, name, uid)
 	if err != nil {
-		return nil, fmt.Errorf("waiting for CSR certificate to be generated: %w", err)
+		// client-go's errors name the CSR, and aren't all the apiserver's.
+		return nil, kerr.Redact("waiting for the CSR's certificate", err, name)
 	}
 	return crt, nil
 }

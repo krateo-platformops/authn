@@ -172,8 +172,8 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 			return nil, tok, nil, false
 		}
 		log.Debug().Str("name", name).Msg("updating oidc idtoken")
-		log.Debug().Str("name", name).Msgf("old idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", tok.name, tok.preferredUsername, tok.email, tok.groups, tok.avatarURL)
-		log.Debug().Str("name", name).Msgf("values to replace: %s", additionalFieldstoReplace)
+		// The answer's values are the user's identity: only its keys are logged.
+		log.Debug().Str("name", name).Strs("fields", restaction.Keys(additionalFieldstoReplace)).Msg("values to replace")
 		tok, err = updateConfig(tok, additionalFieldstoReplace)
 		if err != nil {
 			err = status.Failed(CauseRESTActionFailed, fmt.Errorf("the RESTAction's answer is unusable: %w", err))
@@ -181,7 +181,6 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 			encode.Failure(wri, status.FromError(err))
 			return nil, tok, nil, false
 		}
-		log.Debug().Str("name", name).Msgf("new idToken - name: %s - preferredUsername: %s - email: %s - groups: %s - avatarURL: %s", tok.name, tok.preferredUsername, tok.email, tok.groups, tok.avatarURL)
 	}
 
 	log.Debug().Str("name", name).Msg("validating idtoken")
@@ -228,7 +227,7 @@ func checkAllowedGroups(allowed []string, nfo userinfo.Info) error {
 		}
 	}
 	return kubeconfig.Refused(kubeconfig.RefusalGroupNotAllowed,
-		status.Refused(CauseGroupNotAllowed, fmt.Errorf("user %q is in none of the groups this OIDCConfig admits", nfo.GetUserName())))
+		status.Refused(CauseGroupNotAllowed, errors.New("the user is in none of the groups this OIDCConfig admits")))
 }
 
 // admitGroups is cfg's allowedGroups as a Generate admission check. It checks

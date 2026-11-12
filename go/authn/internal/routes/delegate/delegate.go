@@ -149,7 +149,7 @@ func (r *route) Handler() http.HandlerFunc {
 		if depth > maxDepth {
 			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied, auditlog.DelegationTooDeep)
 			fail(status.Refused(CauseDelegationTooDeep,
-				fmt.Errorf("the actor chain would be %d deep; %s allows %d", depth, actor.Name, maxDepth)),
+				fmt.Errorf("the actor chain would be %d deep; the actor's ServiceAccount mapping allows %d", depth, maxDepth)),
 				"delegation refused")
 			return
 		}
@@ -171,7 +171,9 @@ func (r *route) Handler() http.HandlerFunc {
 		}
 		r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeSuccess, auditlog.NoDelegationDenial)
 
-		log.Info().Str("actor", actor.Name).Str("subject", subject.Username).Int("depth", depth).
+		// Neither the actor nor the subject is logged: the delegation's audit
+		// record names both (session.id joins them).
+		log.Info().Str("principal", string(actorPrincipal)).Int("depth", depth).
 			Msg("delegated token issued")
 		wri.Header().Set("Content-Type", "application/json")
 		wri.Header().Set("Cache-Control", "no-store")
@@ -218,7 +220,7 @@ func delegationDepth(actor *sav1alpha1.ServiceAccount) (int, error) {
 	d := actor.Spec.Delegation
 	if d == nil || !d.Allowed {
 		return 0, status.Refused(CauseDelegationNotAllowed,
-			fmt.Errorf("the ServiceAccount mapping %s doesn't set spec.delegation.allowed", actor.Name))
+			errors.New("the actor's ServiceAccount mapping doesn't set spec.delegation.allowed"))
 	}
 	maxDepth := DefaultMaxDepth
 	if d.MaxDepth != nil {

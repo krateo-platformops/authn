@@ -15,7 +15,8 @@ import (
 //     500): error. authn, or one of its dependencies, failed.
 //
 // The event carries the error, the code and, when known, the cause and the
-// private reason (CauseError.Private) the caller was not told.
+// private reason (CauseError.Private) the caller was not told. It never
+// carries CauseError.Answered, which is the caller's only.
 func LogFailure(log zerolog.Logger, err error) *zerolog.Event {
 	st := FromError(err)
 
