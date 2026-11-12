@@ -23,8 +23,11 @@ User `johndoe` would have adopted, and overwritten, `john.doe`'s pre-claim Secre
 6 of 14 unclaimed Secrets hold a certificate issued to a dotted name. Adoption, and the
 write's re-check, now require the certificate to have been issued to the signing-in
 username (plumbing v1.61.0's `endpoints.OwnsSecret`); otherwise `403 UsernameUnavailable`,
-`name_held_legacy`. A pre-claim Secret with no readable certificate (a synthetic fixture
-such as demo's `acme`) is adopted by no one. Found by snowplow reading authn#147.
+`name_held_legacy`. On 057 each of those 6 certificates names an existing basic User
+exactly, so their real owners still adopt them; only an aliasing name is refused. A
+pre-claim Secret with no readable certificate (a synthetic fixture such as demo's `acme`)
+is adopted by no one: an administrator writes the needed identity's claim onto it, never
+deletes it. Found by snowplow reading authn#147.
 
 ## 2026-11-12 — a RESTAction that identifies no one is its own cause
 

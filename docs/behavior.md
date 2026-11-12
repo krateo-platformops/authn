@@ -510,16 +510,20 @@ the claim; the response says only that the name isn't available. A failed read i
    their own components, which the cluster may grant rights to before any binding names
    them.
 2. If the name's session Secret has a **claim**, the name goes only to that identity.
-3. A Secret written **before claims existed** is adopted by the first login of the
-   strategy that wrote it (`authn.krateo.io/strategy`), and only when its client
-   certificate was issued to that username (plumbing's `endpoints.OwnsSecret`). The
-   Secret's name is derived from the username by a rewrite that drops dots and case, so
-   `john.doe`'s pre-claim Secret is `johndoe-clientconfig`, which `johndoe` would
-   otherwise adopt and overwrite. A pre-claim Secret with no certificate authn can read,
-   such as a synthetic fixture, is no one's: an administrator deletes it if a real
-   identity needs the name. The write re-checks it (`storage.ErrHeldByAnother`). A basic User or a mapping also
-   adopts one whose strategy is `unknown` or missing, since an administrator chose its
-   name. An identity source never adopts one of unknown origin.
+3. A Secret written **before claims existed** goes only to the username its client
+   certificate was issued to (plumbing's `endpoints.OwnsSecret`: the certificate's CN is
+   the username). The Secret's name is derived from the username by a rewrite
+   (`kubeutil.MakeDNS1123Compatible`: lowercase, every character outside `[-a-z0-9]`
+   dropped, cut at 63), so `john.doe`'s pre-claim Secret is `johndoe-clientconfig`, which
+   `johndoe` would otherwise adopt and overwrite. Given that, it is adopted by the first
+   login of the strategy that wrote it (`authn.krateo.io/strategy`), or by a basic User
+   or a mapping when its strategy is `unknown` or missing, since an administrator chose
+   its name; an identity source never adopts one of unknown origin. A pre-claim Secret
+   with no certificate authn can read, such as a synthetic fixture, is no one's. If a
+   real identity needs that name, an administrator writes that identity's claim onto
+   the Secret ([Moving a name to a new identity](#moving-a-name-to-a-new-identity)),
+   never deletes it, since a policy may generate a tenant from it. The write re-checks
+   all of this (`storage.ErrHeldByAnother`).
 4. With no Secret, a basic User or a mapping gets its name: an administrator chose it.
    An identity source doesn't if an administrator **provisioned** the name as a basic
    User or a ServiceAccount mapping, or if any RoleBinding or ClusterRoleBinding in the

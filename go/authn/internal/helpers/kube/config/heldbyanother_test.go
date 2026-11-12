@@ -27,6 +27,7 @@ func TestAWriteOverAnUnclaimedSecretItDoesntOwnIsRefused(t *testing.T) {
 	st := status.FromError(err)
 	assert.Equal(t, http.StatusForbidden, st.Code)
 	assert.Equal(t, status.CauseUsernameUnavailable, st.Details.Causes[0].Type)
+	assert.NotContains(t, st.Message, "certificate", "the answer stays opaque; the reason is private")
 	assert.Empty(t, issued.Kubeconfig, "nothing is returned for the caller to use")
 	assert.Contains(t, logs.String(), "username refused")
 	logtest.NoIdentity(t, logs)

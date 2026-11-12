@@ -41,10 +41,12 @@ type NameLookup interface {
 // reach an identity it wasn't meant for:
 //   - A username issued before is issued again only to the identity recorded
 //     in its claim (storage.ClaimAnnotation).
-//   - A Secret written before claims existed is adopted by the first login of
-//     the strategy that wrote it. An administrator-provisioned identity (basic,
-//     serviceaccount) also adopts a Secret whose strategy is unknown: the
-//     administrator chose its name.
+//   - A Secret written before claims existed goes only to the username its
+//     client certificate was issued to (endpoints.OwnsSecret), since its name
+//     is a lossy rewrite of the username. Given that, it is adopted by the first
+//     login of the strategy that wrote it; an administrator-provisioned
+//     identity (basic, serviceaccount) also adopts one whose strategy is
+//     unknown: the administrator chose its name.
 //   - An identity source (ldap, oauth, oidc) chooses its own usernames, so
 //     it may not take a reserved name, a name an administrator provisioned,
 //     or a name any RBAC binding already grants rights to, unless the name is

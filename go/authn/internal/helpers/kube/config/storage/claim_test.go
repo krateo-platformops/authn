@@ -94,3 +94,36 @@ func TestPutRefusesAnUnclaimedSecretItDoesntOwn(t *testing.T) {
 		})
 	}
 }
+
+// Put's re-check with the names it aliases: john.doe updates its own
+// pre-claim Secret (johndoe-clientconfig, certificate issued to john.doe);
+// johndoe, whose name derives the same Secret, is refused. A step-up Secret
+// is held to the same rule. A claimed Secret is decided by its claim alone,
+// certificate or not.
+func TestPutWithTheNamesItAliases(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	johnCert := identityCert(t, "john.doe", nil)
+	put := func(name string, stepUp bool, existing map[string]string, cert string) (*putRecorder, error) {
+		rec := &putRecorder{exists: true, existing: existing, existingCert: cert}
+		_, err := Default(&rest.Config{Host: rec.serve(t).URL}).Put(name, &AuthInfo{Strategy: StrategyBasic, StepUp: stepUp,
+			Claim: EncodeClaim(StrategyBasic, "krateo-system", name), CertData: identityCert(t, name, nil)})
+		return rec, err
+	}
+	legacy := map[string]string{StrategyAnnotation: "basic"}
+
+	rec, err := put("john.doe", false, legacy, johnCert)
+	require.NoError(t, err, "the owner updates its Secret")
+	assert.Len(t, rec.written, 2)
+
+	rec, err = put("johndoe", false, legacy, johnCert)
+	require.ErrorIs(t, err, ErrHeldByAnother, "the aliasing name is refused")
+	assert.Len(t, rec.written, 1, "no update")
+
+	rec, err = put("johndoe", true, legacy, johnCert)
+	require.ErrorIs(t, err, ErrHeldByAnother, "the step-up Secret too")
+	assert.Len(t, rec.written, 1)
+
+	rec, err = put("johndoe", false, map[string]string{ClaimAnnotation: EncodeClaim(StrategyBasic, "krateo-system", "johndoe")}, "")
+	require.NoError(t, err, "its own claim decides, with no certificate to read")
+	assert.Len(t, rec.written, 2)
+}

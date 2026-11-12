@@ -393,3 +393,38 @@ func TestAnAdminClaimMovesALegacyNameToANewIdentity(t *testing.T) {
 		})
 	}
 }
+
+// The case the fix exists for, with the names it aliases: john.doe's
+// pre-claim Secret is johndoe-clientconfig. Its owner, john.doe, adopts it;
+// johndoe, whose name derives the same Secret, is refused as
+// name_held_legacy, and so is anyone when the Secret has no certificate.
+func TestAPreClaimSecretGoesOnlyToTheNameItsCertificateNames(t *testing.T) {
+	sec := func(cert string) *corev1.Secret {
+		if cert == "" {
+			return secretWith(map[string]string{storage.StrategyAnnotation: "basic"})
+		}
+		return issuedTo(t, cert, map[string]string{storage.StrategyAnnotation: "basic"})
+	}
+	for _, tc := range []struct {
+		name, user, cert string
+		adopted          bool
+	}{
+		{"its dotted owner adopts it", "john.doe", "john.doe", true},
+		{"the name that aliases it is refused", "johndoe", "john.doe", false},
+		{"no certificate: no one adopts it", "john.doe", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := nameGuard{lookup: &fakeLookup{secret: sec(tc.cert)}, log: zerolog.Nop()}
+			_, err := g.admit(context.Background(), storage.StrategyBasic, userAs(tc.user, "krateo-system", tc.user))
+			if tc.adopted {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, RefusalHeldLegacy, RefusalOf(err), "the audit record's denial reason")
+			st := status.FromError(err)
+			assert.Equal(t, http.StatusForbidden, st.Code)
+			assert.NotContains(t, st.Message, "certificate", "the answer stays opaque; the reason is private")
+		})
+	}
+}
