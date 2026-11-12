@@ -25,7 +25,10 @@ a `ServiceAccount` mapping that opts in (`spec.usernameCheck.allowed`). It's ser
 internal listener (`internal.port`, Service `<release>-internal`). The public HTTPRoutes forward
 every path to the public port, so a route there would have let anyone ask whether a name is held.
 The check is stricter than a sign-in: any existing Secret makes a name unavailable. It fails
-closed with a `503`.
+closed with a `503`. Each decision is an audit record, `authn.username.check` (audit v0.9.0,
+snowplow's rulings): a `get` of the checked name's clientconfig Secret, `success` with
+`krateo.audit.check_result` whatever the answer, `denied` `username_check_not_allowed` for a
+mapping that didn't opt in, and `failure` for a failed lookup.
 
 ## 2026-11-12 — authn's log lines carry no identity
 

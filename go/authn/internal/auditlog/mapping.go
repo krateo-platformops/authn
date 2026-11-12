@@ -28,7 +28,8 @@ const (
 
 // Unmapped records a caller the TokenReview verified that authn refused, or
 // failed, at the mapping lookup (authn#132): on /serviceaccount/login
-// (LoginAction(StrategyServiceAccount)) and on /delegate (ActionDelegate).
+// (LoginAction(StrategyServiceAccount)), on /delegate (ActionDelegate) and on
+// /usernames/check (ActionUsernameCheck).
 //
 // user is the TokenReview's username, the identity that was verified. No
 // mapping can be named (none, or more than one, names it, or the lookup
@@ -74,6 +75,10 @@ func unmappedMessage(action string, denied bool) string {
 		return msgDelegateDeny
 	case action == ActionDelegate:
 		return msgDelegateError
+	case action == ActionUsernameCheck && denied:
+		return msgCheckRefused
+	case action == ActionUsernameCheck:
+		return msgCheckFailed
 	case denied:
 		return msgRefused
 	default:

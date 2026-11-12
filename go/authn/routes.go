@@ -156,6 +156,6 @@ func buildInternalRoutes(o routeOptions) []routes.Route {
 	return []routes.Route{
 		// Whether a username could be given to a new identity, for an
 		// access-request controller that opted in (spec.usernameCheck).
-		usernames.Route(o.RestConfig, usernames.Options{Audience: o.ServiceAccountAudience}),
+		usernames.Route(o.RestConfig, usernames.Options{Audience: o.ServiceAccountAudience, Audit: o.Audit}),
 	}
 }

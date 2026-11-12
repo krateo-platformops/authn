@@ -15,13 +15,16 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/krateo-platformops/audit"
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/rest"
 )
 
@@ -61,6 +64,9 @@ type Options struct {
 	Audience string
 	// Lookup answers the name guard's questions; nil uses the cluster's.
 	Lookup kubeconfig.NameLookup
+	// Audit records every decision about a caller the TokenReview verified
+	// (AUDIT-4, authn.username.check). Nil records nothing.
+	Audit *auditlog.Recorder
 }
 
 // Route returns POST /usernames/check.
@@ -94,12 +100,24 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
-		caller, _, err := serviceaccount.Authenticate(req.Context(), r.rc, r.opts.Audience, token)
+		caller, verified, err := serviceaccount.Authenticate(req.Context(), r.rc, r.opts.Audience, token)
 		if err != nil {
+			// A caller the TokenReview verified is recorded however it was
+			// refused or failed at its mapping (authn#132).
+			serviceaccount.RecordUnmapped(r.opts.Audit, req, auditlog.ActionUsernameCheck, verified)
 			fail(err, "username check caller not authenticated")
 			return
 		}
+		principal := serviceaccount.Principal(caller)
+		record := func(username, outcome, result string, why auditlog.CheckDenial, code int) {
+			r.opts.Audit.UsernameCheck(req, caller, principal, username, outcome, result, why, code)
+		}
 		if !allowed(caller) {
+			// The record names the name asked about, when the body says it, so
+			// a refused check joins that name's other records; the check
+			// itself never runs.
+			username, _ := readUsername(req)
+			record(username, audit.OutcomeDenied, "", auditlog.CheckNotAllowed, 0)
 			fail(status.Refused(CauseUsernameCheckNotAllowed,
 				fmt.Errorf("the ServiceAccount mapping %s doesn't set spec.usernameCheck.allowed", caller.Name)),
 				"username check refused")
@@ -108,6 +126,7 @@ func (r *route) Handler() http.HandlerFunc {
 
 		username, err := readUsername(req)
 		if err != nil {
+			record("", audit.OutcomeDenied, "", auditlog.NoCheckDenial, 0)
 			fail(err, "username check request refused")
 			return
 		}
@@ -115,6 +134,7 @@ func (r *route) Handler() http.HandlerFunc {
 		lookup := r.opts.Lookup
 		if lookup == nil {
 			if lookup, err = kubeconfig.NewNameLookup(r.rc); err != nil {
+				record(username, audit.OutcomeFailure, "", auditlog.NoCheckDenial, 0)
 				fail(checkFailed(err), "username check failed")
 				return
 			}
@@ -123,9 +143,11 @@ func (r *route) Handler() http.HandlerFunc {
 		if err != nil {
 			// Fail closed: the caller can't know, so it treats the name as
 			// unavailable and retries.
+			record(username, audit.OutcomeFailure, "", auditlog.NoCheckDenial, answeredCode(err))
 			fail(checkFailed(fmt.Errorf("checking username %q: %w", username, err)), "username check failed")
 			return
 		}
+		record(username, audit.OutcomeSuccess, checkResult(why), auditlog.NoCheckDenial, 0)
 
 		log.Info().Str("caller", caller.Name).Bool("available", why == "").Str("reason", string(why)).
 			Msg("username checked")
@@ -139,6 +161,35 @@ func (r *route) Handler() http.HandlerFunc {
 // caller treats the name as unavailable and retries.
 func checkFailed(err error) status.CauseError {
 	return status.CauseError{Code: http.StatusServiceUnavailable, Cause: CauseUsernameCheckFailed, Err: err}
+}
+
+// checkResults is each check answer's krateo.audit.check_result, the closed
+// set audit declares for authn.username.check: "" (available) and every
+// kubeconfig.Unavailables value. TestEveryAnswerHasACheckResult pins it.
+var checkResults = map[kubeconfig.Unavailable]string{
+	"":                                audit.CheckResultAvailable,
+	kubeconfig.UnavailableInvalid:     audit.CheckResultInvalid,
+	kubeconfig.UnavailableReserved:    audit.CheckResultReserved,
+	kubeconfig.UnavailableClaimed:     audit.CheckResultNameClaimed,
+	kubeconfig.UnavailableHeldLegacy:  audit.CheckResultNameHeldLegacy,
+	kubeconfig.UnavailableProvisioned: audit.CheckResultNameProvisioned,
+	kubeconfig.UnavailableBound:       audit.CheckResultNameBound,
+}
+
+// checkResult is why's check_result, "" for an answer audit doesn't declare
+// (which TestEveryAnswerHasACheckResult keeps from existing): a record then
+// carries none rather than one Check would refuse.
+func checkResult(why kubeconfig.Unavailable) string { return checkResults[why] }
+
+// answeredCode is the apiserver's status code when it answered the failed
+// lookup, 0 when nothing answered (a timeout, a refused connection): only an
+// authority's answer is a record's status code.
+func answeredCode(err error) int {
+	var answered apierrors.APIStatus
+	if errors.As(err, &answered) {
+		return int(answered.Status().Code)
+	}
+	return 0
 }
 
 // allowed reports whether the caller's mapping opted in to the check.
