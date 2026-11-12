@@ -19,17 +19,14 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
 	"github.com/krateo-platformops/authn/internal/leader"
-	"github.com/krateo-platformops/authn/internal/middlewares/cors"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
-	"github.com/krateo-platformops/authn/internal/routes/health"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/krateo-platformops/authn/internal/stepupsweep"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/authn/internal/uuid"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -240,11 +237,6 @@ func main() {
 		ServiceName:            serviceName,
 		Audit:                  auditRec,
 	}
-	// Inside otelhttp, so the Server span is active when a record marks it.
-	handler, internalHandler, err := listenerHandlers(ro, log)
-	if err != nil {
-		log.Fatal().Err(err).Msg("building routes")
-	}
 
 	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
 	// startup so the cause is visible before the first user hits it.
@@ -257,47 +249,7 @@ func main() {
 		}
 	}
 
-	// OpenTelemetry HTTP server instrumentation (gated, default OFF). When
-	// metrics are opted in, emit http.server.* instruments; when tracing is
-	// opted in, wrap with otelhttp so each inbound request becomes a server
-	// span (named by URL path) and traceparent is extracted. /health is
-	// filtered out of tracing to avoid probe noise. When both are off, the
-	// handler chain is left untouched (byte-identical off-path).
-	instrument := func(h http.Handler) http.Handler {
-		if telemetry.MetricsEnabled() {
-			h = telemetry.MetricsMiddleware(h)
-		}
-		if telemetry.TracingEnabled() {
-			h = otelhttp.NewHandler(h, serviceName,
-				otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-					return r.URL.Path
-				}),
-				otelhttp.WithFilter(func(r *http.Request) bool {
-					return r.URL.Path != health.Path
-				}),
-			)
-		}
-		return h
-	}
-	handler = instrument(handler)
-	internalHandler = instrument(internalHandler)
-
-	if *corsOn {
-		c := cors.New(cors.Options{
-			AllowedOrigins: []string{"*"},
-			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-			// traceparent/tracestate/baggage are REQUIRED so the cross-origin
-			// browser->authn hop can carry W3C trace context to authn.
-			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Auth-Code", "X-Code-Verifier", "traceparent", "tracestate", "baggage"},
-			ExposedHeaders:   []string{"Link"},
-			AllowCredentials: true,
-			MaxAge:           300, // Maximum value not ignored by any of major browsers
-		})
-
-		handler = c.Handler(handler)
-	}
-
-	server, internalServer, err := newServers(handler, internalHandler, *servicePort, *internalPort)
+	server, internalServer, err := newListeners(ro, log, *corsOn, *servicePort, *internalPort)
 	if err != nil {
 		log.Fatal().Err(err).Msg("building the listeners")
 	}
@@ -449,19 +401,20 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Flush and release OpenTelemetry providers (no-op when telemetry is off).
-	if err := otelShutdown(ctx); err != nil {
-		log.Err(err).Msg("error shutting down OpenTelemetry")
-	}
-
 	// Both listeners stop accepting at once and drain together, within ctx.
 	shutdownErr := shutdownServers(ctx, server, internalServer)
 	if shutdownErr != nil {
 		log.Err(shutdownErr).Msg("server forced to shutdown")
 	}
-	// After the servers, even when one was forced: the requests they drained
-	// may still be writing records.
-	if err := auditShutdown(ctx); err != nil {
+	// After the servers, so the requests they drained have written their spans,
+	// metrics and records; and on a context of their own, since a forced
+	// shutdown means ctx has expired, and a flush on it would export nothing.
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), flushTimeout)
+	defer cancelFlush()
+	if err := otelShutdown(flushCtx); err != nil {
+		log.Err(err).Msg("error shutting down OpenTelemetry")
+	}
+	if err := auditShutdown(flushCtx); err != nil {
 		log.Err(err).Msg("flushing audit records")
 	}
 	if shutdownErr != nil {
