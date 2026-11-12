@@ -32,7 +32,7 @@
 // Secret's name: a legacy name is shared by usernames (john.doe and johndoe
 // are both johndoe-clientconfig). A key already present is never overwritten,
 // even with another value: the tenant policy may already have generated from
-// it. Such a Secret is logged and audited as inconsistent instead. A Secret
+// it. Each such key is logged instead, by key name and the Secret's uid. A Secret
 // whose certificate can't be read (one authn didn't write) is skipped, and
 // legacy-named Secrets are stamped like any other.
 package identitybackfill
@@ -165,7 +165,6 @@ func Run(ctx context.Context, o Options) (Result, error) {
 				}
 				if len(exact.conflicts) > 0 {
 					res.Inconsistent++
-					o.Audit.IdentityInconsistent(ctx, auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name})
 				}
 				for k, v := range exact.annotations {
 					merged[k] = v

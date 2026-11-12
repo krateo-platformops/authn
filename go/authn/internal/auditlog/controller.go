@@ -24,11 +24,6 @@ const (
 	// ActionServiceIdentityAnnotated: authn brought the authorization-bearing
 	// identity annotations of its own credential in line with its certificate.
 	ActionServiceIdentityAnnotated = "authn.servicecert.annotated"
-	// ActionIdentityInconsistent: at startup, with exact naming on (authn#140, authn#144),
-	// the backfill found an identity key (the username annotation, the
-	// principal or username-label label) on a credential Secret with a value
-	// other than its certificate proves, and left it as found.
-	ActionIdentityInconsistent = "authn.identity.inconsistent"
 )
 
 // The controller record bodies.
@@ -39,7 +34,6 @@ const (
 	msgCertFailure = "service credential not stored"
 	msgIdentity    = "credential identity recorded"
 	msgIdentityErr = "credential identity not recorded"
-	msgIdentityOdd = "credential identity left as found"
 )
 
 // Controller writes the records of authn's own background credential writes
@@ -159,31 +153,6 @@ func (c *Controller) IdentityWritten(ctx context.Context, action string, ref Sec
 	}
 	if err != nil {
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgIdentityErr
-	}
-	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
-	c.e.Emit(ctx, ev)
-}
-
-// IdentityInconsistent records that the backfill declined to overwrite an
-// identity key a credential Secret already holds with another value than its
-// certificate proves (authn#144): rewriting a label a tenant policy already
-// generated from would point it at a second tenant. Nothing was written, so
-// the record is denied, naming the update it declined to send, with no status
-// code and no denial reason: the controller writer declares none that fits
-// (audit schema v1). The record names the Secret, never the values.
-func (c *Controller) IdentityInconsistent(ctx context.Context, ref SecretRef) {
-	if c == nil || c.e == nil {
-		return
-	}
-	ev := audit.Event{
-		Action:     ActionIdentityInconsistent,
-		Verb:       "update",
-		HTTPMethod: http.MethodPut,
-		Outcome:    audit.OutcomeDenied,
-		Message:    msgIdentityOdd,
-
-		Namespace: ref.Namespace, Version: "v1", Resource: "secrets", Kind: "Secret",
-		ObjectName: ref.Name,
 	}
 	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
 	c.e.Emit(ctx, ev)

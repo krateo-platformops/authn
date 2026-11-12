@@ -26,6 +26,9 @@ type secretsAPI struct {
 	stored   map[string]corev1.Secret
 	requests []string // "METHOD name"
 	written  []corev1.Secret
+	// afterGet, when set, runs after a read is answered: another writer
+	// acting between Put's read and its update.
+	afterGet func(a *secretsAPI)
 }
 
 func newSecretsAPI(t *testing.T, existing ...corev1.Secret) (*secretsAPI, *rest.Config) {
@@ -60,6 +63,9 @@ func newSecretsAPI(t *testing.T, existing ...corev1.Secret) (*secretsAPI, *rest.
 				return
 			}
 			_ = json.NewEncoder(w).Encode(have)
+			if a.afterGet != nil {
+				a.afterGet(a)
+			}
 		case http.MethodPost:
 			if exists {
 				w.WriteHeader(http.StatusConflict)
@@ -75,7 +81,14 @@ func newSecretsAPI(t *testing.T, existing ...corev1.Secret) (*secretsAPI, *rest.
 				notFound()
 				return
 			}
-			sec.UID, sec.ResourceVersion = have.UID, "2"
+			// As the apiserver does: an update naming a resourceVersion
+			// replaces only that version.
+			if sec.ResourceVersion != "" && sec.ResourceVersion != have.ResourceVersion {
+				w.WriteHeader(http.StatusConflict)
+				_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Conflict","code":409}`)
+				return
+			}
+			sec.UID, sec.ResourceVersion = have.UID, have.ResourceVersion+"+"
 			a.stored[name] = sec
 			_ = json.NewEncoder(w).Encode(sec)
 		default:
@@ -265,4 +278,66 @@ func TestPutUpdatesTheUsersOwnExactSecret(t *testing.T) {
 	_, err := NewStore(rc, exactNaming).Put(userX, nfoFor(t, StrategyOIDC, userX, "other"))
 	require.ErrorIs(t, err, ErrClaimedByAnother)
 	assert.Len(t, api.written, 1)
+}
+
+// A provisioned name that can't be exact (240 characters) keeps its legacy
+// name, which is another user's exact name (its first 63 characters). Its
+// write is refused and that Secret left untouched, claimed or not: the owner
+// of a legacy-named target is checked as an exact one's is (review of #147).
+func TestPutRefusesALegacyNamedTargetHeldByAnother(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	long := strings.Repeat("a", 63) + strings.Repeat("b", 177) // 240 > 233
+	other := strings.Repeat("a", 63)
+	require.False(t, exactNaming.Issuable(long))
+	legacy := ClientConfigSecretName(long)
+	require.Equal(t, other+"-clientconfig", legacy)
+	for _, claim := range []string{"", `["oidc","kc","o"]`} {
+		have := sessionSecret(t, legacy, other, claim)
+		api, rc := newSecretsAPI(t, have)
+		_, err := NewStore(rc, exactNaming).Put(long, nfoFor(t, StrategyBasic, long, `["basic","","p"]`))
+		want := ErrHeldByAnother // no claim: name_held_legacy, as the guard refuses it
+		if claim != "" {
+			want = ErrClaimedByAnother
+		}
+		require.ErrorIs(t, err, want, "claim %q", claim)
+		assert.Equal(t, have, api.stored[legacy])
+		assert.Len(t, api.written, 1, "only the refused create")
+	}
+}
+
+// The update replaces exactly the Secret Put proved the username's: if it is
+// deleted and re-created by another identity between the read and the
+// update, the update is a conflict, and the newcomer's Secret stays.
+func TestPutUpdateIsConditionalOnTheSecretItChecked(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	mine := sessionSecret(t, "john.doe-clientconfig", userX, "c")
+	theirs := sessionSecret(t, "john.doe-clientconfig", "mallory", "m")
+	theirs.ResourceVersion = "9"
+	api, rc := newSecretsAPI(t, mine)
+	api.afterGet = func(a *secretsAPI) { a.stored["john.doe-clientconfig"] = theirs }
+	w, err := NewStore(rc, exactNaming).Put(userX, nfoFor(t, StrategyOIDC, userX, "c"))
+	require.Error(t, err)
+	assert.Equal(t, "update", w.Verb)
+	assert.Equal(t, 409, w.StatusCode)
+	assert.Equal(t, theirs, api.stored["john.doe-clientconfig"], "never overwritten")
+	require.Len(t, api.written, 2)
+	assert.Equal(t, "1", api.written[1].ResourceVersion, "the update names the version it checked")
+
+	// Legacy naming sends no precondition, as authn always has.
+	api, rc = newSecretsAPI(t, sessionSecret(t, "johndoe-clientconfig", userY, "c"))
+	_, err = Default(rc).Put(userY, nfoFor(t, StrategyOIDC, userY, "c"))
+	require.NoError(t, err)
+	assert.Empty(t, api.written[1].ResourceVersion)
+}
+
+// The labels go on the update too, not only on a create.
+func TestPutStampsTheLabelsOnAnUpdate(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	api, rc := newSecretsAPI(t, sessionSecret(t, "john.doe-clientconfig", userX, "c"))
+	w, err := NewStore(rc, exactNaming).Put(userX, nfoFor(t, StrategyOIDC, userX, "c"))
+	require.NoError(t, err)
+	require.Equal(t, "update", w.Verb)
+	stored := api.stored["john.doe-clientconfig"]
+	assert.Equal(t, map[string]string{PrincipalLabel: "human", UsernameLabelLabel: "john-doe--30f69670bba2"}, stored.Labels)
+	assert.Equal(t, userX, stored.Annotations[UsernameAnnotation])
 }

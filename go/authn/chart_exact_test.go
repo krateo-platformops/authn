@@ -43,6 +43,16 @@ func TestChartRendersTheExactUsernamesFlag(t *testing.T) {
 			}
 		})
 	}
+	// Setting the variable through env.* too would render the key twice: the
+	// chart refuses, saying which value to set.
+	for _, v := range []string{"true", "false"} {
+		out, err := exec.Command(helm, "template", "smoke", chart, "--set-string", "env.AUTHN_EXACT_USERNAMES="+v).CombinedOutput()
+		if err == nil {
+			t.Errorf("env.AUTHN_EXACT_USERNAMES=%s rendered:\n%s", v, out)
+		} else if !strings.Contains(string(out), "set exactUsernames.enabled instead") {
+			t.Errorf("env.AUTHN_EXACT_USERNAMES=%s failed without saying why:\n%s", v, out)
+		}
+	}
 	// The schema takes a boolean only: a string would render as one the
 	// service parses differently.
 	out, err := exec.Command(helm, "template", "smoke", chart, "--set", "exactUsernames.enabled=yes").CombinedOutput()

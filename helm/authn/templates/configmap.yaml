@@ -13,6 +13,9 @@ data:
   POD_SERVICE_ACCOUNT: {{ include "authn.serviceAccountName" . }}
   AUTHN_BASIC_DECOY_SECRET: {{ include "authn.fullname" . }}-basic-decoy
   # Exact session-Secret names (authn#140): see values.yaml, exactUsernames.
+  {{- if hasKey (.Values.env | default dict) "AUTHN_EXACT_USERNAMES" }}
+  {{- fail "env.AUTHN_EXACT_USERNAMES is set: set exactUsernames.enabled instead, which renders AUTHN_EXACT_USERNAMES (a ConfigMap can't hold the key twice)" }}
+  {{- end }}
   AUTHN_EXACT_USERNAMES: {{ (.Values.exactUsernames).enabled | default false | quote }}
   {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}

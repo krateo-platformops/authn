@@ -180,7 +180,10 @@ func main() {
 
 	// How session Secrets are named (authn#140). Off, authn behaves as it
 	// always has.
-	naming := storage.Naming{Exact: *exactUsernames}
+	naming, err := sessionNaming(*exactUsernames, *authnUsername)
+	if err != nil {
+		log.Fatal().Err(err).Msg("exact session-Secret names")
+	}
 	if naming.Exact {
 		log.Info().Msg("exact session-Secret names on")
 	}
@@ -248,7 +251,7 @@ func main() {
 		Healthy:                &healthy,
 		Version:                Version,
 		ServiceName:            serviceName,
-		Audit:                  auditRec.WithNaming(naming),
+		Audit:                  auditRec,
 		Naming:                 naming,
 	}
 

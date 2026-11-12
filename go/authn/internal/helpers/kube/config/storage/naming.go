@@ -159,14 +159,15 @@ func ExactIdentity(strategy Strategy, declaredPrincipal, username string) (annot
 }
 
 // ContentKeys is what of a credential Secret's metadata is authorization-
-// bearing content with exact naming on: the audit schema's annotations
-// (audit.AuthorizationAnnotations), the UsernameAnnotation, and the two labels
-// the tenant policy selects and names tenants by. The labels are authn's own
-// constants: audit declares no label list yet.
+// bearing content with exact naming on: the audit schema's declared lists
+// (v0.13.0), audit.AuthorizationAnnotations (strategy, groups and
+// UsernameAnnotation) and audit.AuthorizationLabels (PrincipalLabel and
+// UsernameLabelLabel, which the tenant policy selects and names tenants by).
+// TestContentKeysAreAuditsAndAuthns pins that they are authn's keys.
 func ContentKeys() content.Keys {
 	return content.Keys{
-		Annotations: append(audit.AuthorizationAnnotations(), UsernameAnnotation),
-		Labels:      []string{PrincipalLabel, UsernameLabelLabel},
+		Annotations: audit.AuthorizationAnnotations(),
+		Labels:      audit.AuthorizationLabels(),
 	}
 }
 

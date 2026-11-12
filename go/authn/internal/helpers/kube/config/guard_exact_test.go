@@ -294,3 +294,52 @@ func TestExactNamingGuardLogsNoIdentity(t *testing.T) {
 		})
 	}
 }
+
+// A provisioned name that can't be exact (240 characters) keeps its legacy
+// name, which is another user's exact name. Another user's Secret there
+// refuses it, claimed or not, and the guard changes nothing (review of #147).
+func TestExactNamingRefusesALegacyNamedTargetHeldByAnother(t *testing.T) {
+	long := strings.Repeat("a", 63) + strings.Repeat("b", 177)
+	other := strings.Repeat("a", 63)
+	legacy := storage.ClientConfigSecretName(long)
+	for _, tc := range []struct {
+		ann  map[string]string
+		want Refusal
+	}{
+		{map[string]string{storage.StrategyAnnotation: "basic"}, RefusalHeldLegacy},
+		{map[string]string{storage.ClaimAnnotation: "c"}, RefusalClaimed},
+	} {
+		sec := ownedBy(t, legacy, other, tc.ann)
+		before := sec.DeepCopy()
+		l := &namesLookup{secrets: map[string]*corev1.Secret{legacy: sec}}
+		_, err := (&nameGuard{lookup: l, log: zerolog.Nop(), naming: exact}).admit(context.Background(), storage.StrategyBasic, userAs(long, "", "p"))
+		assert.Equal(t, tc.want, RefusalOf(err), "%v", tc.ann)
+		assert.Equal(t, []string{legacy}, l.asked)
+		assert.Equal(t, before, sec)
+	}
+}
+
+// The adoption lines keep main's exact text, flag on or off: operators and
+// alerts match on them.
+func TestAdoptionLinesKeepTheirText(t *testing.T) {
+	for _, tc := range []struct {
+		strategy storage.Strategy
+		ann      map[string]string
+		msg      string
+	}{
+		{storage.StrategyOIDC, map[string]string{storage.StrategyAnnotation: "oidc"}, `"message":"username claimed by its first login since claims exist"`},
+		{storage.StrategyBasic, nil, `"message":"username claimed by its provisioned identity"`},
+	} {
+		for _, naming := range []storage.Naming{{}, exact} {
+			logs, l := logtest.Capture()
+			sec := ownedBy(t, sharedY, userY, tc.ann)
+			var lookup NameLookup = &fakeLookup{secret: sec}
+			if naming.Exact {
+				lookup = &namesLookup{secrets: map[string]*corev1.Secret{sharedY: sec}}
+			}
+			_, err := (&nameGuard{lookup: lookup, log: l, naming: naming}).admit(context.Background(), tc.strategy, userAs(userY, "kc", "y"))
+			require.NoError(t, err)
+			assert.Contains(t, logs.String(), tc.msg, "exact=%v", naming.Exact)
+		}
+	}
+}

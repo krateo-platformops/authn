@@ -52,13 +52,15 @@ type Recorder struct {
 	naming  storage.Naming
 }
 
-// WithNaming makes the Recorder name a checked username's Secret as naming
-// does (storage.Naming), and returns it. The default is the legacy naming.
+// WithNaming returns a copy of the Recorder that names a checked username's
+// Secret as naming does (storage.Naming). The default is the legacy naming.
 func (r *Recorder) WithNaming(n storage.Naming) *Recorder {
-	if r != nil {
-		r.naming = n
+	if r == nil {
+		return nil
 	}
-	return r
+	c := *r
+	c.naming = n
+	return &c
 }
 
 // PreviewSource reports whether namespace is a preview sandbox, as the

@@ -519,21 +519,39 @@ With it on (`storage.Naming`, `config/storage/naming.go`; the naming helpers are
     certificate nor the annotation (one authn didn't write, such as demo's synthetic
     `acme`): it is nobody's, so it refuses, even a basic User that would adopt it without
     the flag. The store re-checks at write time: it never replaces a Secret that isn't
-    `u`'s (`storage.ErrClaimedByAnother`, `UsernameUnavailable`);
+    `u`'s (`storage.ErrClaimedByAnother`, `UsernameUnavailable`), and its update names the
+    `resourceVersion` it checked, so a Secret deleted and re-created by another identity in
+    between is a conflict, never overwritten. A legacy-named target (a provisioned name
+    that can't be exact) is checked the same way;
   - `/usernames/check` is stricter: a Secret under **either** name makes the name
     unavailable, johndoe's included when `john.doe` is checked.
-- **authn's own Secret.** plumbing's `signup` writes it under `endpoints.SecretName`, which
-  for the default `AUTHN_USERNAME`, `authn`, is the exact name. The renewer reads it with the
-  ownership check, never issues over a Secret under that name that isn't authn's (a `failure`
-  record, retried a minute later), and stamps the keys (`principal: service`).
+
+  **Unblocking a refused name.** authn never deletes anything; an operator does:
+  - *the reverse X/Y* (`johndoe` refused because `johndoe-clientconfig` is john.doe's legacy
+    Secret): once `john.doe` has signed in and holds `john.doe-clientconfig`, the operator
+    deletes john.doe's legacy `johndoe-clientconfig` (after the tenant handover, acmp's
+    design §3.4), and `johndoe` can sign in;
+  - *a synthetic fixture* (demo's `acme` and `globex` Secrets, which authn didn't write and
+    which carry no certificate): if a real identity needs that name, an administrator
+    deletes the synthetic Secret first.
+- **authn's own Secret.** plumbing's `signup` writes it under `endpoints.SecretName`, the
+  legacy derivation, so with the flag on authn **refuses to start** unless `AUTHN_USERNAME`
+  names its Secret exactly and the two names agree (lowercase `[-a-z0-9]`, at most 63
+  characters; the default, `authn`, does), with a fatal line saying so. The renewer reads
+  the Secret with the ownership check and never issues over one that isn't authn's (a
+  `failure` record, retried a minute later). It stamps the three keys
+  (`principal: service`) and, unlike the backfill, **overwrites a present value** that
+  differs: authn's own identity is known, and the renewer is that Secret's writer, as a
+  login is a user's.
 - **Backfill.** At startup, on the leader, `internal/identitybackfill` stamps the three keys
   on every parseable `-clientconfig` Secret in authn's namespaces, legacy-named ones
   included, taking `u` from the certificate's CN, never the Secret's name:
   - only **absent** keys are stamped. A key present with another value is never
     overwritten (rewriting a label a tenant was generated from would point the policy at a
     second namespace): it is logged as `identity key differs from the certificate; left as
-    found` with the key and the Secret's uid, and recorded as `authn.identity.inconsistent`
-    (`denied`, verb `update`, no status code);
+    found`, one line per key, with the key and the Secret's uid, never a value. Its audit
+    record is the one step left: it comes with audit v0.14.0's `kept_existing_value` and
+    `krateo.audit.authorization_key`, and until then there is none;
   - the principal follows the strategy annotation; a `serviceaccount` Secret takes its
     mapping's `spec.principal`, and gets no principal when the mapping is gone, nor does
     one whose strategy is `unknown`;
@@ -650,7 +668,6 @@ or a log line.
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 | identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
 | authn's own identity annotations (background) | `authn.servicecert.annotated` | authn's `-clientconfig` Secret | `update` |
-| identity backfill, a differing key left as found (background; exact names only) | `authn.identity.inconsistent` | the `-clientconfig` Secret | `update` it declined to send (`denied`, no status code, no denial reason: the controller writer declares none that fits) |
 
 - **Login, step-up.** A record is written right after the credential is issued, whatever
   the outcome:
@@ -739,8 +756,9 @@ or a log line.
   changes one of them, not for the validity window alone. With exact names on, the
   `authn.krateo.io/username` annotation and the `authn.krateo.io/principal` and
   `authn.krateo.io/username-label` labels count too (#144), compared through plumbing's
-  `content.DiffersWith` (`storage.ContentKeys`). The labels are authn's own constants until
-  audit declares a label list.
+  `content.DiffersWith` (`storage.ContentKeys`, which is audit v0.13.0's declared lists:
+  `audit.AuthorizationAnnotations()`, which includes `authn.krateo.io/username`, and
+  `audit.AuthorizationLabels()`).
 - **Every record** carries the request's `session.id` (inbound W3C baggage when it has
   audit's `session_id` format, otherwise minted per request; `audit.ValidSessionID`), the
   source IPs, the user agent and whether the target's namespace is a preview sandbox

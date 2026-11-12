@@ -2,6 +2,7 @@ package identitybackfill
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/krateo-platformops/audit"
@@ -113,26 +114,16 @@ func TestRunWithExactNaming(t *testing.T) {
 		assert.NotContains(t, api.updates, name, "%s must not be written", name)
 	}
 
-	// One backfilled record per write, one inconsistency record for carol,
-	// each conformant.
-	backfilled, inconsistent := 0, 0
+	// One backfilled record per write, each conformant. A key left as found
+	// is logged only: its record waits for audit's kept_existing_value.
+	backfilled := 0
 	for _, r := range records.Records() {
 		audittest.AssertConformant(t, audit.WriterController, r)
-		switch auditlogtest.String(r, "krateo.action") {
-		case "authn.identity.backfilled":
-			backfilled++
-			assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
-		case "authn.identity.inconsistent":
-			inconsistent++
-			assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
-			assert.Equal(t, "update", auditlogtest.String(r, "krateo.audit.verb"))
-			assert.Equal(t, "carol-clientconfig", auditlogtest.String(r, "krateo.audit.object_ref.name"))
-		default:
-			t.Errorf("unexpected record %s", auditlogtest.String(r, "krateo.action"))
-		}
+		assert.Equal(t, "authn.identity.backfilled", auditlogtest.String(r, "krateo.action"))
+		assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
+		backfilled++
 	}
 	assert.Equal(t, 8, backfilled)
-	assert.Equal(t, 1, inconsistent)
 }
 
 // Flag off, the backfill stamps what it always has: no username annotation,
@@ -210,4 +201,76 @@ func TestExactBackfillLogsNoIdentity(t *testing.T) {
 			logtest.NoIdentity(t, logs)
 		})
 	}
+}
+
+// Each key held with another value than the certificate proves is logged on
+// its own line, by key name and the Secret's uid, never a value, left as
+// found, and recorded nowhere yet (its record waits for audit v0.14.0's
+// kept_existing_value). One test per key.
+func TestRunLogsEachConflictingKey(t *testing.T) {
+	stamped := map[string]string{storage.StrategyAnnotation: "oidc", storage.GroupsAnnotation: ""}
+	for _, tc := range []struct {
+		key    string
+		ann    map[string]string
+		labels map[string]string
+	}{
+		{storage.UsernameAnnotation, map[string]string{storage.UsernameAnnotation: logtest.Marker + "-other"}, nil},
+		{storage.PrincipalLabel, nil, map[string]string{storage.PrincipalLabel: "agent"}},
+		{storage.UsernameLabelLabel, nil, map[string]string{storage.UsernameLabelLabel: "zz-other"}},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			ann := map[string]string{}
+			for k, v := range stamped {
+				ann[k] = v
+			}
+			for k, v := range tc.ann {
+				ann[k] = v
+			}
+			sec := withLabels(clientConfig(t, logtest.User+"-clientconfig", cert(t, logtest.User, nil), ann), tc.labels)
+			sec.UID = "8d1c2b7a"
+			api := newFakeAPIServer(t, []corev1.Secret{sec})
+			ctl, records := auditlogtest.NewController(t, "system:serviceaccount:"+ns+":authn")
+			logs, l := logtest.Capture()
+			res, err := Run(context.Background(), Options{
+				RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns}, SelfUsername: "authn",
+				Lookup: principalLookup{}, Log: l, Audit: ctl, Naming: exactNaming,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Inconsistent)
+			lines := 0
+			for _, line := range strings.Split(logs.String(), "\n") {
+				if strings.Contains(line, "identity key differs from the certificate") {
+					lines++
+					assert.Contains(t, line, `"key":"`+tc.key+`"`)
+					assert.Contains(t, line, `"secret.uid":"8d1c2b7a"`)
+				}
+			}
+			assert.Equal(t, 1, lines, "one line for the key")
+			logtest.NoIdentity(t, logs)
+
+			name := logtest.User + "-clientconfig"
+			if tc.ann != nil {
+				assert.Equal(t, tc.ann[tc.key], api.updates[name][tc.key], "left as found")
+			} else {
+				assert.Equal(t, tc.labels[tc.key], api.labels[name][tc.key], "left as found")
+			}
+			for _, r := range records.Records() {
+				assert.Equal(t, "authn.identity.backfilled", auditlogtest.String(r, "krateo.action"), "no inconsistency record yet")
+			}
+		})
+	}
+}
+
+// A certificate that names no one (an empty CN) proves no username: the
+// Secret is skipped, never stamped with an empty one (review of #147).
+func TestRunSkipsACertificateWithNoCN(t *testing.T) {
+	oidc := map[string]string{storage.StrategyAnnotation: "oidc", storage.GroupsAnnotation: ""}
+	api := newFakeAPIServer(t, []corev1.Secret{clientConfig(t, "nobody-clientconfig", cert(t, "", nil), oidc)})
+	res, err := Run(context.Background(), Options{
+		RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns}, SelfUsername: "authn",
+		Lookup: principalLookup{}, Log: zerolog.Nop(), Naming: exactNaming,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, Result{Scanned: 1, Skipped: 1}, res)
+	assert.NotContains(t, api.updates, "nobody-clientconfig")
 }

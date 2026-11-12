@@ -30,8 +30,8 @@ refuses or serves `john.doe`. A user's own legacy Secret keeps their claim, whic
 sign-in carries to the exact Secret; the legacy Secret is never written or deleted (Kyverno's
 `synchronize: true` would delete the tenant). An LDAP, OAuth or OIDC name that can't be exact
 is refused (`name_not_issued`, audit v0.10.0). A startup backfill stamps the keys where absent,
-from the certificate's CN, and records a differing value as `authn.identity.inconsistent`
-instead of overwriting it. Off, nothing changes. installer turns it on per cluster once
+from the certificate's CN, and logs a differing value (key and uid only) instead of
+overwriting it; its audit record waits for audit v0.14.0. Off, nothing changes. installer turns it on per cluster once
 snowplow's exact-then-legacy reader is rolled there and the Kyverno tenant handover is done.
 
 ## 2026-11-12 — a Secret from before claims is adopted only by the name its certificate names

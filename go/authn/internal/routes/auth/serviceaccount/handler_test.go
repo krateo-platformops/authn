@@ -32,6 +32,7 @@ type fakeGenerator struct {
 	calls      []string
 	strategies []storage.Strategy
 	owners     []*metav1.OwnerReference
+	principals []string
 	subjects   []userinfo.Subject
 	err        error
 }
@@ -39,6 +40,7 @@ type fakeGenerator struct {
 func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.strategies = append(g.strategies, strategy)
 	g.owners = append(g.owners, kubeconfig.NewIssueOptions(opts...).Owner)
+	g.principals = append(g.principals, kubeconfig.NewIssueOptions(opts...).Principal)
 	g.calls = append(g.calls, user.GetUserName())
 	g.subjects = append(g.subjects, user.GetSubject())
 	if g.err != nil {

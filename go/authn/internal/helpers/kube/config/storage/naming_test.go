@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/plumbing/endpoints"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -145,7 +146,9 @@ func TestAuthorizationDiffers(t *testing.T) {
 		{"nothing", sec(map[string]string{StrategyAnnotation: "oidc"}, nil), false, false},
 		{"strategy", sec(map[string]string{StrategyAnnotation: "ldap"}, nil), true, true},
 		{"the validity window", sec(map[string]string{StrategyAnnotation: "oidc", NotAfterAnnotation: "x"}, nil), false, false},
-		{"the username annotation", sec(map[string]string{StrategyAnnotation: "oidc", UsernameAnnotation: "x"}, nil), false, true},
+		// audit declares it (v0.13.0), so both count it; with legacy naming
+		// authn never writes it.
+		{"the username annotation", sec(map[string]string{StrategyAnnotation: "oidc", UsernameAnnotation: "x"}, nil), true, true},
 		{"the principal label", sec(map[string]string{StrategyAnnotation: "oidc"}, map[string]string{PrincipalLabel: "human"}), false, true},
 		{"the username-label label", sec(map[string]string{StrategyAnnotation: "oidc"}, map[string]string{UsernameLabelLabel: "x"}), false, true},
 		{"an unrelated label", sec(map[string]string{StrategyAnnotation: "oidc"}, map[string]string{"x": "y"}), false, false},
@@ -153,10 +156,18 @@ func TestAuthorizationDiffers(t *testing.T) {
 		assert.Equal(t, tc.legacy, legacyNaming.AuthorizationDiffers(base, tc.after), "legacy: %s", tc.name)
 		assert.Equal(t, tc.exact, exactNaming.AuthorizationDiffers(base, tc.after), "exact: %s", tc.name)
 	}
+}
+
+// The content keys are audit's declared lists (v0.13.0), and those are
+// exactly authn's keys: the annotations policy reads and the two labels the
+// tenant policy selects and names tenants by.
+func TestContentKeysAreAuditsAndAuthns(t *testing.T) {
 	keys := ContentKeys()
-	assert.Contains(t, keys.Annotations, UsernameAnnotation)
-	assert.Contains(t, keys.Annotations, StrategyAnnotation)
+	assert.ElementsMatch(t, audit.AuthorizationAnnotations(), keys.Annotations)
+	assert.ElementsMatch(t, audit.AuthorizationLabels(), keys.Labels)
+	assert.ElementsMatch(t, []string{StrategyAnnotation, GroupsAnnotation, UsernameAnnotation}, keys.Annotations)
 	assert.ElementsMatch(t, []string{PrincipalLabel, UsernameLabelLabel}, keys.Labels)
+	assert.Equal(t, endpoints.UsernameAnnotation, UsernameAnnotation)
 }
 
 // Ownership is endpoints.OwnsSecret with either naming: the username
@@ -170,4 +181,10 @@ func TestNamingOwns(t *testing.T) {
 		assert.False(t, legacyNaming.Owns(sec, userX), "ownership is the same with either naming")
 	}
 	assert.False(t, exactNaming.Owns(&corev1.Secret{}, userY), "no annotation and no certificate: nobody's")
+}
+
+// A comparison that can't be made (no object before) counts as a change, so
+// a record is never skipped on doubt.
+func TestAuthorizationDiffersCountsDoubtAsAChange(t *testing.T) {
+	assert.True(t, exactNaming.AuthorizationDiffers(nil, &corev1.Secret{}))
 }

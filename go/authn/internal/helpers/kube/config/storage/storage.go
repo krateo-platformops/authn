@@ -242,6 +242,12 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 			w.Verb = "update"
 			return w, fmt.Errorf("%w: the claim on the credential Secret belongs to another identity", ErrClaimedByAnother)
 		}
+		if st.naming.Exact {
+			// The update replaces exactly the Secret just proven the
+			// username's: one deleted and re-created in between (by another
+			// identity's login, say) is a conflict, never overwritten.
+			sec.ResourceVersion = have.ResourceVersion
+		}
 	}
 
 	code, err = secrets.Update(context.TODO(), st.rc, &sec)

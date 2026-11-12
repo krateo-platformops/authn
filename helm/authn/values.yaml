@@ -90,6 +90,10 @@ internal:
 #   2. the Kyverno tenant handover is done (acmp tenant-policy design, §3.2,
 #      step 3: tenant-namespace-on-login deleted), since the backfill's updates
 #      would fire the legacy policy.
+# With it on, authn refuses to start unless AUTHN_USERNAME is lowercase
+# [-a-z0-9] of at most 63 characters (the default "authn" is). Set this value,
+# never env.AUTHN_EXACT_USERNAMES: the chart refuses both. The new ConfigMap key
+# renders even with it off, so upgrading rolls the pod once (checksum/configmap).
 # installer sets it per cluster. See docs/configuration.md and docs/behavior.md.
 exactUsernames:
   enabled: false
