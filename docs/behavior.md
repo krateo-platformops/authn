@@ -238,7 +238,10 @@ controller that writes status — and it resolves them **in its operator namespa
   "the name must be a lowercase DNS-1123 label of at most 63 characters …", so a name like
   `alice.smith` can't get a Secret, or a tenant, named `alicesmith` (#140). It is checked
   at create only (`optionalOldSelf`, `oldSelf.hasValue() || …`): a User created before
-  the rule keeps its name, and stays updatable and deletable. `apis/names_test.go` proves
+  the rule keeps its name, and stays updatable and deletable. Once deleted, though, it
+  can't be created again under that name: a restore into another cluster (Velero), a GitOps
+  prune and re-create, or a chart reinstall of such a User is refused. Rename it first.
+  `apis/names_test.go` proves
   the pattern is the transform's; `apis/names_integration_test.go` shows both halves on a
   1.36 apiserver.
 - `spec.passwordRef` (`SecretKeySelector`, required) — Secret holding the password.
