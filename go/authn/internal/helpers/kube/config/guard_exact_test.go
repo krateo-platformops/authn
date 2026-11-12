@@ -237,6 +237,8 @@ func TestExactNamingCarriesTheClaimOfTheUsersLegacySecret(t *testing.T) {
 		{"an annotation naming another username is another's Secret", map[string]*corev1.Secret{
 			exactX: {ObjectMeta: metav1.ObjectMeta{Name: exactX, Annotations: map[string]string{
 				storage.UsernameAnnotation: userY, storage.ClaimAnnotation: mine}}}}, RefusalClaimed},
+		{"an annotation its certificate contradicts is nobody's (plumbing v1.61.0)", map[string]*corev1.Secret{
+			exactX: ownedBy(t, exactX, userY, map[string]string{storage.UsernameAnnotation: userX, storage.ClaimAnnotation: mine})}, RefusalClaimed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			before := map[string]*corev1.Secret{}

@@ -181,6 +181,20 @@ func TestNamingOwns(t *testing.T) {
 		assert.False(t, legacyNaming.Owns(sec, userX), "ownership is the same with either naming")
 	}
 	assert.False(t, exactNaming.Owns(&corev1.Secret{}, userY), "no annotation and no certificate: nobody's")
+
+	// plumbing v1.61.0: an annotation its certificate contradicts, or one
+	// next to an unreadable certificate, is nobody's.
+	contradicted := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{UsernameAnnotation: userY}},
+		Data: map[string][]byte{ClientCertLabel: []byte(identityCert(t, userX, nil))}}
+	garbage := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{UsernameAnnotation: userY}},
+		Data: map[string][]byte{ClientCertLabel: []byte("garbage")}}
+	for _, sec := range []*corev1.Secret{contradicted, garbage} {
+		assert.False(t, exactNaming.Owns(sec, userY))
+		assert.False(t, exactNaming.Owns(sec, userX))
+	}
+	agreeing := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{UsernameAnnotation: userY}},
+		Data: map[string][]byte{ClientCertLabel: []byte(identityCert(t, userY, nil))}}
+	assert.True(t, exactNaming.Owns(agreeing, userY))
 }
 
 // A comparison that can't be made (no object before) counts as a change, so
