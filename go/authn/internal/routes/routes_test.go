@@ -80,13 +80,13 @@ func TestAMalformedSessionIDIsReplaced(t *testing.T) {
 			var line map[string]any
 			require.NoError(t, json.Unmarshal(bytes.Split(buf.Bytes(), []byte("\n"))[0], &line), buf.String())
 			id, _ := line["session.id"].(string)
-			assert.True(t, auditlog.ValidSessionID(id), "a minted id: %q", id)
+			assert.True(t, audit.ValidSessionID(id), "a minted id: %q", id)
 			sent, err := url.PathUnescape(inbound)
 			require.NoError(t, err)
 			assert.NotEqual(t, sent, id, "the inbound value is replaced")
 			assert.NotEqual(t, sent, recorded, "in the audit record's join key too")
 			assert.NotContains(t, buf.String(), "zz-sentinel")
-			assert.True(t, auditlog.ValidSessionID(recorded), "the audit record's join key is well-formed too: %q", recorded)
+			assert.True(t, audit.ValidSessionID(recorded), "the audit record's join key is well-formed too: %q", recorded)
 		})
 	}
 }

@@ -139,8 +139,8 @@ Config names (an OIDCConfig's, a RESTAction's) and the IdP's URLs are configurat
   hands the generator its logger (`kubeconfig.Logger`), so the name guard's, the
   generator's and the CSR's lines join the request's audit record, where the identity
   is. A `session.id` is accepted only in audit's `session_id` format (audit#32): 1 to 128
-  of `[A-Za-z0-9._-]` (`auditlog.ValidSessionID`, until audit v0.11.0 exports
-  `audit.ValidSessionID`); `auditlog.Middleware` replaces any other
+  of `[A-Za-z0-9._-]` (`audit.ValidSessionID`, audit v0.11.0, the check audit's own
+  `Check` enforces); `auditlog.Middleware` replaces any other
   inbound value with a minted one, so neither a log line nor an audit record's join key
   is a caller's free text.
 - CSR lines name the CSR by its UID (`csr.uid`): its name starts with the username, and
@@ -617,7 +617,7 @@ or a log line.
   so every backfill write is a record. The renewer's annotation sync is recorded when it
   changes one of them, not for the validity window alone.
 - **Every record** carries the request's `session.id` (inbound W3C baggage when it has
-  audit's `session_id` format, otherwise minted per request; `auditlog.ValidSessionID`), the
+  audit's `session_id` format, otherwise minted per request; `audit.ValidSessionID`), the
   source IPs, the user agent and whether the target's namespace is a preview sandbox
   (from the Namespace's labels, read and cached for 5 minutes; the chart grants `get` on
   authn's own Namespace only). Its body is a closed set of texts, never an
