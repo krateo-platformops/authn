@@ -21,6 +21,13 @@ func TestSessionNamingRefusesAnAuthnUsernameItCantIssue(t *testing.T) {
 		_, err := sessionNaming(true, self)
 		require.Error(t, err, "%q", self)
 		assert.Contains(t, err.Error(), "AUTHN_EXACT_USERNAMES is on")
+		// The message names the cause: no exact name at all, or one plumbing's
+		// signup wouldn't write.
+		want := "has its own Secret written as"
+		if self != "authn.svc" && self != strings.Repeat("a", 64) {
+			want = "can't name a Secret exactly"
+		}
+		assert.Contains(t, err.Error(), want, "%q", self)
 		n, err := sessionNaming(false, self)
 		require.NoError(t, err, "%q: off, nothing is checked", self)
 		assert.False(t, n.Exact)

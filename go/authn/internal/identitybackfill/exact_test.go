@@ -274,3 +274,30 @@ func TestRunSkipsACertificateWithNoCN(t *testing.T) {
 	assert.Equal(t, Result{Scanned: 1, Skipped: 1}, res)
 	assert.NotContains(t, api.updates, "nobody-clientconfig")
 }
+
+// Three keys in conflict on one Secret are three lines, one per key.
+func TestRunLogsEveryConflictingKeyOfASecret(t *testing.T) {
+	ann := map[string]string{storage.StrategyAnnotation: "oidc", storage.GroupsAnnotation: "", storage.UsernameAnnotation: "other"}
+	sec := withLabels(clientConfig(t, "alice-clientconfig", cert(t, "alice", nil), ann),
+		map[string]string{storage.PrincipalLabel: "agent", storage.UsernameLabelLabel: "other"})
+	api := newFakeAPIServer(t, []corev1.Secret{sec})
+	logs, l := logtest.Capture()
+	res, err := Run(context.Background(), Options{
+		RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns}, SelfUsername: "authn",
+		Lookup: principalLookup{}, Log: l, Naming: exactNaming,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.Inconsistent, "one Secret")
+	var keys []string
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "identity key differs from the certificate") {
+			for _, k := range []string{storage.UsernameAnnotation, storage.PrincipalLabel, storage.UsernameLabelLabel} {
+				if strings.Contains(line, `"key":"`+k+`"`) {
+					keys = append(keys, k)
+				}
+			}
+		}
+	}
+	assert.ElementsMatch(t, []string{storage.UsernameAnnotation, storage.PrincipalLabel, storage.UsernameLabelLabel}, keys)
+	assert.NotContains(t, api.updates, "alice-clientconfig", "nothing absent, nothing written")
+}
