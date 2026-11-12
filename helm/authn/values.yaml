@@ -78,8 +78,8 @@ internal:
 #     an LDAP, OAuth or OIDC name that can't be (not a DNS-1123 subdomain, or
 #     longer than 233) is refused, 403 UsernameUnavailable (name_not_issued);
 #   - every Secret authn writes carries the annotation authn.krateo.io/username
-#     and the labels authn.krateo.io/principal and authn.krateo.io/username-label,
-#     which the tenant policy selects and names tenants by; a startup backfill
+#     and the labels authn.krateo.io/principal and authn.krateo.io/username-label
+#     (authn#144), which the tenant policy selects and names tenants by; a startup backfill
 #     stamps them on existing Secrets, never overwriting a value;
 #   - a Secret is read exact name first, then legacy, and used only when it is
 #     the username's own. A user's legacy Secret is never deleted or changed by

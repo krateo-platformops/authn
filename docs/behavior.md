@@ -460,6 +460,86 @@ annotations, and never overwrites existing ones:
 A Secret whose certificate can't be read, or whose lookup fails, is skipped and logged,
 never stamped with a guess. The next start retries it.
 
+### Exact session-Secret names (`exactUsernames`)
+Behind a flag: chart value `exactUsernames.enabled`, rendered as `AUTHN_EXACT_USERNAMES`,
+**off by default** ([#140](https://github.com/krateo-platformops/authn/issues/140); the
+identity keys are [#144](https://github.com/krateo-platformops/authn/issues/144)). Off, authn
+behaves as before: a session Secret is the username made DNS-1123 compatible plus
+`-clientconfig` (`endpoints.SecretName`), so `john.doe` and `johndoe` share
+`johndoe-clientconfig`, and no key below is written. Turn it on for a cluster only once
+snowplow's exact-then-legacy reader (snowplow#1382) runs there **and** the Kyverno tenant
+handover is done (acmp's tenant-policy design, §3.2 step 3: `tenant-namespace-on-login`
+deleted), because the backfill's updates would fire the legacy policy.
+
+With it on (`storage.Naming`, `config/storage/naming.go`; the naming helpers are plumbing's
+`endpoints` and `usernames` packages, never re-derived):
+
+- **The name.** A session Secret is `endpoints.ExactSecretName(u)`: `u + "-clientconfig"`
+  exactly, when `u` is a DNS-1123 subdomain of at most 233 characters
+  (`endpoints.MaxExactUsernameLength`); a step-up Secret is `u + "-clientconfig-stepup"`.
+  `john.doe` gets `john.doe-clientconfig`.
+- **A name that can't be exact.** An identity source's (LDAP, OAuth, OIDC) is refused by
+  the name guard before any read: `403` `UsernameUnavailable`, refusal and denial reason
+  `name_not_issued`, and its record names no Secret, since its legacy name may be another
+  user's. An administrator-provisioned name (a basic User, a ServiceAccount mapping) keeps
+  its legacy name. That case doesn't occur on live clusters: a User's or a mapping's name is
+  an object name, a DNS-1123 subdomain, so only one longer than 233 characters would hit it.
+- **The identity keys** ([#144](https://github.com/krateo-platformops/authn/issues/144)),
+  on every Secret authn writes, next to the strategy, groups, claim and validity annotations,
+  which stay. acmp's tenant-policy design (§2.5) selects and names tenants by them:
+
+  | Key | Kind | Value |
+  |---|---|---|
+  | `authn.krateo.io/username` | annotation | the exact username, from the authenticated identity (never parsed from a Secret name) |
+  | `authn.krateo.io/principal` | label | `human` for basic, LDAP, OAuth, OIDC; for a ServiceAccount mapping its `spec.principal` (`agent`, `controller`), `service` by default, never `human`, even with the `tenants` group; `service` for authn's own Secret |
+  | `authn.krateo.io/username-label` | label | `usernames.Bounded(u, 56)`: `johndoe` → `johndoe`, `john.doe` → `john-doe--30f69670bba2`. 56 is frozen (`tenant-` + 56 = 63) |
+
+  A label with no provable value is left off, never guessed, so a policy selecting on it
+  fails closed: `Bounded` gives no valid label value (a name starting with an uppercase
+  letter, which only a provisioned legacy name can), or the principal isn't known (below).
+- **Reads.** Every reader inside authn (the name guard, `/usernames/check`, the certificate
+  renewer) tries `endpoints.SessionSecretNames(u)`, exact first, then legacy when it
+  differs, and uses a Secret only when `endpoints.OwnsSecret(sec, u)` proves it is `u`'s: its
+  `authn.krateo.io/username` equals `u`, or, without it, its certificate's CN does.
+- **Migration, and claim continuity.** A user whose legacy Secret is their own keeps their
+  name: the guard reads both names, and a claim on either decides (another identity's
+  refuses, theirs admits; with no claim the pre-claims adoption rules apply to each). Their
+  next sign-in writes the exact Secret with the same claim. **The legacy Secret is never
+  written, changed or deleted by a sign-in**: with Kyverno's `synchronize: true` deleting it
+  deletes the tenant. Cleaning legacy Secrets up is a per-cluster operator step (acmp's
+  design, §3.4).
+- **The X/Y rule.** `john.doe`'s legacy name, `johndoe-clientconfig`, is `johndoe`'s name.
+  A Secret found under a name that isn't `u`'s neither admits nor refuses `u` by its claim:
+  - under the **legacy** name (johndoe's Secret, when `john.doe` signs in) it is passed over:
+    `john.doe` is judged on its own exact name only, and johndoe's Secret is untouched;
+  - under the name authn would **write** (john.doe's legacy Secret at
+    `johndoe-clientconfig`, when `johndoe` signs in) writing would replace another user's
+    credential, so `johndoe` is refused: `name_claimed` when that Secret carries a claim,
+    `name_held_legacy` when it carries none. The same holds for a Secret with neither a
+    certificate nor the annotation (one authn didn't write, such as demo's synthetic
+    `acme`): it is nobody's, so it refuses, even a basic User that would adopt it without
+    the flag. The store re-checks at write time: it never replaces a Secret that isn't
+    `u`'s (`storage.ErrClaimedByAnother`, `UsernameUnavailable`);
+  - `/usernames/check` is stricter: a Secret under **either** name makes the name
+    unavailable, johndoe's included when `john.doe` is checked.
+- **authn's own Secret.** plumbing's `signup` writes it under `endpoints.SecretName`, which
+  for the default `AUTHN_USERNAME`, `authn`, is the exact name. The renewer reads it with the
+  ownership check, never issues over a Secret under that name that isn't authn's (a `failure`
+  record, retried a minute later), and stamps the keys (`principal: service`).
+- **Backfill.** At startup, on the leader, `internal/identitybackfill` stamps the three keys
+  on every parseable `-clientconfig` Secret in authn's namespaces, legacy-named ones
+  included, taking `u` from the certificate's CN, never the Secret's name:
+  - only **absent** keys are stamped. A key present with another value is never
+    overwritten (rewriting a label a tenant was generated from would point the policy at a
+    second namespace): it is logged as `identity key differs from the certificate; left as
+    found` with the key and the Secret's uid, and recorded as `authn.identity.inconsistent`
+    (`denied`, verb `update`, no status code);
+  - the principal follows the strategy annotation; a `serviceaccount` Secret takes its
+    mapping's `spec.principal`, and gets no principal when the mapping is gone, nor does
+    one whose strategy is `unknown`;
+  - a Secret whose certificate can't be read is skipped and logged, never failed on; nothing
+    is deleted; Secrets not named `-clientconfig` are ignored.
+
 ### A service identity's Secret is owned by its mapping
 `/serviceaccount/login` stores the identity's `<username>-clientconfig` Secret with one
 ownerReference: its `ServiceAccount` mapping (`serviceaccount.authn.krateo.io/v1alpha1`,
@@ -504,6 +584,10 @@ strategies is two identities.
 `username refused` with the strategy, the `refusal` and the reason, none naming the user or
 the claim; the response says only that the name isn't available. A failed read is `500`
 `IssuanceFailed`.
+With exact names on, the guard also refuses an identity source's name that can't be exact
+(`name_not_issued`, right after rule 1), and reads the name's Secrets under both names with
+the ownership rules of [Exact session-Secret names](#exact-session-secret-names-exactusernames).
+
 1. An identity source may not take a **reserved** name: `admin`, `administrator`,
    `root`, `masterclient`, `nodeclient`, `aksservice`, or one starting with `system`,
    `kube-`, `kubelet`, `cluster-`, `gke-`, `eks-` or `aks-`. The names the platforms give
@@ -566,6 +650,7 @@ or a log line.
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 | identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
 | authn's own identity annotations (background) | `authn.servicecert.annotated` | authn's `-clientconfig` Secret | `update` |
+| identity backfill, a differing key left as found (background; exact names only) | `authn.identity.inconsistent` | the `-clientconfig` Secret | `update` it declined to send (`denied`, no status code, no denial reason: the controller writer declares none that fits) |
 
 - **Login, step-up.** A record is written right after the credential is issued, whatever
   the outcome:
@@ -579,7 +664,8 @@ or a log line.
     since authn refused before asking the apiserver. An identity with no username has no
     Secret name, so its record names the Secret resource in authn's namespace, without a
     name or a verb. `krateo.audit.denial_reason` says why, from a
-    closed set: `name_missing`, `name_reserved`, `name_claimed`, `name_held_legacy`,
+    closed set: `name_missing`, `name_reserved`, `name_not_issued` (exact names only, with
+    no Secret named), `name_claimed`, `name_held_legacy`,
     `name_provisioned`, `name_bound`, `system_group`, `platform_group`,
     `group_not_allowed`, `stepup_not_enabled`, `insufficient_assurance`,
     `stale_authentication`. The HTTP answer stays opaque;
@@ -650,7 +736,11 @@ or a log line.
   so a write that changes one changes what the identity may do. The audit schema declares
   them, once (`audit.AuthorizationAnnotations()`, schema v1's `content_annotations`). The startup backfill writes only to stamp one of them or an owner,
   so every backfill write is a record. The renewer's annotation sync is recorded when it
-  changes one of them, not for the validity window alone.
+  changes one of them, not for the validity window alone. With exact names on, the
+  `authn.krateo.io/username` annotation and the `authn.krateo.io/principal` and
+  `authn.krateo.io/username-label` labels count too (#144), compared through plumbing's
+  `content.DiffersWith` (`storage.ContentKeys`). The labels are authn's own constants until
+  audit declares a label list.
 - **Every record** carries the request's `session.id` (inbound W3C baggage when it has
   audit's `session_id` format, otherwise minted per request; `audit.ValidSessionID`), the
   source IPs, the user agent and whether the target's namespace is a preview sandbox
@@ -678,6 +768,12 @@ guard's order, and writes nothing:
    hand an existing user's name to someone else;
 4. `name_provisioned`: a basic `User` or a `ServiceAccount` mapping has the name;
 5. `name_bound`: a RoleBinding or ClusterRoleBinding names it as a User.
+
+With exact names on, `invalid` is a name that can't be exact (`endpoints.ExactSecretName`),
+so `john.doe` is available when nothing holds it; step 3 reads the exact name, then the legacy
+one, and a Secret under either makes the name unavailable (`name_claimed` when it carries a
+claim and is the name's own or sits under its exact name, `name_held_legacy` otherwise), and
+the record names the exact Secret, or none for an invalid name.
 
 A lookup that fails is `503` `UsernameCheckFailed`, never an answer: the caller treats the name
 as unavailable and retries. Only a mapping with `spec.usernameCheck.allowed` may ask, and a
