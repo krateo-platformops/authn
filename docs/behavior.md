@@ -108,6 +108,23 @@ or expired credential. Every login answers this way since #81, which replaced th
 and oidc `417`s: a refused authorization code is a `403` (`AuthorizationCodeRejected`,
 warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
 
+### No identity in a log line
+
+No log line names an identity: not a username, an OIDC `iss`/`sub`, an LDAP DN, a claim,
+an email, a delegation's subject or actor, nor a person's groups (counted, not listed).
+authn's own error texts, which `status.LogFailure` logs and the caller is often answered,
+say what failed, not who. The apiserver's errors about an object named after a user (a
+session or step-up Secret, a basic User or its password Secret, a ServiceAccount mapping, a
+CSR) are wrapped as `<operation>: <reason> (<code>)` (`internal/helpers/kube/kerr`);
+`apierrors.IsNotFound` and the status code still work through the wrapper. Text authn
+doesn't write that may name the caller, the TokenReview's `status.error`, goes in
+`CauseError.Answered`: answered, never logged. CSR log lines carry only the generated
+suffix (`csr.suffix`); the backfill and the step-up sweep name a Secret by its UID
+(`secret.uid`). Every route's line carries the request's `session.id`, which joins it to
+its audit record, where the identity is (Diego, 2026-11-12). The sentinel tests
+(`internal/logtest`, `noidentity_test.go` in each login's package) fail if one reaches a
+line.
+
 ### Login inputs per strategy
 
 - **basic** — HTTP `Authorization: Basic` header; `401` `MissingCredentials` with
@@ -453,8 +470,9 @@ The claim recorded on the Secret is `[strategy, issuer, id]`. The same person th
 strategies is two identities.
 
 **The rules**, in order. A refusal is `403` `UsernameUnavailable`, logged as the warn line
-`username refused` with the reason; the response says only that the name isn't
-available. A failed read is `500` `IssuanceFailed`.
+`username refused` with the strategy, the `refusal` and the reason, none naming the user or
+the claim; the response says only that the name isn't available. A failed read is `500`
+`IssuanceFailed`.
 1. An identity source may not take a **reserved** name: `admin`, `administrator`,
    `root`, `masterclient`, `nodeclient`, `aksservice`, or one starting with `system`,
    `kube-`, `kubelet`, `cluster-`, `gke-`, `eks-` or `aks-`. The names the platforms give

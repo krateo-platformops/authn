@@ -14,6 +14,19 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — authn's log lines carry no identity
+
+No authn log line names who signed in, was refused or acted (Diego's decision): no
+username, OIDC `iss`/`sub`, LDAP DN, `authn.krateo.io/claim`, email, delegation subject or
+actor, caller, nor a person's groups. That includes the apiserver's errors about objects
+named after a user (`<user>-clientconfig`, a basic User, a ServiceAccount mapping, a CSR):
+authn wraps them to say what failed, the reason and the code (`internal/helpers/kube/kerr`),
+and the TokenReview's verdict on a caller's token is answered, never logged. Log lines keep
+the strategy, the config's name, cause, code, outcome, counts and durations, and now each
+carries the request's `session.id`. Identity lives in the audit record only, and the
+`session.id` joins the two. `internal/logtest` signs in with sentinel identities on every
+path and fails if one reaches a line.
+
 ## 2026-11-12 — authn's service name is `authn`
 
 authn named itself `auth`: the OpenTelemetry resource's `service.name`, its audit records'
