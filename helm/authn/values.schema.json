@@ -135,6 +135,19 @@
         }
       }
     },
+    "internal": {
+      "type": "object",
+      "title": "Internal listener",
+      "additionalProperties": false,
+      "description": "authn's internal listener, for in-cluster callers only (POST /usernames/check), served by the ClusterIP Service <release>-internal. Never route it publicly.",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
     "ingress": {
       "type": "object",
       "title": "Ingress",
@@ -365,7 +378,7 @@
                 "type": "string",
                 "minLength": 1,
                 "title": "Key ID",
-                "description": "The kid the retired key signed with. No commas, equals signs or whitespace: entries are passed as kid=path,…",
+                "description": "The kid the retired key signed with. No commas, equals signs or whitespace: entries are passed as kid=path,\u2026",
                 "pattern": "^[^,=\\s]+$"
               },
               "secretName": {

@@ -39,6 +39,19 @@ type ServiceAccountSpec struct {
 	// +optional
 	// +kubebuilder:validation:Enum=agent;controller;service
 	Principal string `json:"principal,omitempty"`
+
+	// UsernameCheck lets this service ask authn whether a username could be
+	// given to a new identity, through POST /usernames/check on authn's
+	// internal listener (an access-request controller, for one). Omitted, or
+	// allowed false: the service can't. The check issues nothing.
+	// +optional
+	UsernameCheck *UsernameCheck `json:"usernameCheck,omitempty"`
+}
+
+// UsernameCheck is a service's opt-in to ask whether a username is available.
+type UsernameCheck struct {
+	// Allowed opts the service in.
+	Allowed bool `json:"allowed"`
 }
 
 // Delegation is a service's opt-in to act for people.

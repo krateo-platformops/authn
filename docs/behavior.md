@@ -625,6 +625,29 @@ or a log line.
   `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
   then drops, and `authn.audit.export.failed` counts the dropped records.
 
+### Checking a username for a new identity
+
+`POST /usernames/check`, on the internal listener only, answers whether a username could be
+given to an identity that doesn't exist yet. An access-request controller asks it before
+creating an IdP user, instead of reading `<username>-clientconfig` Secrets itself, so it needs
+no RBAC on Secrets. It reads exactly what the name guard reads (`config.NewNameLookup`), in the
+guard's order, and writes nothing:
+
+1. `reserved`: a reserved name or prefix (`usernames.Reserved`);
+2. `invalid`: not a name authn issues (`usernames.Check`: empty, longer than 63, or not in the
+   DNS-1123 form);
+3. `name_claimed` or `name_held_legacy`: a `<username>-clientconfig` Secret exists, with or
+   without a claim. With no identity to compare, **any** existing Secret makes the name
+   unavailable, even where a sign-in would admit the identity whose claim it carries or let the
+   strategy that wrote it adopt it. Neither is a new person, and an access request must never
+   hand an existing user's name to someone else;
+4. `name_provisioned`: a basic `User` or a `ServiceAccount` mapping has the name;
+5. `name_bound`: a RoleBinding or ClusterRoleBinding names it as a User.
+
+A lookup that fails is `503` `UsernameCheckFailed`, never an answer: the caller treats the name
+as unavailable and retries. Only a mapping with `spec.usernameCheck.allowed` may ask, and a
+refused caller learns nothing, since the guard isn't read for it.
+
 ### Platform names and groups
 The `krateo:` prefix is the platform's. A username starting with it is reserved
 (plumbing's `usernames.Reserved`, the list authn's guard, an access-request form

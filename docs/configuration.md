@@ -40,7 +40,8 @@ changes. Every flag of the binary has an env fallback (`go/authn/main.go:49-80`)
 |---|---|---|
 | `image.registry` / `image.repository` | `ghcr.io` / `krateo-platformops/authn` | The app image. `global.imageRegistry` relocates the registry host for mirror/air-gapped installs (repository path preserved). |
 | `image.tag` | `""` (= chart `appVersion`) | Pin only to diverge from the released pairing. |
-| `service.type` / `service.port` | `ClusterIP` / `8082` | One port serves logins, `/strategies` and probes; the port value feeds `AUTHN_PORT`. |
+| `service.type` / `service.port` | `ClusterIP` / `8082` | The public port serves logins, `/strategies` and probes; the port value feeds `AUTHN_PORT`. |
+| `internal.port` | `8090` | The internal listener (`POST /usernames/check`), served by the ClusterIP Service `<release>-internal`; feeds `AUTHN_INTERNAL_PORT`. Never route it publicly. |
 | `replicaCount` | `1` | With `autoscaling.enabled: false` (default). |
 | `livenessProbe` / `readinessProbe` | `GET /health` | `/health` flips 200 once the listener goroutine starts, 503 on shutdown — process lifecycle only ([gotchas](./gotchas.md)). |
 | `ingress` | `enabled: false` | Standard chart ingress if you need it. |
@@ -66,6 +67,7 @@ Chart defaults first, then the env vars the binary reads beyond what the chart s
 | `AUTHN_CORS` | `true` | Permissive `*`-origin CORS for the browser hop (allows `X-Auth-Code`, `X-Code-Verifier` + W3C trace-context headers). |
 | `AUTHN_DEBUG` | `false` | Debug-level logging, which includes each OIDC and OAuth sign-in's name, username, email, groups and avatar URL, and the values a RESTAction adds. Don't leave it on in production. |
 | `AUTHN_PORT` | `8082` (chart sets = `service.port`) | Listen port. |
+| `AUTHN_INTERNAL_PORT` | `8090` (chart sets = `internal.port`) | Internal listener port, for in-cluster callers only. authn refuses to start when it equals `AUTHN_PORT`. |
 | `AUTHN_NAMESPACE` | chart: release namespace | Where generated `AuthInfo` Secrets are stored. |
 | `POD_NAMESPACE` | chart: release namespace | The operator namespace — **all config CRs are resolved here**. |
 | `AUTHN_USERNAME` | `authn` | The service's own identity for calling snowplow RESTActions. |

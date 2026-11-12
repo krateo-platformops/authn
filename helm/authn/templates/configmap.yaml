@@ -6,6 +6,7 @@ metadata:
     {{- include "authn.labels" . | nindent 4 }}
 data:
   AUTHN_PORT: "{{ .Values.service.port }}"
+  AUTHN_INTERNAL_PORT: "{{ .Values.internal.port }}"
   AUTHN_NAMESPACE: {{ .Release.Namespace }}
   POD_NAMESPACE: {{ .Release.Namespace }}
   # The actor of the audit records of authn's own background writes (AUDIT-4).

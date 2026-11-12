@@ -54,6 +54,8 @@ func main() {
 	otelTracingOn := flag.Bool("otel-tracing", telemetry.TracingEnabled(),
 		"enable OpenTelemetry tracing (OTLP/HTTP); defaults to OTEL_TRACING_ENABLED, which defaults to OTEL_ENABLED; default off")
 	servicePort := flag.Int("port", env.Int("AUTHN_PORT", 8082), "port to listen on")
+	internalPort := flag.Int("internal-port", env.Int("AUTHN_INTERNAL_PORT", 8090),
+		"port of the internal listener, for in-cluster callers only (POST /usernames/check); never route it publicly")
 	certExpiresIn := flag.Duration("cert-expires",
 		env.Duration("AUTHN_KUBECONFIG_CRT_EXPIRES_IN", time.Hour*24), "requested duration of a login certificate (default: 24h)")
 	serviceCertExpiresIn := flag.Duration("service-cert-expires",
@@ -258,25 +260,39 @@ func main() {
 	// Inside otelhttp, so the Server span is active when a record marks it.
 	var handler http.Handler = auditlog.Middleware(routes.Serve(all, log))
 
+	// The internal listener serves only what in-cluster services call
+	// (buildInternalRoutes). It has its own port and Service, which no public
+	// route references, and the public listener never serves its paths.
+	var internalHandler http.Handler = auditlog.Middleware(routes.Serve(buildInternalRoutes(routeOptions{
+		RestConfig:             cfg,
+		ServiceAccountAudience: *serviceAccountAudience,
+		Audit:                  auditRec,
+	}), log))
+
 	// OpenTelemetry HTTP server instrumentation (gated, default OFF). When
 	// metrics are opted in, emit http.server.* instruments; when tracing is
 	// opted in, wrap with otelhttp so each inbound request becomes a server
 	// span (named by URL path) and traceparent is extracted. /health is
 	// filtered out of tracing to avoid probe noise. When both are off, the
 	// handler chain is left untouched (byte-identical off-path).
-	if telemetry.MetricsEnabled() {
-		handler = telemetry.MetricsMiddleware(handler)
+	instrument := func(h http.Handler) http.Handler {
+		if telemetry.MetricsEnabled() {
+			h = telemetry.MetricsMiddleware(h)
+		}
+		if telemetry.TracingEnabled() {
+			h = otelhttp.NewHandler(h, serviceName,
+				otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+					return r.URL.Path
+				}),
+				otelhttp.WithFilter(func(r *http.Request) bool {
+					return r.URL.Path != health.Path
+				}),
+			)
+		}
+		return h
 	}
-	if telemetry.TracingEnabled() {
-		handler = otelhttp.NewHandler(handler, serviceName,
-			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-				return r.URL.Path
-			}),
-			otelhttp.WithFilter(func(r *http.Request) bool {
-				return r.URL.Path != health.Path
-			}),
-		)
-	}
+	handler = instrument(handler)
+	internalHandler = instrument(internalHandler)
 
 	if *corsOn {
 		c := cors.New(cors.Options{
@@ -298,6 +314,16 @@ func main() {
 		Handler:      handler,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 50 * time.Second,
+		IdleTimeout:  30 * time.Second,
+	}
+	if *internalPort == *servicePort {
+		log.Fatal().Int("port", *internalPort).Msg("the internal listener must not share the public port")
+	}
+	internalServer := &http.Server{
+		Addr:         fmt.Sprintf(":%d", *internalPort),
+		Handler:      internalHandler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 20 * time.Second,
 		IdleTimeout:  30 * time.Second,
 	}
 
@@ -425,6 +451,11 @@ func main() {
 	}
 
 	go func() {
+		if err := internalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal().Err(err).Msgf("could not listen on %s (internal)", internalServer.Addr)
+		}
+	}()
+	go func() {
 		atomic.StoreInt32(&healthy, 1)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msgf("could not listen on %s", server.Addr)
@@ -449,8 +480,12 @@ func main() {
 	}
 
 	server.SetKeepAlivesEnabled(false)
+	internalServer.SetKeepAlivesEnabled(false)
 	if err := server.Shutdown(ctx); err != nil {
 		log.Fatal().Err(err).Msg("server forced to shutdown")
+	}
+	if err := internalServer.Shutdown(ctx); err != nil {
+		log.Fatal().Err(err).Msg("internal server forced to shutdown")
 	}
 	// After the server: the requests it drained may still be writing records.
 	if err := auditShutdown(ctx); err != nil {

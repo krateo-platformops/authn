@@ -14,6 +14,19 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — an in-cluster check of whether a username is available
+
+identity-lifecycle's AccessRequest controller refused a requested username that an existing
+authn user holds by reading `<user>-clientconfig` Secrets, so its RBAC granted every tenant's
+kubeconfig. No non-secret marker covers every held name: the tenant namespace and its RoleBinding
+are generated from the Secret, and an admin's pre-claim lives only on it. So authn now answers
+the question itself (Diego): `POST /usernames/check`, the name guard's reads without issuing, for
+a `ServiceAccount` mapping that opts in (`spec.usernameCheck.allowed`). It's served only on a new
+internal listener (`internal.port`, Service `<release>-internal`). The public HTTPRoutes forward
+every path to the public port, so a route there would have let anyone ask whether a name is held.
+The check is stricter than a sign-in: any existing Secret makes a name unavailable. It fails
+closed with a `503`.
+
 ## 2026-11-12 — authn's log lines carry no identity
 
 No authn log line names who signed in, was refused or acted (Diego's decision): no

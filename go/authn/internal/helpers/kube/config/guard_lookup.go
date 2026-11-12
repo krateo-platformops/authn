@@ -22,6 +22,11 @@ type clusterLookup struct {
 	cli kubernetes.Interface
 }
 
+// NewNameLookup is the lookup the name guard reads in a cluster, for a caller
+// that asks the guard's questions without issuing (CheckUsername): the same
+// reads, so a check and a sign-in agree on what holds a name.
+func NewNameLookup(rc *rest.Config) (NameLookup, error) { return newClusterLookup(rc) }
+
 // newClusterLookup builds the lookup authn uses in a cluster.
 func newClusterLookup(rc *rest.Config) (*clusterLookup, error) {
 	cli, err := kubernetes.NewForConfig(rc)

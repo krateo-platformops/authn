@@ -20,6 +20,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/routes/delegate"
 	"github.com/krateo-platformops/authn/internal/routes/health"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
+	"github.com/krateo-platformops/authn/internal/routes/usernames"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 	"k8s.io/client-go/rest"
@@ -145,4 +146,16 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 	}))
 
 	return all, nil
+}
+
+// buildInternalRoutes returns every route authn serves on its internal
+// listener: calls only in-cluster services make, which no public route may
+// reach. TestInternalSurface (routes_test.go) pins this list, and
+// TestPublicSurface that none of it is public.
+func buildInternalRoutes(o routeOptions) []routes.Route {
+	return []routes.Route{
+		// Whether a username could be given to a new identity, for an
+		// access-request controller that opted in (spec.usernameCheck).
+		usernames.Route(o.RestConfig, usernames.Options{Audience: o.ServiceAccountAudience}),
+	}
 }
