@@ -597,7 +597,7 @@ or a log line.
   `SubjectTokenInvalid`. It's `failure` when signing fails. An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
-- **`/usernames/check`** (audit v0.9.0). The actor is the caller's mapping, of its declared
+- **`/usernames/check`** (audit v0.9.1). The actor is the caller's mapping, of its declared
   class, as on `/delegate`. The target is the checked name's `<username>-clientconfig`
   Secret, the one a sign-in under that name would write and its refusals name, so one
   `object_ref` query joins a name's checks, refusals and logins. The verb is `get`. A body
