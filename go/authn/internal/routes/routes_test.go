@@ -50,15 +50,17 @@ func TestRouteLogsCarryTheSessionID(t *testing.T) {
 	assert.NotContains(t, line, "session.id", "none without one")
 }
 
-// A caller sets session.id. One that isn't audit's opaque form (an email, a
-// forged log line, kilobytes of text) never reaches a log line: Middleware
+// A caller sets session.id. One that isn't audit's session_id format
+// (audit#32: an email, a forged log line, an escape sequence, more than 128
+// characters) never reaches a log line: Middleware
 // replaces it with a minted one, which the log line and the audit record then
 // share.
 func TestAMalformedSessionIDIsReplaced(t *testing.T) {
 	for name, inbound := range map[string]string{
-		"an email":          "zz-sentinel%40example.test",
-		"a forged log line": "x%0A%7B%22level%22%3A%22info%22%7D",
-		"too long":          strings.Repeat("A", 129),
+		"an email":           "zz-sentinel%40example.test",
+		"a forged log line":  "x%0A%7B%22level%22%3A%22info%22%7D",
+		"an escape sequence": "x%1B%5B31m",
+		"too long":           strings.Repeat("A", 129),
 	} {
 		t.Run(name, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -82,16 +84,19 @@ func TestAMalformedSessionIDIsReplaced(t *testing.T) {
 	}
 }
 
-// A well-formed inbound session.id is kept, by Middleware and the log line.
+// A well-formed inbound session.id is kept, by Middleware and the log line:
+// dots are part of audit's session_id format, and so is a UUID.
 func TestAWellFormedSessionIDIsKept(t *testing.T) {
-	var buf bytes.Buffer
-	h := auditlog.Middleware(Serve([]Route{logRoute{}}, zerolog.New(&buf)))
-	req := httptest.NewRequest(http.MethodGet, "/log", nil)
-	req.Header.Set("baggage", "session.id=portal_7f3a-01")
-	h.ServeHTTP(httptest.NewRecorder(), req)
-	var line map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &line), buf.String())
-	assert.Equal(t, "portal_7f3a-01", line["session.id"])
+	for _, id := range []string{"portal.abc123", "6f1c2a9e-3b4d-4e5f-8a7b-9c0d1e2f3a4b", "portal_7f3a-01", strings.Repeat("A", 128)} {
+		var buf bytes.Buffer
+		h := auditlog.Middleware(Serve([]Route{logRoute{}}, zerolog.New(&buf)))
+		req := httptest.NewRequest(http.MethodGet, "/log", nil)
+		req.Header.Set("baggage", "session.id="+id+",other=x")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		var line map[string]any
+		require.NoError(t, json.Unmarshal(buf.Bytes(), &line), buf.String())
+		assert.Equal(t, id, line["session.id"])
+	}
 }
 
 // sessionRoute records the session.id an audit record would carry: the

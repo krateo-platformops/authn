@@ -124,17 +124,28 @@ func WaitForCertificate(client kubernetes.Interface, name string, uid types.UID)
 	if err != nil {
 		// client-go's errors name the CSR and quote the approver's message:
 		// the error is described from the CSR's state instead.
-		return nil, kerr.Described("waiting for the CSR's certificate: "+waitFailure(ctx, client, name, uid), err)
+		return nil, kerr.Described("waiting for the CSR's certificate: "+waitFailure(ctx, client, name, uid, err), err)
 	}
 	return crt, nil
 }
 
 // waitFailure says why a wait for name's certificate ended without one, from
-// the wait's context and the CSR's own state, never from an error's text.
-func waitFailure(wait context.Context, client kubernetes.Interface, name string, uid types.UID) string {
+// the wait's context and the CSR's own state, with the wait error's class
+// (kerr.Class) when it has one: never from an error's text.
+func waitFailure(wait context.Context, client kubernetes.Interface, name string, uid types.UID, err error) string {
 	if wait.Err() != nil {
 		return "timed out"
 	}
+	state := csrState(client, name, uid)
+	if class := kerr.Class(err); class != "" {
+		return state + " (the wait: " + class + ")"
+	}
+	return state
+}
+
+// csrState describes name's CSR as it stands: deleted, replaced, denied,
+// failed, unreadable, or none of these.
+func csrState(client kubernetes.Interface, name string, uid types.UID) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	csr, err := client.CertificatesV1().CertificateSigningRequests().Get(ctx, name, metav1.GetOptions{})

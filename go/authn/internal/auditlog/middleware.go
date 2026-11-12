@@ -31,14 +31,16 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// sessionIDForm is the session.id authn accepts: audit's opaque_id, 1 to 128
-// of [A-Za-z0-9_-]. A caller sets session.id, so anything else (an email, a
-// name, a forged log line) could carry an identity into the audit record's
-// join key and into every log line.
-var sessionIDForm = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+// sessionIDFormat is audit's session_id format, as audit#32 declares it: 1 to
+// 128 of [A-Za-z0-9._-]. A caller sets session.id, so anything else (an
+// email, a name, a forged log line) could carry an identity into the audit
+// record's join key and into every log line. It is replaced by
+// audit.ValidSessionID once audit v0.11.0 is tagged.
+var sessionIDFormat = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
-// ValidSessionID reports whether s is a session.id authn accepts.
-func ValidSessionID(s string) bool { return sessionIDForm.MatchString(s) }
+// ValidSessionID reports whether s has audit's session_id format (audit#32).
+// It stands in for audit.ValidSessionID until audit v0.11.0.
+func ValidSessionID(s string) bool { return sessionIDFormat.MatchString(s) }
 
 // SessionID returns ctx's session.id when it is one authn accepts. After
 // Middleware, a request's always is.

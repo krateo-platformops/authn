@@ -161,6 +161,8 @@ func TestLoginFailuresCarryCauses(t *testing.T) {
 			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
 		{name: "token endpoint failing", token: tokenAnswer(502, `<html>zz-sentinel-idp-detail</html>`),
 			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
+		{name: "a 200 that isn't JSON", token: tokenAnswer(200, `<html>zz-sentinel-idp-detail</html>`),
+			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
 		{name: "token endpoint unreachable", extraSpec: `"tokenURL":"` + closedURL + `"`,
 			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: closedURL},
 	}

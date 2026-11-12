@@ -22,8 +22,8 @@ func Failed(err error) status.CauseError {
 	public := errors.New("the RESTAction could not be resolved")
 	private := err
 	if errors.As(err, &se) {
-		public = fmt.Errorf("the RESTAction could not be resolved: snowplow answered %d %s", se.Code, se.Reason)
-		private = kerr.Described(fmt.Sprintf("snowplow answered %d %s", se.Code, se.Reason), err)
+		public = fmt.Errorf("the RESTAction could not be resolved: %s", se.Error())
+		private = kerr.Described(se.Error(), err)
 	}
 	return status.CauseError{Code: 500, Cause: CauseRESTActionFailed, Err: public, Private: private}
 }

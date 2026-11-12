@@ -108,3 +108,21 @@ func TestResolveRefusesRedirects(t *testing.T) {
 	assert.Zero(t, reached)
 	assert.Equal(t, CauseRESTActionFailed, Failed(err).Cause)
 }
+
+// snowplow's reason is repeated, to the caller and the log, only when it is
+// one of Kubernetes' own StatusReasons. Its own reasons, or any other text,
+// become "unknown" until snowplow exports their set.
+func TestFailedRepeatsOnlyAKubernetesReason(t *testing.T) {
+	for reason, want := range map[string]string{
+		"Timeout":                       "Timeout",
+		"ServiceUnavailable":            "ServiceUnavailable",
+		"DestinationRefused":            "unknown",
+		"zz-sentinel-user is not found": "unknown",
+		"":                              "unknown",
+	} {
+		ce := Failed(&SnowplowError{Code: 502, Reason: reason, Message: "zz-sentinel-user"})
+		assert.Equal(t, "the RESTAction could not be resolved: snowplow answered 502 "+want, ce.Error(), reason)
+		assert.Equal(t, "snowplow answered 502 "+want, ce.Private.Error(), reason)
+		assert.NotContains(t, (&SnowplowError{Code: 502, Reason: reason, Message: "zz-sentinel-user"}).Error(), "zz-sentinel")
+	}
+}

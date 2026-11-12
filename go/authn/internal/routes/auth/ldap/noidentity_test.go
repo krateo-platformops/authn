@@ -35,6 +35,7 @@ func TestLDAPLoginLogsNoIdentity(t *testing.T) {
 	cases := []struct {
 		name        string
 		ldap        *fakeLDAP
+		dialErr     error
 		generateErr error
 		code        int
 	}{
@@ -43,6 +44,7 @@ func TestLDAPLoginLogsNoIdentity(t *testing.T) {
 		{name: "ambiguous user", ldap: user(fakeLDAP{entries: 2}), code: 300},
 		{name: "wrong password", ldap: user(fakeLDAP{entries: 1, userBind: diag(ldap.LDAPResultInvalidCredentials)}), code: 403},
 		{name: "user bind fails server-side", ldap: user(fakeLDAP{entries: 1, userBind: diag(ldap.LDAPResultUnavailable)}), code: 500},
+		{name: "the dial fails", dialErr: diag(ldap.ErrorNetwork), code: 500},
 		{name: "StartTLS fails", ldap: user(fakeLDAP{startTLS: diag(ldap.LDAPResultProtocolError)}), code: 500},
 		{name: "the bind DN is refused", ldap: user(fakeLDAP{adminBind: diag(ldap.LDAPResultInvalidCredentials)}), code: 500},
 		{name: "the connection is lost", ldap: user(fakeLDAP{adminBind: diag(ldap.ErrorNetwork)}), code: 500},
@@ -57,7 +59,12 @@ func TestLDAPLoginLogsNoIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("POD_NAMESPACE", "krateo-system")
 			orig := dial
-			dial = func(string) (ldap.Client, error) { return tc.ldap, nil }
+			dial = func(string) (ldap.Client, error) {
+				if tc.dialErr != nil {
+					return nil, tc.dialErr
+				}
+				return tc.ldap, nil
+			}
 			t.Cleanup(func() { dial = orig })
 			// The fake directory answers any bind of the user's DN.
 			srv := fakeAPIServer(t, http.StatusOK, http.StatusOK, fakeDialURL, "")

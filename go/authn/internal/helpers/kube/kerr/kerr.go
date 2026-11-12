@@ -74,7 +74,21 @@ var reasons = map[metav1.StatusReason]bool{
 	metav1.StatusReasonInternalError: true, metav1.StatusReasonExpired: true, metav1.StatusReasonServiceUnavailable: true,
 }
 
+// KnownReason reports whether reason is one of the StatusReasons Kubernetes
+// defines, the only ones authn repeats.
+func KnownReason(reason string) bool { return reasons[metav1.StatusReason(reason)] }
+
 func describe(err error) string {
+	if c := Class(err); c != "" {
+		return c
+	}
+	return "request failed"
+}
+
+// Class is err's identity-free class: "<reason> (<code>)" for an apiserver
+// answer, Transport's description for a request that got no answer or ran
+// out of time, and "" for any other error, whose text authn can't vouch for.
+func Class(err error) string {
 	var st apierrors.APIStatus
 	if errors.As(err, &st) {
 		s := st.Status()
@@ -88,10 +102,10 @@ func describe(err error) string {
 		return fmt.Sprintf("%s (%d)", reason, s.Code)
 	}
 	var ue *url.Error
-	if errors.As(err, &ue) {
+	if errors.As(err, &ue) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return Transport(err)
 	}
-	return "request failed"
+	return ""
 }
 
 // Transport describes a request that got no answer by the kind of its

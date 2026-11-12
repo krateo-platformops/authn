@@ -215,6 +215,13 @@ var (
 			return true, w, nil
 		})
 	}
+	// Denied, and then the CSR can't be read to say so.
+	csrDeniedThenUnreadable = func(c *fake.Clientset) {
+		csrDenied(c)
+		c.PrependReactor("get", "certificatesigningrequests", func(a k8stesting.Action) (bool, runtime.Object, error) {
+			return true, nil, apierrors.NewForbidden(csrGR, a.(k8stesting.GetAction).GetName(), errors.New("no read"))
+		})
+	}
 	csrDeleteFails = func(c *fake.Clientset) {
 		c.PrependReactor("delete", "certificatesigningrequests", func(a k8stesting.Action) (bool, runtime.Object, error) {
 			return true, nil, apierrors.NewForbidden(csrGR, a.(k8stesting.DeleteAction).GetName(), errors.New("no delete"))
@@ -283,6 +290,7 @@ func TestGenerateLogsNoIdentity(t *testing.T) {
 			{name: "the CSR create fails", signer: csrCreateFails, msg: "kubeconfig creation failure"},
 			{name: "the CSR approval is forbidden", signer: csrApprovalForbidden, msg: "kubeconfig creation failure"},
 			{name: "the CSR is denied", signer: csrDenied, msg: "the CSR was denied"},
+			{name: "the CSR is denied and then unreadable", signer: csrDeniedThenUnreadable, msg: "the CSR's state can't be read"},
 			{name: "the CSR is deleted while authn waits", signer: csrDeletedWhileWaiting, msg: "the CSR was deleted"},
 			{name: "the used CSR can't be deleted", replies: secretReplies{create: http.StatusCreated, claim: mine}, signer: csrDeleteFails,
 				msg: "deleting used certificate signing request"},

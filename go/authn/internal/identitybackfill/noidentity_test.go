@@ -66,6 +66,8 @@ func TestBackfillLogsNoIdentity(t *testing.T) {
 			lookup: sentinelLookup{kind: "serviceaccount"}, msg: "has no ServiceAccount mapping"},
 		{name: "the lookup fails", secret: func(t *testing.T) corev1.Secret { return sentinelSecret(t, nil, good) },
 			lookup: sentinelLookup{failing: true}, msg: "identity annotations not backfilled"},
+		{name: "the owner's lookup fails", secret: func(t *testing.T) corev1.Secret { return sentinelSecret(t, sa, good) },
+			lookup: sentinelLookup{failing: true}, msg: "clientconfig owner not backfilled"},
 		{name: "the certificate is unreadable", secret: func(t *testing.T) corev1.Secret { return sentinelSecret(t, nil, "garbage") },
 			lookup: sentinelLookup{kind: "basic"}, msg: "identity annotations not backfilled"},
 		{name: "the write is refused", secret: func(t *testing.T) corev1.Secret { return sentinelSecret(t, nil, good) },
