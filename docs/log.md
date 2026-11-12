@@ -14,6 +14,22 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — authn's log lines carry no identity
+
+No authn log line names who signed in, was refused or acted (Diego's decision): no
+username, OIDC `sub`, LDAP DN, `authn.krateo.io/claim`, email, delegation subject or
+actor, caller, nor a person's groups, nor an object named after a user. The ruling is
+strict, with one exception: an ID token's `iss` on an issuer mismatch, which names the IdP.
+authn's errors say what failed, not who; the apiserver's are wrapped to an operation, a
+Kubernetes-defined reason and a code (`internal/helpers/kube/kerr`); text other systems
+write (an LDAP server's diagnostics, an IdP's `error_description`, snowplow's message and
+any reason of its own, the TokenReview's verdict) is reduced to its code or answered without being logged. Every
+line of a request, the issuance's included, carries the request's `session.id`, accepted
+only in audit's `session_id` format (audit#32); identity lives in the audit record, which the `session.id`
+joins. Sentinel tests (`internal/logtest`) drive the logins, `/delegate`, the generator,
+the backfill and the step-up sweep through their main branches and fail if a sentinel
+identity reaches a line; they cover the branches they drive, not every possible line.
+
 ## 2026-11-12 — authn's service name is `authn`
 
 authn named itself `auth`: the OpenTelemetry resource's `service.name`, its audit records'

@@ -71,6 +71,10 @@ func fromIdentitySource(strategy storage.Strategy) bool {
 // never issues.
 func reservedName(username string) bool { return usernames.Reserved(username) }
 
+// errUsernameUnavailable answers every refusal of a username. It names no
+// username: the error is logged as well as answered.
+var errUsernameUnavailable = errors.New("the username isn't available to this identity")
+
 // platformGroupPrefix marks the platform's own groups (krateo:services,
 // krateo:cdc:...): granted by administrator-provisioned identities only.
 const platformGroupPrefix = "krateo:"
@@ -86,7 +90,7 @@ func checkPlatformGroups(strategy storage.Strategy, user userinfo.Info) error {
 	for _, g := range user.GetGroups() {
 		if strings.HasPrefix(g, platformGroupPrefix) && !userinfo.IsReserved(g) {
 			return refused(RefusalPlatformGroup, status.Refused(status.CausePlatformGroupNotAllowed,
-				fmt.Errorf("group %q can't be asserted by an identity source: the %s prefix is the platform's", g, platformGroupPrefix)))
+				fmt.Errorf("a group carries the %s prefix, which an identity source can't assert: it is the platform's", platformGroupPrefix)))
 		}
 	}
 	return nil
@@ -98,7 +102,7 @@ func checkSystemGroups(user userinfo.Info) error {
 	for _, g := range user.GetGroups() {
 		if strings.HasPrefix(g, systemGroupPrefix) {
 			return refused(RefusalSystemGroup, status.Refused(status.CauseSystemGroupNotAllowed,
-				fmt.Errorf("group %q can't be issued: the %s prefix is reserved to Kubernetes", g, systemGroupPrefix)))
+				fmt.Errorf("a group carries the %s prefix, which is reserved to Kubernetes", systemGroupPrefix)))
 		}
 	}
 	return nil
@@ -115,24 +119,25 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 	if subject.ID == "" {
 		// Every login sets the subject. One that didn't can't be told apart
 		// from any other identity, so nothing is issued.
-		return "", status.Failed(status.CauseIssuanceFailed, fmt.Errorf("the %s login set no subject for %q", strategy, username))
+		return "", status.Failed(status.CauseIssuanceFailed, fmt.Errorf("the %s login set no subject for the identity", strategy))
 	}
 	claim := storage.EncodeClaim(strategy, subject.Issuer, subject.ID)
 	external := fromIdentitySource(strategy)
 
+	// Neither the log line nor the errors name the username or the claim: no
+	// log line carries an identity. The audit record of the refusal does.
 	refuse := func(why Refusal, reason string, args ...any) error {
-		private := fmt.Errorf("username %q: "+reason, append([]any{username}, args...)...)
-		g.log.Warn().Str("username", username).Str("strategy", string(strategy)).Str("claim", claim).
+		private := fmt.Errorf("the username "+reason, args...)
+		g.log.Warn().Str("strategy", string(strategy)).Str("refusal", string(why)).
 			Str("reason", private.Error()).Msg("username refused")
-		return refused(why, status.RefusedPrivately(status.CauseUsernameUnavailable,
-			fmt.Errorf("the username %q isn't available to this identity", username), private))
+		return refused(why, status.RefusedPrivately(status.CauseUsernameUnavailable, errUsernameUnavailable, private))
 	}
 	failed := func(err error) error {
-		return status.Failed(status.CauseIssuanceFailed, fmt.Errorf("checking username %q: %w", username, err))
+		return status.Failed(status.CauseIssuanceFailed, fmt.Errorf("checking the username: %w", err))
 	}
 
 	if external && reservedName(username) {
-		return "", refuse(RefusalReserved, "reserved")
+		return "", refuse(RefusalReserved, "is reserved")
 	}
 
 	sec, err := g.lookup.SessionSecret(ctx, username)
@@ -145,21 +150,21 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 			if have == claim {
 				return claim, nil
 			}
-			return "", refuse(RefusalClaimed, "claimed by another identity (%s)", have)
+			return "", refuse(RefusalClaimed, "is claimed by another identity")
 		}
 		// Written before claims existed: the strategy that wrote it adopts it.
 		wrote := storage.Strategy(ann[storage.StrategyAnnotation])
 		if wrote == strategy {
-			g.log.Info().Str("username", username).Str("strategy", string(strategy)).Str("claim", claim).
+			g.log.Info().Str("strategy", string(strategy)).
 				Msg("username claimed by its first login since claims exist")
 			return claim, nil
 		}
 		if !external && (wrote == "" || wrote == storage.StrategyUnknown) {
-			g.log.Info().Str("username", username).Str("strategy", string(strategy)).Str("claim", claim).
+			g.log.Info().Str("strategy", string(strategy)).
 				Msg("username claimed by its provisioned identity")
 			return claim, nil
 		}
-		return "", refuse(RefusalHeldLegacy, "its Secret was written by %q, not by a %s login", wrote, strategy)
+		return "", refuse(RefusalHeldLegacy, "has a Secret written by %q, not by a %s login", wrote, strategy)
 	}
 
 	if !external {
@@ -170,14 +175,14 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		return "", failed(err)
 	}
 	if provisioned {
-		return "", refuse(RefusalProvisioned, "an administrator provisioned it as a basic User or ServiceAccount mapping")
+		return "", refuse(RefusalProvisioned, "was provisioned by an administrator as a basic User or ServiceAccount mapping")
 	}
 	bound, err := g.lookup.BoundAsUser(ctx, username)
 	if err != nil {
 		return "", failed(err)
 	}
 	if bound {
-		return "", refuse(RefusalBound, "a RoleBinding or ClusterRoleBinding already grants rights to it")
+		return "", refuse(RefusalBound, "is already granted rights by a RoleBinding or ClusterRoleBinding")
 	}
 	return claim, nil
 }

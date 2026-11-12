@@ -14,7 +14,8 @@ import (
 
 // Middleware prepares each request for its audit records. It stamps when the
 // request was received, and it makes sure the context carries a session.id:
-// the inbound W3C baggage member when there is one, a minted one otherwise.
+// the inbound W3C baggage member when it is a well-formed one (audit.ValidSessionID),
+// a minted one otherwise.
 // Baggage is extracted here even with tracing off, when no otelhttp handler has
 // done it. Inside, audit.RecordedMiddleware marks the Server span of a request
 // that wrote a record, so observability keeps that trace whole.
@@ -29,22 +30,29 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// withSession returns ctx with a session.id baggage member: the one already in
-// ctx, else the one in the request's baggage header, else a minted one.
+// SessionID returns ctx's session.id when it is one authn accepts. After
+// Middleware, a request's always is.
+func SessionID(ctx context.Context) (string, bool) {
+	v := baggage.FromContext(ctx).Member(audit.BaggageSessionKey).Value()
+	return v, audit.ValidSessionID(v)
+}
+
+// withSession returns ctx with a session.id baggage member authn accepts
+// (audit.ValidSessionID): the one already in ctx, else the one in the request's
+// baggage header, else a minted one, which replaces a malformed one.
 func withSession(ctx context.Context, h http.Header) context.Context {
-	if baggage.FromContext(ctx).Member(audit.BaggageSessionKey).Key() != "" {
+	if _, ok := SessionID(ctx); ok {
 		return ctx
 	}
 	ctx = propagation.Baggage{}.Extract(ctx, propagation.HeaderCarrier(h))
-	b := baggage.FromContext(ctx)
-	if b.Member(audit.BaggageSessionKey).Key() != "" {
+	if _, ok := SessionID(ctx); ok {
 		return ctx
 	}
 	m, err := baggage.NewMember(audit.BaggageSessionKey, newSessionID())
 	if err != nil {
 		return ctx
 	}
-	b, err = b.SetMember(m)
+	b, err := baggage.FromContext(ctx).SetMember(m)
 	if err != nil {
 		return ctx
 	}

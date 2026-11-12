@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/krateo-platformops/audit"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/rs/zerolog"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -37,6 +39,13 @@ func Serve(all []Route, log zerolog.Logger) http.Handler {
 				lc = lc.
 					Str("trace_id", sc.TraceID().String()).
 					Str("span_id", sc.SpanID().String())
+			}
+			// The session.id auditlog.Middleware put on the request joins a
+			// log line to the request's audit record, which is where the
+			// identity is: no log line carries one.
+			// Only a well-formed one: a caller sets it.
+			if id, ok := auditlog.SessionID(req.Context()); ok {
+				lc = lc.Str(audit.BaggageSessionKey, id)
 			}
 			l := lc.Logger()
 			req = req.WithContext(l.WithContext(req.Context()))

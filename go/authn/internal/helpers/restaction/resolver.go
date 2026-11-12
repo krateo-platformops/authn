@@ -9,8 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 
 	"github.com/krateo-platformops/authn/apis/core"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/outbound"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 )
@@ -83,8 +85,20 @@ type SnowplowError struct {
 	Message string
 }
 
+// Error is the code and the reason, never the message, which can name stage
+// URLs built from the user's identity. The reason is repeated only when it is
+// one of Kubernetes' own (kerr.KnownReason), else "unknown": snowplow answers
+// its own reasons too, and authn adopts their set once snowplow exports it.
 func (e *SnowplowError) Error() string {
-	return fmt.Sprintf("snowplow answered %d %s: %s", e.Code, e.Reason, e.Message)
+	return fmt.Sprintf("snowplow answered %d %s", e.Code, e.SafeReason())
+}
+
+// SafeReason is Reason when it is a Kubernetes StatusReason, else "unknown".
+func (e *SnowplowError) SafeReason() string {
+	if kerr.KnownReason(e.Reason) {
+		return e.Reason
+	}
+	return "unknown"
 }
 
 func snowplowError(code int, body []byte) *SnowplowError {
@@ -97,4 +111,15 @@ func snowplowError(code int, body []byte) *SnowplowError {
 		st.Message = string(body)
 	}
 	return &SnowplowError{Code: code, Reason: st.Reason, Message: st.Message}
+}
+
+// Keys returns the keys of a RESTAction's answer, sorted: what a log line may
+// say about the answer, whose values are the user's identity.
+func Keys(answer map[string]interface{}) []string {
+	keys := make([]string, 0, len(answer))
+	for k := range answer {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

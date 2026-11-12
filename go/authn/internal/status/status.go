@@ -244,13 +244,18 @@ func New(code int, err error) Status {
 //   - 500: authn could not finish the job, and the same request may succeed
 //     once authn's dependency or configuration is fixed.
 //
-// Err is answered to the caller. Private, when set, is the real reason, which
-// only LogFailure sees: it is never part of the response.
+// Err is answered to the caller, and logged. Private, when set, is the real
+// reason, which only LogFailure sees: it is never part of the response.
+// Answered, when set, is the opposite: text answered after Err and never
+// logged. It is for text authn doesn't write and that may name an identity,
+// such as the apiserver's verdict on the caller's own token: the caller may
+// read it, a log line may not carry it.
 type CauseError struct {
-	Code    int
-	Cause   CauseType
-	Err     error
-	Private error
+	Code     int
+	Cause    CauseType
+	Err      error
+	Private  error
+	Answered string
 }
 
 func (e CauseError) Error() string { return e.Err.Error() }
@@ -292,5 +297,10 @@ func FromError(err error) Status {
 	if !errors.As(err, &ce) {
 		return New(http.StatusInternalServerError, err)
 	}
-	return New(ce.Code, err).WithCause(ce.Cause, ce.Err.Error())
+	msg, cause := err.Error(), ce.Err.Error()
+	if ce.Answered != "" {
+		msg += ": " + ce.Answered
+		cause += ": " + ce.Answered
+	}
+	return New(ce.Code, errors.New(msg)).WithCause(ce.Cause, cause)
 }

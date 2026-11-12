@@ -69,6 +69,24 @@ type IssueOptions struct {
 	Owner *metav1.OwnerReference
 	// Admit holds the caller's own admission checks (see Admit).
 	Admit []func(userinfo.Info) error
+	// Log, when set, is the logger of the request the credential is issued
+	// for (see Logger).
+	Log *zerolog.Logger
+}
+
+// Logger makes the issuance log with l, the request's logger, instead of the
+// generator's own: its lines then carry the request's session.id and trace,
+// which join them to the request's audit record. They name no identity.
+func Logger(l zerolog.Logger) IssueOption {
+	return func(o *IssueOptions) { o.Log = &l }
+}
+
+// logger is o's request logger, or def.
+func (o IssueOptions) logger(def zerolog.Logger) zerolog.Logger {
+	if o.Log != nil {
+		return *o.Log
+	}
+	return def
 }
 
 // Admit adds an admission check the identity must pass before anything is
@@ -185,6 +203,9 @@ type kubeconfigGenerator struct {
 	log           zerolog.Logger
 	lookup        NameLookup
 	lookupErr     error
+	// csrClient sends the CSRs. Nil builds one from restconfig; a test sets
+	// a fake signer.
+	csrClient kubernetes.Interface
 }
 
 // admit checks user's groups for `system:` ones, then asks the name guard
@@ -203,18 +224,19 @@ func refuseGroups(strategy storage.Strategy, user userinfo.Info) error {
 	return checkPlatformGroups(strategy, user)
 }
 
-func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Info) (string, error) {
+func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Info, log zerolog.Logger) (string, error) {
 	if g.lookupErr != nil {
 		return "", fmt.Errorf("building the name guard's cluster client: %w", g.lookupErr)
 	}
-	guard := nameGuard{lookup: g.lookup, log: g.log}
+	guard := nameGuard{lookup: g.lookup, log: log}
 	return guard.admit(context.Background(), strategy, user)
 }
 
 func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) (Issued, error) {
 	target := secretFor(userInfo, storage.ClientConfigSecretName)
 	o := NewIssueOptions(opts...)
-	if err := g.checkGroups(userInfo, false); err != nil {
+	log := o.logger(g.log)
+	if err := g.checkGroups(userInfo, false, log); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	if err := refuseGroups(strategy, userInfo); err != nil {
@@ -223,12 +245,12 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 	if err := o.CheckAdmit(userInfo); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
-	claim, err := g.admit(strategy, userInfo)
+	claim, err := g.admit(strategy, userInfo, log)
 	if err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 
-	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner, claim)
+	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner, claim, log)
 	if err != nil {
 		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
 	}
@@ -272,7 +294,8 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error) {
 	target := secretFor(userInfo, storage.StepUpSecretName)
 	o := NewIssueOptions(opts...)
-	if err := g.checkGroups(userInfo, true); err != nil {
+	log := o.logger(g.log)
+	if err := g.checkGroups(userInfo, true, log); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	if err := refuseGroups(strategy, userInfo); err != nil {
@@ -281,11 +304,11 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	if err := o.CheckAdmit(userInfo); err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
-	claim, err := g.admit(strategy, userInfo)
+	claim, err := g.admit(strategy, userInfo, log)
 	if err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
-	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, nil, claim)
+	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, nil, claim, log)
 	if err != nil {
 		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
 	}
@@ -353,7 +376,7 @@ func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string)
 // session credential may carry none, and a step-up credential must carry one.
 // A session identity that still has one was built without userinfo's guard,
 // and must fail loudly rather than be granted.
-func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) error {
+func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool, log zerolog.Logger) error {
 	// An identity whose groups cannot be recorded faithfully on its Secret
 	// must not be issued at all.
 	if err := storage.ValidateGroups(userInfo.GetGroups()); err != nil {
@@ -361,9 +384,9 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 	}
 
 	if dropped := userInfo.DroppedGroups(); len(dropped) > 0 {
-		g.log.Warn().
-			Str("username", userInfo.GetUserName()).
-			Strs("groups", dropped).
+		// The groups are the person's: the line counts them.
+		log.Warn().
+			Int("dropped", len(dropped)).
 			Msg("dropped reserved groups asserted by the identity source")
 	}
 
@@ -373,7 +396,7 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 			continue
 		}
 		if !stepUp {
-			return fmt.Errorf("group %q is reserved to authn and cannot be issued by a login", grp)
+			return fmt.Errorf("a group carries the %s prefix, which is reserved to authn and cannot be issued by a login", userinfo.ReservedGroupPrefix)
 		}
 		reserved++
 	}
@@ -385,7 +408,7 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool) e
 
 // issue mints a certificate for userInfo valid for duration and stores it as
 // the user's session or step-up credential.
-func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference, claim string) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference, claim string, log zerolog.Logger) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
@@ -394,7 +417,7 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 		g.caData = caCrt
 	}
 
-	certInfo, clusterInfo, notAfter, err := g.generateCertAndClusterInfo(userInfo, duration)
+	certInfo, clusterInfo, notAfter, err := g.generateCertAndClusterInfo(userInfo, duration, log)
 	if err != nil {
 		return certInfo, clusterInfo, notAfter, storage.Written{}, err
 	}
@@ -403,9 +426,9 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 	if errors.Is(err, storage.ErrClaimedByAnother) {
 		// Another identity claimed the name between the guard and this write.
 		// The certificate just minted is never stored or returned.
-		g.log.Warn().Str("username", userInfo.GetUserName()).Str("claim", claim).Err(err).Msg("username refused")
-		err = refused(RefusalClaimed, status.RefusedPrivately(status.CauseUsernameUnavailable,
-			fmt.Errorf("the username %q isn't available to this identity", userInfo.GetUserName()), err))
+		log.Warn().Str("strategy", string(strategy)).Str("refusal", string(RefusalClaimed)).
+			Err(err).Msg("username refused")
+		err = refused(RefusalClaimed, status.RefusedPrivately(status.CauseUsernameUnavailable, errUsernameUnavailable, err))
 	}
 	return certInfo, clusterInfo, notAfter, written, err
 }
@@ -426,7 +449,7 @@ func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy,
 	return g.store.Put(name, &nfo)
 }
 
-func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info, duration time.Duration) (certInfo CertInfo, clusterInfo ClusterInfo, notAfter time.Time, err error) {
+func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info, duration time.Duration, log zerolog.Logger) (certInfo CertInfo, clusterInfo ClusterInfo, notAfter time.Time, err error) {
 	if len(g.kubernetesURL) == 0 {
 		host, port := os.Getenv("KUBERNETES_SERVICE_HOST"), os.Getenv("KUBERNETES_SERVICE_PORT")
 		if len(host) == 0 || len(port) == 0 {
@@ -435,12 +458,16 @@ func (g *kubeconfigGenerator) generateCertAndClusterInfo(userInfo userinfo.Info,
 		g.kubernetesURL = "https://" + net.JoinHostPort(host, port)
 	}
 
-	cli, err := kubernetes.NewForConfig(g.restconfig)
-	if err != nil {
-		return certInfo, clusterInfo, notAfter, err
+	cli := g.csrClient
+	if cli == nil {
+		cs, err := kubernetes.NewForConfig(g.restconfig)
+		if err != nil {
+			return certInfo, clusterInfo, notAfter, err
+		}
+		cli = cs
 	}
 
-	cert, key, leaf, err := generateClientCertAndKey(cli, g.log, generateClientCertAndKeyOpts{
+	cert, key, leaf, err := generateClientCertAndKey(cli, log, generateClientCertAndKeyOpts{
 		userID:   userInfo.GetID(),
 		username: userInfo.GetUserName(),
 		groups:   userInfo.GetGroups(),

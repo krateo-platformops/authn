@@ -126,13 +126,12 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		if err != nil {
 			status.LogFailure(log, err).Str("name", name).
 				Str("dialURL", cfg.dialURL).
-				Str("user", lo.Username).
 				Msg("login with ldap server failed")
 			encode.Failure(wri, status.FromError(err))
 			return
 		}
 
-		issued, err := r.gen.Generate(storage.StrategyLDAP, nfo)
+		issued, err := r.gen.Generate(storage.StrategyLDAP, nfo, kubeconfig.Logger(log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyLDAP), nfo, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)

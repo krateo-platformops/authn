@@ -85,7 +85,8 @@ func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
 			require.NoError(t, json.Unmarshal(body, &sec))
 			if code := f.refuse[sec.Name]; code != 0 {
 				w.WriteHeader(code)
-				_, _ = fmt.Fprintf(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","code":%d}`, code)
+				// As the apiserver does, the message names the Secret.
+				_, _ = fmt.Fprintf(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","code":%d,"message":"secrets \"%s\" is refused"}`, code, sec.Name)
 				return
 			}
 			f.mu.Lock()

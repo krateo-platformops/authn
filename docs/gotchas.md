@@ -39,10 +39,12 @@ certificate is read (`config/gen.go`). Concurrent logins for one user, such as a
 login and a step-up, or two browser tabs, each get their own request. Before #49 the
 CSR was named after the user and an existing one was deleted and recreated, so
 concurrent logins raced. When you look for a user's CSR, match the `<username>-`
-prefix, not the bare name. A CSR left behind (e.g. authn crashed mid-login) is
-garbage-collected by the apiserver within an hour. authn's own certificate renewal
-doesn't use this path: it goes through plumbing's `signup`, which names the CSR
-`authn`, and its single writer is the Lease holder.
+prefix, not the bare name; the apiserver keeps at most 58 bytes of a generateName, so
+a long username is cut before the suffix. authn's log lines name a CSR by its UID only
+(`csr.uid`), since its name carries the username. A CSR left behind (e.g. authn
+crashed mid-login) is garbage-collected by the apiserver within an hour. authn's own
+certificate renewal doesn't use this path: it goes through plumbing's `signup`, which
+names the CSR `authn`, and its single writer is the Lease holder.
 
 ## A certificate's notBefore is 5 minutes before its issue
 The Kubernetes CSR signer backdates `notBefore` by 5 minutes to absorb clock skew, so
@@ -162,9 +164,10 @@ Groups prefixed `krateo:loa:` are reserved: they record a step-up login's assura
 level (#49), and admission policies trust them. If an IdP groups claim, a RESTAction, a
 basic `User` or a `ServiceAccount` mapping asserts one, authn drops it from both the
 certificate and the JWT, and logs `dropped reserved groups asserted by the identity
-source`. The guard is in `userinfo.NewDefaultUser`/`SetGroups`. As a backstop, the
-generator refuses to mint any identity that still carries one. Don't name a real
-group with this prefix: its members will lose it.
+source` with how many (`dropped`), not which or whose. The guard is in
+`userinfo.NewDefaultUser`/`SetGroups`. As a backstop, the generator refuses to mint any
+identity that still carries one. Don't name a real group with this prefix: its members
+will lose it.
 
 ## OIDC groups never come from UserInfo
 Missing `name`/`email`/`picture`/`preferred_username` claims trigger a UserInfo call,

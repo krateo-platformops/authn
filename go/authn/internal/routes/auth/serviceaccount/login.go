@@ -106,9 +106,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			encode.Failure(wri, status.FromError(err))
 			return
 		}
-		log.Debug().
-			Str("username", user.GetUserName()).
-			Str("groups", strings.Join(user.GetGroups(), ",")).
+		log.Debug().Str("principal", string(principal)).Int("groups", len(user.GetGroups())).
 			Msg("serviceaccount auth succeeded")
 
 		// Generate mints the client certificate and persists the identity's
@@ -121,7 +119,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// The Secret is owned by the mapping, so whoever retires the mapping
 		// (core-provider, on Undeploy) retires the credential with it, through
 		// the garbage collector, without needing delete rights on Secrets.
-		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner))
+		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner), kubeconfig.Logger(*log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyServiceAccount), user, principal, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)
@@ -216,12 +214,12 @@ func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) 
 	if !tr.Status.Authenticated {
 		// status.error is the apiserver's verdict on the caller's token
 		// (invalid signature, expired, deleted ServiceAccount): a refusal of
-		// the caller, not a failure of authn.
-		msg := "token not authenticated"
-		if tr.Status.Error != "" {
-			msg += ": " + tr.Status.Error
-		}
-		return nil, v, status.Refused(CauseTokenNotAuthenticated, errors.New(msg))
+		// the caller, not a failure of authn. Its text isn't authn's and can
+		// name the ServiceAccount, so it is answered to the caller and never
+		// logged (Answered).
+		ce := status.Refused(CauseTokenNotAuthenticated, errors.New("token not authenticated"))
+		ce.Answered = tr.Status.Error
+		return nil, v, ce
 	}
 	if !containsAudience(tr.Status.Audiences, audience) {
 		return nil, v, status.Refused(CauseAudienceMismatch, fmt.Errorf("token audience mismatch (require %q)", audience))
@@ -294,11 +292,11 @@ func containsAudience(auds []string, want string) bool {
 func parseServiceAccountUsername(u string) (namespace, name string, err error) {
 	const prefix = "system:serviceaccount:"
 	if !strings.HasPrefix(u, prefix) {
-		return "", "", fmt.Errorf("not a service account token (username %q)", u)
+		return "", "", errors.New("not a service account token (its username isn't system:serviceaccount:<namespace>:<name>)")
 	}
 	parts := strings.SplitN(strings.TrimPrefix(u, prefix), ":", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("malformed service account username %q", u)
+		return "", "", errors.New("malformed service account username")
 	}
 	return parts[0], parts[1], nil
 }

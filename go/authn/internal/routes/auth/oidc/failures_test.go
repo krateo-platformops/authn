@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/logtest"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -78,13 +79,16 @@ func answer(t *testing.T, rc *rest.Config, stepUp bool, query string, code strin
 	} else {
 		h = Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"}).Handler()
 	}
-	req := httptest.NewRequest(http.MethodGet, path+query, nil)
+	req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, path+query, nil))
 	if code != "" {
 		req.Header.Set("X-Auth-Code", code)
 	}
 	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
+	// The IdP's answers carry logtest.Marker: an error_description or body
+	// that names the user never reaches a log line, only the error code.
+	logtest.NoIdentityIfAny(t, logs)
 	return rec, gen
 }
 
@@ -151,12 +155,14 @@ func TestLoginFailuresCarryCauses(t *testing.T) {
 		{name: "a name no config can have", query: "?name=" + url.QueryEscape("a/b"), code: "c", wantCode: 404, wantCause: "OIDCConfigNotFound", noAPICall: true},
 		{name: "apiserver failing", api: apiAnswer(500), query: "?name=kc", code: "c", wantCode: 500, wantCause: "OIDCConfigLookupFailed"},
 		{name: "discovery failing", extraSpec: `"discoveryURL":"` + discovery503.URL + `"`, query: "?name=kc", code: "c", wantCode: 500, wantCause: "OIDCDiscoveryFailed"},
-		{name: "code refused", token: tokenAnswer(400, `{"error":"invalid_grant","error_description":"idp-internal-detail"}`),
-			query: "?name=kc", code: "c", wantCode: 403, wantCause: "AuthorizationCodeRejected", notInBody: "idp-internal-detail"},
-		{name: "client credentials refused", token: tokenAnswer(401, `{"error":"invalid_client","error_description":"idp-internal-detail"}`),
-			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "idp-internal-detail"},
-		{name: "token endpoint failing", token: tokenAnswer(502, `<html>idp-internal-detail</html>`),
-			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "idp-internal-detail"},
+		{name: "code refused", token: tokenAnswer(400, `{"error":"invalid_grant","error_description":"zz-sentinel-idp-detail"}`),
+			query: "?name=kc", code: "c", wantCode: 403, wantCause: "AuthorizationCodeRejected", notInBody: "zz-sentinel-idp-detail"},
+		{name: "client credentials refused", token: tokenAnswer(401, `{"error":"invalid_client","error_description":"zz-sentinel-idp-detail"}`),
+			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
+		{name: "token endpoint failing", token: tokenAnswer(502, `<html>zz-sentinel-idp-detail</html>`),
+			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
+		{name: "a 200 that isn't JSON", token: tokenAnswer(200, `<html>zz-sentinel-idp-detail</html>`),
+			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
 		{name: "token endpoint unreachable", extraSpec: `"tokenURL":"` + closedURL + `"`,
 			query: "?name=kc", code: "c", wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: closedURL},
 	}
@@ -193,7 +199,7 @@ func TestLoginFailuresCarryCauses(t *testing.T) {
 					assert.False(t, *asked, "answered before looking anything up")
 				}
 				if tc.notInBody != "" {
-					assert.NotContains(t, rec.Body.String(), tc.notInBody, "the IdP's answer and authn's endpoints stay in the server log")
+					assert.NotContains(t, rec.Body.String(), tc.notInBody, "the IdP's answer and authn's endpoints aren't repeated to the caller")
 				}
 			})
 		}

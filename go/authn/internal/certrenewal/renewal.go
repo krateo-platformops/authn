@@ -258,7 +258,7 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 	r.audit.ServiceCertIssued(ctx, auditlog.SecretRef{Namespace: written.Namespace, Name: written.Name,
 		UID: written.UID, ResourceVersion: written.ResourceVersion}, written.Verb, written.StatusCode, err)
 	if err != nil {
-		return retryInterval, fmt.Errorf("issuing a client certificate for %q: %w", r.username, err)
+		return retryInterval, fmt.Errorf("issuing authn's client certificate: %w", err)
 	}
 
 	r.annotate(ctx)

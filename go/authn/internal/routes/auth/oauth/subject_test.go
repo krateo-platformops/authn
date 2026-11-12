@@ -16,6 +16,8 @@ import (
 
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/logtest"
+	"github.com/krateo-platformops/authn/internal/logtest/gentest"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,14 @@ import (
 // oauthLogin runs one OAuth login whose RESTAction answers answer. restAction
 // false configures the OAuthConfig without a restActionRef.
 func oauthLogin(t *testing.T, answer string, restAction bool) (*httptest.ResponseRecorder, *fakeGenerator) {
+	t.Helper()
+	gen := &fakeGenerator{}
+	rec, _ := oauthLoginWith(t, answer, restAction, gen)
+	return rec, gen
+}
+
+// oauthLoginWith is oauthLogin with gen issuing, and the route's log lines.
+func oauthLoginWith(t *testing.T, answer string, restAction bool, gen *fakeGenerator) (*httptest.ResponseRecorder, *logtest.Buffer) {
 	t.Helper()
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -61,15 +71,14 @@ func oauthLogin(t *testing.T, answer string, restAction bool) (*httptest.Respons
 
 	base := xcontext.BuildContext(context.Background(), xcontext.WithAccessToken("authn-token"))
 	base = context.WithValue(base, restaction.RestActionContextKey("snowplowURL"), snowplow.URL)
-	gen := &fakeGenerator{}
 	audit, records := auditlogtest.New(t)
 	gen.records = records
-	route := Login(base, &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
-	req := httptest.NewRequest(http.MethodGet, Path+"?name=gh", nil)
+	route := Login(base, &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gentest.Generator{Generator: gen, T: t}, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+	req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, Path+"?name=gh", nil))
 	req.Header.Set("X-Auth-Code", "code")
 	rec := httptest.NewRecorder()
 	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
-	return rec, gen
+	return rec, logs
 }
 
 // The identity issued is named by the provider's stable id, which the

@@ -108,6 +108,51 @@ or expired credential. Every login answers this way since #81, which replaced th
 and oidc `417`s: a refused authorization code is a `403` (`AuthorizationCodeRejected`,
 warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
 
+### No identity in a log line
+
+No log line names an identity: not a username, an OIDC `sub`, an LDAP DN, a claim, an
+email, a delegation's subject or actor, a person's groups (counted, never listed), nor
+an object named after a user (Diego, 2026-11-12). The one exception is an ID token's
+`iss` on an `IssuerMismatch`: it names the IdP, which is configuration, not a person.
+Config names (an OIDCConfig's, a RESTAction's) and the IdP's URLs are configuration too.
+
+- **authn's own errors**, which `status.LogFailure` logs and the caller is often
+  answered, say what failed, not who. A group refusal names the rule (`system:`,
+  `krateo:`, `krateo:loa:` prefix), not the group.
+- **The apiserver's errors** about a session or step-up Secret, a basic User or its
+  password Secret, a ServiceAccount mapping, a CSR or the RBAC bindings are wrapped as
+  `<operation>: <reason> (<code>)` (`internal/helpers/kube/kerr`). Only a reason
+  Kubernetes defines is repeated (an admission webhook can answer any text); a request
+  that got no answer is described by its cause's kind, never by its URL.
+  `apierrors.IsNotFound` and the status code still work through the wrapper.
+- **A CSR that never got its certificate** is described from the CSR's state: timed
+  out, deleted, replaced, denied or failed. client-go's text, which names the CSR and
+  quotes the approver's message, is dropped.
+- **Text other systems write** never reaches a line: an LDAP server's diagnostic message
+  (only the result code, e.g. `LDAP result 49 (Invalid Credentials)`), an IdP's
+  `error_description` and token-endpoint body (only a registered OAuth `error` code,
+  e.g. `invalid_grant`), snowplow's message (only its code, and its reason when that is
+  one of Kubernetes' own StatusReasons, else `unknown`). The
+  TokenReview's `status.error` goes in `CauseError.Answered`: the caller is answered it,
+  no line carries it.
+- **Every line of a request carries its `session.id`**, the issuance's included: a route
+  hands the generator its logger (`kubeconfig.Logger`), so the name guard's, the
+  generator's and the CSR's lines join the request's audit record, where the identity
+  is. A `session.id` is accepted only in audit's `session_id` format (audit#32): 1 to 128
+  of `[A-Za-z0-9._-]` (`audit.ValidSessionID`, audit v0.11.0, the check audit's own
+  `Check` enforces); `auditlog.Middleware` replaces any other
+  inbound value with a minted one, so neither a log line nor an audit record's join key
+  is a caller's free text.
+- CSR lines name the CSR by its UID (`csr.uid`): its name starts with the username, and
+  the apiserver truncates a long one before its suffix. The backfill and the step-up
+  sweep name a Secret by its UID (`secret.uid`).
+
+The sentinel tests sign in with identities that carry a marker (`internal/logtest`) and
+fail if one reaches a line: each login, `/delegate`, the name guard, the generator (CSR
+and Secret failures, a username longer than a CSR's name keeps), the backfill and the
+step-up sweep, on the success, refusal and failure branches they drive. They cover the
+branches they drive, not every line authn can log.
+
 ### Login inputs per strategy
 
 - **basic** — HTTP `Authorization: Basic` header; `401` `MissingCredentials` with
@@ -192,8 +237,9 @@ warn), any other failed exchange a `500` (`TokenExchangeFailed`, error).
   `codeexchange.Refusal` (`internal/helpers/codeexchange`): the token endpoint's
   `error` `invalid_grant`, or GitHub's `bad_verification_code` (answered with HTTP
   `200`, which `x/oauth2` still reports as a `RetrieveError`), is `403`
-  `AuthorizationCodeRejected`; anything else is `500` `TokenExchangeFailed`. The
-  provider's answer goes to the log only (`CauseError.Private`). Every failure is a
+  `AuthorizationCodeRejected`; anything else is `500` `TokenExchangeFailed`. The log
+  gets the status and the `error` code (a registered one, else a placeholder), never the
+  `error_description` or the body (`codeexchange.Refusal`). Every failure is a
   `Status` with a cause ([api](./api.md#oauthlogin-failures)).
 - **oidc** — `?name=<OIDCConfig>` + `X-Auth-Code` header (a missing one is `400`
   `MissingAuthorizationCode` before any lookup), and optionally
@@ -453,8 +499,9 @@ The claim recorded on the Secret is `[strategy, issuer, id]`. The same person th
 strategies is two identities.
 
 **The rules**, in order. A refusal is `403` `UsernameUnavailable`, logged as the warn line
-`username refused` with the reason; the response says only that the name isn't
-available. A failed read is `500` `IssuanceFailed`.
+`username refused` with the strategy, the `refusal` and the reason, none naming the user or
+the claim; the response says only that the name isn't available. A failed read is `500`
+`IssuanceFailed`.
 1. An identity source may not take a **reserved** name: `admin`, `administrator`,
    `root`, `masterclient`, `nodeclient`, `aksservice`, or one starting with `system`,
    `kube-`, `kubelet`, `cluster-`, `gke-`, `eks-` or `aks-`. The names the platforms give
@@ -569,10 +616,11 @@ or a log line.
   them, once (`audit.AuthorizationAnnotations()`, schema v1's `content_annotations`). The startup backfill writes only to stamp one of them or an owner,
   so every backfill write is a record. The renewer's annotation sync is recorded when it
   changes one of them, not for the validity window alone.
-- **Every record** carries the request's `session.id` (inbound W3C baggage, or minted per
-  request), the source IPs, the user agent and whether the target's namespace is a
-  preview sandbox (from the Namespace's labels, read and cached for 5 minutes; the chart
-  grants `get` on authn's own Namespace only). Its body is a closed set of texts, never an
+- **Every record** carries the request's `session.id` (inbound W3C baggage when it has
+  audit's `session_id` format, otherwise minted per request; `audit.ValidSessionID`), the
+  source IPs, the user agent and whether the target's namespace is a preview sandbox
+  (from the Namespace's labels, read and cached for 5 minutes; the chart grants `get` on
+  authn's own Namespace only). Its body is a closed set of texts, never an
   error's. A request that wrote a record marks its Server span
   `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
   then drops, and `authn.audit.export.failed` counts the dropped records.

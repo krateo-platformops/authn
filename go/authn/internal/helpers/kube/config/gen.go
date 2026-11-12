@@ -42,15 +42,19 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 	// with another issuance for the same user.
 	csr, err = kube.CreateCertificateSigningRequest(client, csr)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("creating CSR kubernetes object: %w", err)
+		return "", "", nil, err
 	}
-	l.Debug().Str("crs.name", csr.Name).Msg("created certificate signing request")
+	// The CSR's name starts with the username, and the apiserver truncates a
+	// long one before it adds its suffix: the log lines name the CSR by its
+	// UID, which tells one issuance from another and names no one.
+	l = l.With().Str("csr.uid", string(csr.UID)).Logger()
+	l.Debug().Msg("created certificate signing request")
 
 	// The CSR is single-use: once the certificate is read, delete it rather
 	// than leave it for the apiserver's hourly garbage collection.
 	defer func() {
 		if err := kube.DeleteCertificateSigningRequest(client, csr.Name); err != nil {
-			l.Warn().Err(err).Str("crs.name", csr.Name).Msg("deleting used certificate signing request")
+			l.Warn().Err(err).Msg("deleting used certificate signing request")
 		}
 	}()
 
@@ -59,10 +63,10 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 	if err != nil {
 		return "", "", nil, err
 	}
-	l.Debug().Str("crs.name", csr.Name).Msg("approved certificate signing request")
+	l.Debug().Msg("approved certificate signing request")
 
 	// wait for certificate
-	l.Debug().Str("crs.name", csr.Name).Msg("waiting for certificate...")
+	l.Debug().Msg("waiting for certificate...")
 	crt, err := kube.WaitForCertificate(client, csr.Name, csr.UID)
 	if err != nil {
 		return "", "", nil, err
@@ -75,7 +79,6 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 
 	granted := kube.Lifetime(leaf)
 	l.Debug().
-		Str("crs.name", csr.Name).
 		Dur("requested", o.duration).
 		Dur("granted", granted).
 		Time("notAfter", leaf.NotAfter).
@@ -86,7 +89,6 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 	// so the cause is in the log the first time a session dies early.
 	if kube.MateriallyShorter(granted, o.duration) {
 		l.Warn().
-			Str("crs.name", csr.Name).
 			Dur("requested", o.duration).
 			Dur("granted", granted).
 			Time("notAfter", leaf.NotAfter).

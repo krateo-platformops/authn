@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/krateo-platformops/authn/internal/logtest"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -20,7 +21,8 @@ import (
 
 // Every way an OAuth login fails before an identity exists answers a code
 // that says whose failure it is and a cause that says which one, keeps the
-// provider's own words in the server log, and mints nothing.
+// provider's error_description out of the answer (and the log: only the error
+// code is repeated), and mints nothing.
 func TestLoginFailuresCarryCauses(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -54,17 +56,17 @@ func TestLoginFailuresCarryCauses(t *testing.T) {
 			secret:   &answer{200, `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"gh","namespace":"krateo-system"},"data":{}}`},
 			wantCode: 500, wantCause: "ClientSecretLookupFailed"},
 		{name: "code refused (RFC 6749)", query: "?name=gh", code: "c",
-			token:    &answer{400, `{"error":"invalid_grant","error_description":"idp-internal-detail"}`},
-			wantCode: 403, wantCause: "AuthorizationCodeRejected", notInBody: "idp-internal-detail"},
+			token:    &answer{400, `{"error":"invalid_grant","error_description":"zz-sentinel-idp-detail"}`},
+			wantCode: 403, wantCause: "AuthorizationCodeRejected", notInBody: "zz-sentinel-idp-detail"},
 		{name: "code refused (GitHub answers 200)", query: "?name=gh", code: "c",
-			token:    &answer{200, `{"error":"bad_verification_code","error_description":"idp-internal-detail"}`},
-			wantCode: 403, wantCause: "AuthorizationCodeRejected", notInBody: "idp-internal-detail"},
+			token:    &answer{200, `{"error":"bad_verification_code","error_description":"zz-sentinel-idp-detail"}`},
+			wantCode: 403, wantCause: "AuthorizationCodeRejected", notInBody: "zz-sentinel-idp-detail"},
 		{name: "client credentials refused", query: "?name=gh", code: "c",
-			token:    &answer{401, `{"error":"invalid_client","error_description":"idp-internal-detail"}`},
-			wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "idp-internal-detail"},
+			token:    &answer{401, `{"error":"invalid_client","error_description":"zz-sentinel-idp-detail"}`},
+			wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
 		{name: "token endpoint failing", query: "?name=gh", code: "c",
-			token:    &answer{502, `<html>idp-internal-detail</html>`},
-			wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "idp-internal-detail"},
+			token:    &answer{502, `<html>zz-sentinel-idp-detail</html>`},
+			wantCode: 500, wantCause: "TokenExchangeFailed", notInBody: "zz-sentinel-idp-detail"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -106,12 +108,14 @@ func TestLoginFailuresCarryCauses(t *testing.T) {
 
 			gen := &fakeGenerator{}
 			route := Login(t.Context(), &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
-			req := httptest.NewRequest(http.MethodGet, Path+tc.query, nil)
+			req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, Path+tc.query, nil))
 			if tc.code != "" {
 				req.Header.Set("X-Auth-Code", tc.code)
 			}
 			rec := httptest.NewRecorder()
 			route.Handler().ServeHTTP(rec, req)
+			// The IdP's answers carry logtest.Marker: only the error code is logged.
+			logtest.NoIdentity(t, logs)
 
 			require.Equal(t, tc.wantCode, rec.Code, rec.Body.String())
 			var st struct {
@@ -133,7 +137,7 @@ func TestLoginFailuresCarryCauses(t *testing.T) {
 				assert.False(t, asked, "answered before looking anything up")
 			}
 			if tc.notInBody != "" {
-				assert.NotContains(t, rec.Body.String(), tc.notInBody, "the provider's answer stays in the server log")
+				assert.NotContains(t, rec.Body.String(), tc.notInBody, "the provider's answer isn't repeated to the caller")
 			}
 		})
 	}

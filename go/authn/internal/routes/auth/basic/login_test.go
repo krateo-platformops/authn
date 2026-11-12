@@ -242,7 +242,8 @@ func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	assert.NotContains(t, unknown.Body.String(), "bob")
 
 	assert.Contains(t, wrongWhy, "wrong password")
-	assert.Contains(t, unknownWhy, "bob", "the apiserver's not-found error, in the log only")
+	assert.Contains(t, unknownWhy, "NotFound (404)", "the apiserver's not-found answer, in the log only")
+	assert.NotContains(t, unknownWhy, "bob", "the log names no user")
 	assert.Contains(t, unusableWhy, "not a valid User name")
 }
 
@@ -288,7 +289,7 @@ func TestLoginAnswersTheNameGuardsRefusal(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	gen := &fakeGenerator{err: kubeconfig.Refused(kubeconfig.RefusalProvisioned,
-		status.Refused(status.CauseUsernameUnavailable, errors.New(`the username "admin" isn't available to this identity`)))}
+		status.Refused(status.CauseUsernameUnavailable, errors.New(`the username isn't available to this identity`)))}
 	audit, records := auditlogtest.New(t)
 	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 
