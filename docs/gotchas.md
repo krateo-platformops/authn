@@ -180,7 +180,7 @@ The `status` map snowplow returns may set exactly `subject`, `name`, `email`,
 `preferredUsername`, `groups`, `avatarURL` (`updateConfig`). Any other key is ignored,
 not an error. On OAuth, `subject` is required since 0.41.0: GitHub's is
 `"subject": (.userInfo.id|tostring)`, a string. A number, or no `subject`, fails
-sign-in with `500` `RESTActionFailed`. A RESTAction must read the user's token as `${ .token }`, in a stage
+sign-in with `500` `RESTActionIdentityInvalid`. A RESTAction must read the user's token as `${ .token }`, in a stage
 header (never a path). There is no copy-and-inject fallback any more.
 
 ## Basic-auth passwords are stored in plaintext

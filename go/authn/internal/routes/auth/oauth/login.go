@@ -68,11 +68,12 @@ const (
 	CauseAuthorizationCodeRejected                  = codeexchange.CauseAuthorizationCodeRejected
 
 	// Failures of authn or its IdP (500).
-	CauseOAuthConfigLookupFailed  status.CauseType = "OAuthConfigLookupFailed"
-	CauseClientSecretLookupFailed status.CauseType = "ClientSecretLookupFailed"
-	CauseTokenExchangeFailed                       = codeexchange.CauseTokenExchangeFailed
-	CauseRESTActionFailed                          = restaction.CauseRESTActionFailed
-	CauseIssuanceFailed                            = status.CauseIssuanceFailed
+	CauseOAuthConfigLookupFailed   status.CauseType = "OAuthConfigLookupFailed"
+	CauseClientSecretLookupFailed  status.CauseType = "ClientSecretLookupFailed"
+	CauseTokenExchangeFailed                        = codeexchange.CauseTokenExchangeFailed
+	CauseRESTActionFailed                           = restaction.CauseRESTActionFailed
+	CauseRESTActionIdentityInvalid                  = restaction.CauseRESTActionIdentityInvalid
+	CauseIssuanceFailed                             = status.CauseIssuanceFailed
 )
 
 type loginRoute struct {
@@ -160,18 +161,26 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			}
 			ref := restactionRef
 			additionalFieldstoReplace, err := restaction.Resolve(callCtx, ref, tok.AccessToken)
-			if err == nil {
-				if v, ok := additionalFieldstoReplace["name"].(string); !ok || v == "" {
-					err = errors.New("the RESTAction's answer has no name")
-				} else if v, ok := additionalFieldstoReplace["subject"].(string); !ok || v == "" {
-					// Without the provider's stable id, authn can't tell this
-					// user from another who takes the same login later.
-					err = errors.New(`the RESTAction's answer has no subject (the provider's stable user id, e.g. "subject": (.userInfo.id|tostring))`)
-				}
-			}
 			if err != nil {
+				// Not resolved: snowplow answered an error, or nothing answered.
 				err = restaction.Failed(err)
 				status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("unable to resolve restaction")
+				encode.Failure(wri, status.FromError(err))
+				return
+			}
+			// Resolved, but an answer without a name or a subject identifies no
+			// one: for an administrator to fix, not for a retry.
+			var invalid error
+			if v, ok := additionalFieldstoReplace["name"].(string); !ok || v == "" {
+				invalid = errors.New("the RESTAction's answer has no name")
+			} else if v, ok := additionalFieldstoReplace["subject"].(string); !ok || v == "" {
+				// Without the provider's stable id, authn can't tell this
+				// user from another who takes the same login later.
+				invalid = errors.New(`the RESTAction's answer has no subject (the provider's stable user id, e.g. "subject": (.userInfo.id|tostring))`)
+			}
+			if invalid != nil {
+				err = restaction.IdentityInvalid(invalid)
+				status.LogFailure(log, err).Str("name", name).Str("restaction", ref.Namespace+"/"+ref.Name).Msg("the RESTAction's answer identifies no one")
 				encode.Failure(wri, status.FromError(err))
 				return
 			}
@@ -179,7 +188,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			log.Debug().Str("name", name).Strs("fields", restaction.Keys(additionalFieldstoReplace)).Msg("values to replace")
 			userinfo, err = updateConfig(userinfo, additionalFieldstoReplace)
 			if err != nil {
-				err = status.Failed(CauseRESTActionFailed, fmt.Errorf("the RESTAction's answer is unusable: %w", err))
+				err = restaction.IdentityInvalid(fmt.Errorf("the RESTAction's answer is unusable: %w", err))
 				status.LogFailure(log, err).Str("name", name).Msg("unable to parse updated config from restaction")
 				encode.Failure(wri, status.FromError(err))
 				return
@@ -189,7 +198,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		if restactionRef == nil {
 			// Only a RESTAction can say who signed in: an OAuthConfig
 			// without one identifies no one.
-			err := status.Failed(CauseRESTActionFailed, errors.New("the OAuthConfig has no restActionRef, so authn can't identify the user"))
+			err := restaction.IdentityInvalid(errors.New("the OAuthConfig has no restActionRef, so authn can't identify the user"))
 			status.LogFailure(log, err).Str("name", name).Msg("unable to identify the user")
 			encode.Failure(wri, status.FromError(err))
 			return
