@@ -597,20 +597,22 @@ or a log line.
   `SubjectTokenInvalid`. It's `failure` when signing fails. An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
-- **`/usernames/check`** (audit v0.9.1). The actor is the caller's mapping, of its declared
+- **`/usernames/check`** (audit v0.10.0). The actor is the caller's mapping, of its declared
   class, as on `/delegate`. The target is the checked name's `<username>-clientconfig`
   Secret, the one a sign-in under that name would write and its refusals name, so one
-  `object_ref` query joins a name's checks, refusals and logins. The verb is `get`. A body
-  that names no username has no Secret to name: the record names the resource, without a
-  name or a verb.
+  `object_ref` query joins a name's checks, refusals and logins. The verb is `get` on every
+  record. The Secret is named only when deriving its name leaves the username unchanged
+  (`kubeutil.MakeDNS1123Compatible`): `Alice@Example` would otherwise land on
+  `aliceexample-clientconfig`, another user's Secret. An empty or rewritten name, or a body
+  that names none, gets the resource without a name.
   - `success` whenever the check completed, available or not, with
     `krateo.audit.check_result`: `available`, `reserved`, `name_claimed`,
     `name_held_legacy`, `name_provisioned`, `name_bound` or `invalid`. That isn't a denial,
     since the caller wasn't refused;
   - `denied` for a mapping without `spec.usernameCheck.allowed`
     (`username_check_not_allowed`, naming the name the body asked about), and for a body
-    that names no username or isn't JSON (no reason: the schema declares none). No check
-    ran, so there's no `check_result`;
+    that names no username or isn't JSON (`invalid_request`, audit v0.10.0). No check ran,
+    so there's no `check_result`;
   - `failure` when a lookup fails (the caller gets `503`), with the apiserver's code only
     when it answered.
 

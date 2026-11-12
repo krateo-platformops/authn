@@ -126,7 +126,7 @@ func (r *route) Handler() http.HandlerFunc {
 
 		username, err := readUsername(req)
 		if err != nil {
-			record("", audit.OutcomeDenied, "", auditlog.NoCheckDenial, 0)
+			record("", audit.OutcomeDenied, "", auditlog.CheckInvalidRequest, 0)
 			fail(err, "username check request refused")
 			return
 		}

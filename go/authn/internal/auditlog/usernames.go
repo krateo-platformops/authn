@@ -27,12 +27,14 @@ const (
 type CheckDenial string
 
 const (
-	// NoCheckDenial: the outcome isn't denied, or authn refused without a
-	// reason the schema declares (a body it couldn't read).
+	// NoCheckDenial: the outcome isn't denied.
 	NoCheckDenial CheckDenial = ""
 	// CheckNotAllowed: the caller's mapping doesn't set
 	// spec.usernameCheck.allowed.
 	CheckNotAllowed CheckDenial = audit.DenialReasonUsernameCheckNotAllowed
+	// CheckInvalidRequest: the body names no username, or isn't a JSON object
+	// within the bound (audit v0.10.0).
+	CheckInvalidRequest CheckDenial = audit.DenialReasonInvalidRequest
 )
 
 // UsernameCheck records one /usernames/check decision about a caller whose
@@ -40,6 +42,9 @@ const (
 // the check completed (success, whatever it concluded), refused (denied: the
 // mapping hasn't opted in, or the body named no username) or failed (a lookup
 // failed, so the caller was told nothing).
+//
+// Every denial carries its reason: username_check_not_allowed, or
+// invalid_request for a body authn couldn't read.
 //
 // The actor is the caller's mapping, of its declared class, as on /delegate.
 // The record is a read, verb get, of the checked name's <username>-clientconfig
