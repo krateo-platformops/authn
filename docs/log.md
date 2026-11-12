@@ -14,6 +14,21 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — an identity source's name is issued only in the form its Secret is named
+
+A session Secret is named after the username through a rewrite (lowercase, only
+`[-a-z0-9]`, at most 63). LDAP issued an entry's `uid` as is, so a `uid` such as
+`Alice.Smith` got a certificate for `Alice.Smith` and a Secret `alicesmith-clientconfig`,
+and a tenant generated from that Secret was bound to `alicesmith`: a user whose tenant
+didn't work. The name guard now refuses, for an identity source, a name the rewrite would
+change: `403 UsernameUnavailable`, recorded `denied` with `name_not_issued` (audit
+v0.10.0). OAuth and OIDC already normalize theirs. Administrator-provisioned names (basic
+Users, ServiceAccount mappings) are not refused: 057 has basic Users with dotted names and
+demo a 65-character controller mapping, which keep signing in (Diego); #140 tracks their
+Secret's name. A refusal's record now names the derived Secret only when the rewrite leaves
+the username unchanged, so a rewritten name's refusal never shows on another user's
+records (#138).
+
 ## 2026-11-12 — authn's log lines carry no identity
 
 No authn log line names who signed in, was refused or acted (Diego's decision): no

@@ -14,6 +14,13 @@ const (
 	RefusalNameMissing Refusal = "name_missing"
 	// RefusalReserved: an identity source asked for a reserved name.
 	RefusalReserved Refusal = "name_reserved"
+	// RefusalNotIssued: an identity source asked for a name authn would issue
+	// in another form: the session Secret's name is derived from the username
+	// (lowercased, cut to [-a-z0-9], at most 63), and for this one the
+	// derivation rewrites it, so the certificate's name and the Secret's (and
+	// everything generated from the Secret, such as a tenant's RoleBinding)
+	// would differ.
+	RefusalNotIssued Refusal = "name_not_issued"
 	// RefusalClaimed: another identity holds the name's claim. A login that
 	// loses the race to a simultaneous first login gets it too.
 	RefusalClaimed Refusal = "name_claimed"
@@ -59,7 +66,7 @@ func refused(reason Refusal, err error) error { return refusedError{reason: reas
 
 // Refusals lists every Refusal, for a caller that maps them (the audit record's
 // denial reason) to prove its map complete.
-var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
+var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalNotIssued, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
 	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup,
 	RefusalStepUpNotEnabled, RefusalInsufficientAssurance, RefusalStaleAuthentication}
 

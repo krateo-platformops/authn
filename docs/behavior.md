@@ -507,12 +507,20 @@ the claim; the response says only that the name isn't available. A failed read i
    `kube-`, `kubelet`, `cluster-`, `gke-`, `eks-` or `aks-`. The names the platforms give
    their own components, which the cluster may grant rights to before any binding names
    them.
-2. If the name's session Secret has a **claim**, the name goes only to that identity.
-3. A Secret written **before claims existed** is adopted by the first login of the
+2. An identity source may not take a name **authn would issue in another form**
+   (`name_not_issued`): one the session Secret's name derivation rewrites (lowercase,
+   only `[-a-z0-9]`, at most 63, `kubeutil.MakeDNS1123Compatible`). Its certificate would
+   carry one name and its Secret, and anything generated from the Secret such as a
+   tenant's RoleBinding, another. LDAP issues the entry's `uid` as is, so an entry like
+   `Alice.Smith` is refused; OAuth and OIDC normalize the name first. It is checked
+   before any read. A basic User or a mapping isn't held to it: an administrator chose
+   its name, and it signs in as before (#140 tracks its Secret's name).
+3. If the name's session Secret has a **claim**, the name goes only to that identity.
+4. A Secret written **before claims existed** is adopted by the first login of the
    strategy that wrote it (`authn.krateo.io/strategy`). A basic User or a mapping also
    adopts one whose strategy is `unknown` or missing, since an administrator chose its
    name. An identity source never adopts one of unknown origin.
-4. With no Secret, a basic User or a mapping gets its name: an administrator chose it.
+5. With no Secret, a basic User or a mapping gets its name: an administrator chose it.
    An identity source doesn't if an administrator **provisioned** the name as a basic
    User or a ServiceAccount mapping, or if any RoleBinding or ClusterRoleBinding in the
    cluster names it as a **User subject**. That covers users the platform binds for its
@@ -564,8 +572,10 @@ or a log line.
     Secret it would have written, with the verb it would have sent, and no status code,
     since authn refused before asking the apiserver. An identity with no username has no
     Secret name, so its record names the Secret resource in authn's namespace, without a
-    name or a verb. `krateo.audit.denial_reason` says why, from a
-    closed set: `name_missing`, `name_reserved`, `name_claimed`, `name_held_legacy`,
+    name or a verb; so does one whose username the Secret-name derivation rewrites, whose
+    derived Secret isn't its own and may be another user's (#138; audit's derived-Secret
+    naming rule). `krateo.audit.denial_reason` says why, from a
+    closed set: `name_missing`, `name_reserved`, `name_not_issued`, `name_claimed`, `name_held_legacy`,
     `name_provisioned`, `name_bound`, `system_group`, `platform_group`,
     `group_not_allowed`, `stepup_not_enabled`, `insufficient_assurance`,
     `stale_authentication`. The HTTP answer stays opaque;

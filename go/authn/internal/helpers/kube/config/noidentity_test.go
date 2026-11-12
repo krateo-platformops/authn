@@ -268,10 +268,17 @@ func sentinelUser(username string) *userinfo.DefaultUser {
 // keeps of a CSR's generateName is no exception.
 func TestGenerateLogsNoIdentity(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
-	mine := storage.EncodeClaim(storage.StrategyOIDC, "kc", logtest.Subject)
-	theirs := storage.EncodeClaim(storage.StrategyOIDC, "kc", logtest.Marker+"-other")
-
+	// An identity source's name is at most 63, in the form authn issues
+	// (anything else is refused, name_not_issued). A name longer than the
+	// apiserver keeps of a CSR's generateName comes only from an
+	// administrator-provisioned identity, so the long one is a basic User.
 	for _, username := range []string{logtest.User, logtest.LongUser} {
+		strategy := storage.StrategyOIDC
+		if len(username) > 63 {
+			strategy = storage.StrategyBasic
+		}
+		mine := storage.EncodeClaim(strategy, "kc", logtest.Subject)
+		theirs := storage.EncodeClaim(strategy, "kc", logtest.Marker+"-other")
 		for _, tc := range []struct {
 			name    string
 			replies secretReplies
@@ -300,7 +307,7 @@ func TestGenerateLogsNoIdentity(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", tc.name, len(username)), func(t *testing.T) {
 				logs, l := logtest.Capture()
 				gen := generator(t, storage.ClientConfigSecretName(username), tc.replies, tc.signer, l)
-				_, err := gen.Generate(storage.StrategyOIDC, sentinelUser(username))
+				_, err := gen.Generate(strategy, sentinelUser(username))
 				logFailure(l, err)
 
 				require.Contains(t, logs.String(), "dropped reserved groups")
@@ -315,7 +322,9 @@ func TestGenerateLogsNoIdentity(t *testing.T) {
 func TestGenerateStepUpLogsNoIdentity(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
 	mine := storage.EncodeClaim(storage.StrategyOIDC, "kc", logtest.Subject)
-	for _, username := range []string{logtest.User, logtest.LongUser} {
+	// Step-up is OIDC's, whose names are at most 63: the long name is refused
+	// below (name_not_issued), with no identity in the log either.
+	for _, username := range []string{logtest.User} {
 		t.Run(fmt.Sprint(len(username)), func(t *testing.T) {
 			logs, l := logtest.Capture()
 			gen := generator(t, storage.StepUpSecretName(username), secretReplies{create: http.StatusCreated, claim: mine}, nil, l)

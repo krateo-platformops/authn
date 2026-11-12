@@ -9,6 +9,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/kubeutil"
 	"github.com/krateo-platformops/plumbing/usernames"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
@@ -138,6 +139,16 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 
 	if external && reservedName(username) {
 		return "", refuse(RefusalReserved, "is reserved")
+	}
+	// An identity source picks the name (LDAP issues the entry's uid as is;
+	// OAuth and OIDC normalize theirs first, so for them this never fires).
+	// One the Secret-name derivation would rewrite gets a certificate under one
+	// name and a Secret, and its tenant, under another, so it is refused here,
+	// before any read (Diego, 2026-11-12). An administrator-provisioned name
+	// (a basic User, a ServiceAccount mapping) isn't checked: it signs in as
+	// it always has (authn#140).
+	if external && kubeutil.MakeDNS1123Compatible(username) != username {
+		return "", refuse(RefusalNotIssued, "is not in the form authn issues")
 	}
 
 	sec, err := g.lookup.SessionSecret(ctx, username)

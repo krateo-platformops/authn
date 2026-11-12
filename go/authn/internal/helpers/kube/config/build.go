@@ -14,6 +14,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/kubeutil"
 	"github.com/rs/zerolog"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -353,13 +354,20 @@ func (g *kubeconfigGenerator) wouldWrite(name string) storage.Written {
 	return w
 }
 
-// secretFor is name(user's username), or "" for an identity with no username,
-// which no Secret can be named for.
+// secretFor is name(user's username): the Secret a refused or failed
+// issuance names in its audit record. It is "" for an identity with no
+// username, and for a username the Secret-name derivation rewrites
+// (kubeutil.MakeDNS1123Compatible, the transform inside the Secret names):
+// that Secret isn't the name's own, and may be another user's, so naming it
+// would show the refusal on that user's records (authn#138; audit's
+// derived-Secret naming rule, v0.10.0). The record then names the Secret
+// resource without a name, as for no username.
 func secretFor(user userinfo.Info, name func(string) string) string {
-	if user.GetUserName() == "" {
+	username := user.GetUserName()
+	if username == "" || kubeutil.MakeDNS1123Compatible(username) != username {
 		return ""
 	}
-	return name(user.GetUserName())
+	return name(username)
 }
 
 // orWouldWrite is written when Put sent a request, else wouldWrite(name).

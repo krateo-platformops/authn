@@ -256,6 +256,7 @@ const (
 var denialReasons = map[config.Refusal]string{
 	config.RefusalNameMissing:     audit.DenialReasonNameMissing,
 	config.RefusalReserved:        audit.DenialReasonNameReserved,
+	config.RefusalNotIssued:       audit.DenialReasonNameNotIssued,
 	config.RefusalClaimed:         audit.DenialReasonNameClaimed,
 	config.RefusalHeldLegacy:      audit.DenialReasonNameHeldLegacy,
 	config.RefusalProvisioned:     audit.DenialReasonNameProvisioned,
