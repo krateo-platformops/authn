@@ -378,7 +378,7 @@
                 "type": "string",
                 "minLength": 1,
                 "title": "Key ID",
-                "description": "The kid the retired key signed with. No commas, equals signs or whitespace: entries are passed as kid=path,\u2026",
+                "description": "The kid the retired key signed with. No commas, equals signs or whitespace: entries are passed as kid=path,…",
                 "pattern": "^[^,=\\s]+$"
               },
               "secretName": {

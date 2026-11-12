@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,7 +20,6 @@ import (
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
 	"github.com/krateo-platformops/authn/internal/leader"
 	"github.com/krateo-platformops/authn/internal/middlewares/cors"
-	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/routes/health"
@@ -226,7 +224,7 @@ func main() {
 		log.Fatal().Err(err).Msg("building the audit recorders")
 	}
 
-	all, err := buildRoutes(routeOptions{
+	ro := routeOptions{
 		RestConfig:             cfg,
 		Generator:              gen,
 		PrivateKey:             privateKey,
@@ -241,7 +239,9 @@ func main() {
 		Version:                Version,
 		ServiceName:            serviceName,
 		Audit:                  auditRec,
-	})
+	}
+	// Inside otelhttp, so the Server span is active when a record marks it.
+	handler, internalHandler, err := listenerHandlers(ro, log)
 	if err != nil {
 		log.Fatal().Err(err).Msg("building routes")
 	}
@@ -256,18 +256,6 @@ func main() {
 				Msg("OIDCConfig sets neither spec.issuer nor spec.discoveryURL: its logins are refused until one is set")
 		}
 	}
-
-	// Inside otelhttp, so the Server span is active when a record marks it.
-	var handler http.Handler = auditlog.Middleware(routes.Serve(all, log))
-
-	// The internal listener serves only what in-cluster services call
-	// (buildInternalRoutes). It has its own port and Service, which no public
-	// route references, and the public listener never serves its paths.
-	var internalHandler http.Handler = auditlog.Middleware(routes.Serve(buildInternalRoutes(routeOptions{
-		RestConfig:             cfg,
-		ServiceAccountAudience: *serviceAccountAudience,
-		Audit:                  auditRec,
-	}), log))
 
 	// OpenTelemetry HTTP server instrumentation (gated, default OFF). When
 	// metrics are opted in, emit http.server.* instruments; when tracing is
@@ -309,22 +297,9 @@ func main() {
 		handler = c.Handler(handler)
 	}
 
-	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", *servicePort),
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 50 * time.Second,
-		IdleTimeout:  30 * time.Second,
-	}
-	if *internalPort == *servicePort {
-		log.Fatal().Int("port", *internalPort).Msg("the internal listener must not share the public port")
-	}
-	internalServer := &http.Server{
-		Addr:         fmt.Sprintf(":%d", *internalPort),
-		Handler:      internalHandler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 20 * time.Second,
-		IdleTimeout:  30 * time.Second,
+	server, internalServer, err := newServers(handler, internalHandler, *servicePort, *internalPort)
+	if err != nil {
+		log.Fatal().Err(err).Msg("building the listeners")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), []os.Signal{
@@ -479,17 +454,18 @@ func main() {
 		log.Err(err).Msg("error shutting down OpenTelemetry")
 	}
 
-	server.SetKeepAlivesEnabled(false)
-	internalServer.SetKeepAlivesEnabled(false)
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatal().Err(err).Msg("server forced to shutdown")
+	// Both listeners stop accepting at once and drain together, within ctx.
+	shutdownErr := shutdownServers(ctx, server, internalServer)
+	if shutdownErr != nil {
+		log.Err(shutdownErr).Msg("server forced to shutdown")
 	}
-	if err := internalServer.Shutdown(ctx); err != nil {
-		log.Fatal().Err(err).Msg("internal server forced to shutdown")
-	}
-	// After the server: the requests it drained may still be writing records.
+	// After the servers, even when one was forced: the requests they drained
+	// may still be writing records.
 	if err := auditShutdown(ctx); err != nil {
 		log.Err(err).Msg("flushing audit records")
+	}
+	if shutdownErr != nil {
+		os.Exit(1)
 	}
 
 	log.Info().Msg("server gracefully stopped")

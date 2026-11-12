@@ -119,7 +119,7 @@ func (r *route) Handler() http.HandlerFunc {
 			username, _ := readUsername(req)
 			record(username, audit.OutcomeDenied, "", auditlog.CheckNotAllowed, 0)
 			fail(status.Refused(CauseUsernameCheckNotAllowed,
-				fmt.Errorf("the ServiceAccount mapping %s doesn't set spec.usernameCheck.allowed", caller.Name)),
+				errors.New("the caller's ServiceAccount mapping doesn't set spec.usernameCheck.allowed")),
 				"username check refused")
 			return
 		}
@@ -144,13 +144,14 @@ func (r *route) Handler() http.HandlerFunc {
 			// Fail closed: the caller can't know, so it treats the name as
 			// unavailable and retries.
 			record(username, audit.OutcomeFailure, "", auditlog.NoCheckDenial, answeredCode(err))
-			fail(checkFailed(fmt.Errorf("checking username %q: %w", username, err)), "username check failed")
+			fail(checkFailed(fmt.Errorf("checking the username: %w", err)), "username check failed")
 			return
 		}
 		record(username, audit.OutcomeSuccess, checkResult(why), auditlog.NoCheckDenial, 0)
 
-		log.Info().Str("caller", caller.Name).Bool("available", why == "").Str("reason", string(why)).
-			Msg("username checked")
+		// No identity in the log line, the caller's or the name's: the audit
+		// record carries both (Diego, 2026-11-12).
+		log.Info().Bool("available", why == "").Str("reason", string(why)).Msg("username checked")
 		wri.Header().Set("Content-Type", "application/json")
 		wri.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(wri).Encode(Response{Available: why == "", Reason: why})

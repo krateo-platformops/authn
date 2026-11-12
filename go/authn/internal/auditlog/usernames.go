@@ -8,6 +8,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/plumbing/jwtutil"
+	"github.com/krateo-platformops/plumbing/kubeutil"
 )
 
 // ActionUsernameCheck is POST /usernames/check's krateo.action: whether a
@@ -44,9 +45,9 @@ const (
 // The record is a read, verb get, of the checked name's <username>-clientconfig
 // Secret in authn's namespace: what a sign-in under that name would write, and
 // what its refusals name, so one object_ref query joins a name's checks,
-// refusals and logins. username "" (absent, or a body authn couldn't read)
-// names the resource without a name, and no verb, as a name_missing login
-// record does.
+// refusals and logins. The verb is get on every record, since the check is a
+// read whatever the name. A name whose Secret isn't its own (checkedSecret)
+// names the resource without a name, as a name_missing login record does.
 //
 // result is the check's answer (audit.CheckResult*), on a success only.
 // statusCode is the apiserver's answer to a failed lookup, 0 when none came;
@@ -68,10 +69,10 @@ func (r *Recorder) UsernameCheck(req *http.Request, caller *sav1alpha1.ServiceAc
 	if ns, err := util.GetOperatorNamespace(); err == nil {
 		ev.Namespace = ns
 	}
-	if username != "" {
-		ev.ObjectName = storage.ClientConfigSecretName(username)
-		ev.Verb, ev.HTTPMethod = "get", methodOf("get")
-	}
+	// The check is a read whatever the name: unlike a nameless login, which
+	// can't know whether it would have created or updated, its verb is known.
+	ev.Verb, ev.HTTPMethod = "get", methodOf("get")
+	ev.ObjectName = checkedSecret(username)
 	if c, ok := audit.ParseClaim(string(principal)); ok {
 		ev.ActorClass = c
 	}
@@ -91,4 +92,21 @@ func (r *Recorder) UsernameCheck(req *http.Request, caller *sav1alpha1.ServiceAc
 	ev.Preview = r.previewOf(ctx, ev.Namespace)
 	r.request(req, &ev, nil) // the username comes in the body only
 	r.req.Emit(ctx, ev)
+}
+
+// checkedSecret is the <username>-clientconfig Secret the record names, or ""
+// when that Secret isn't the name's own: username is empty (absent, or a body
+// authn couldn't read), or deriving the Secret's name rewrites it. The
+// derivation (endpoints.SecretName) lowercases, strips what an object name
+// can't hold and truncates, so Alice@Example would land on
+// aliceexample-clientconfig, which can be a real user's Secret, and a query for
+// that user would show checks for names that were never theirs. The condition
+// is the derivation's own transform, so the two can't drift (snowplow,
+// 2026-11-12). A reserved but well-formed name, such as admin, is named, so its
+// checks join its sign-in refusals.
+func checkedSecret(username string) string {
+	if username == "" || kubeutil.MakeDNS1123Compatible(username) != username {
+		return ""
+	}
+	return storage.ClientConfigSecretName(username)
 }
