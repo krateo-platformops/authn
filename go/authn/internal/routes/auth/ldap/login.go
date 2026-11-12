@@ -131,7 +131,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 			return
 		}
 
-		issued, err := r.gen.Generate(storage.StrategyLDAP, nfo)
+		issued, err := r.gen.Generate(storage.StrategyLDAP, nfo, kubeconfig.Logger(log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyLDAP), nfo, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)

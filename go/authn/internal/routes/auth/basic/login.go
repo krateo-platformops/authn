@@ -150,7 +150,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 		log.Debug().Int("groups", len(user.GetGroups())).Msg("basic auth succeded")
 
-		issued, err := r.gen.Generate(storage.StrategyBasic, user)
+		issued, err := r.gen.Generate(storage.StrategyBasic, user, kubeconfig.Logger(log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyBasic), user, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)

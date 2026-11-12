@@ -13,6 +13,7 @@ import (
 
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/logtest"
+	"github.com/krateo-platformops/authn/internal/logtest/gentest"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,7 +105,7 @@ func TestServiceAccountLoginLogsNoIdentity(t *testing.T) {
 				tc.mappings = one
 			}
 			srv := sentinelAPIServer(t, tc.review, tc.mappingsCode, tc.mappings)
-			route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: &fakeGenerator{err: tc.generateErr},
+			route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gentest.Generator{Generator: &fakeGenerator{err: tc.generateErr}, T: t},
 				JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 
 			req, logs := logtest.Request(httptest.NewRequest(http.MethodPost, Path, nil))
@@ -115,6 +116,9 @@ func TestServiceAccountLoginLogsNoIdentity(t *testing.T) {
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
 			if tc.answered != "" {
 				assert.Contains(t, rec.Body.String(), tc.answered, "the caller is answered the apiserver's verdict")
+			}
+			if rec.Code == http.StatusOK {
+				require.Contains(t, logs.String(), gentest.Line, "the route hands the generator its logger")
 			}
 			logtest.NoIdentity(t, logs)
 		})

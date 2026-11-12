@@ -27,6 +27,10 @@ const (
 	User    = Marker + "-user"
 	Subject = Marker + "-sub"
 	Email   = Marker + "@example.test"
+	// LongUser is a username longer than the 58 bytes the apiserver keeps of
+	// a generateName (k8s.io/apiserver/pkg/storage/names): a CSR named after
+	// it is truncated before its random suffix.
+	LongUser = User + "-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 )
 
 // Buffer collects log lines. It is safe for concurrent writes.

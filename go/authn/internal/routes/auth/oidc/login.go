@@ -92,7 +92,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		}
 
 		log.Debug().Msg("generating secret from oidc idtoken")
-		issued, err := r.gen.Generate(storage.StrategyOIDC, nfo, admitGroups(cfg, nfo))
+		issued, err := r.gen.Generate(storage.StrategyOIDC, nfo, admitGroups(cfg, nfo), kubeconfig.Logger(log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyOIDC), nfo, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)

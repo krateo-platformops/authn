@@ -71,7 +71,7 @@ func (l *clusterLookup) Provisioned(_ context.Context, username string) (bool, e
 func (l *clusterLookup) BoundAsUser(ctx context.Context, username string) (bool, error) {
 	crbs, err := l.cli.RbacV1().ClusterRoleBindings().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return false, fmt.Errorf("listing ClusterRoleBindings: %w", err)
+		return false, kerr.Wrap("listing ClusterRoleBindings", err)
 	}
 	for i := range crbs.Items {
 		if namesUser(crbs.Items[i].Subjects, username) {
@@ -80,7 +80,7 @@ func (l *clusterLookup) BoundAsUser(ctx context.Context, username string) (bool,
 	}
 	rbs, err := l.cli.RbacV1().RoleBindings(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return false, fmt.Errorf("listing RoleBindings: %w", err)
+		return false, kerr.Wrap("listing RoleBindings", err)
 	}
 	for i := range rbs.Items {
 		if namesUser(rbs.Items[i].Subjects, username) {

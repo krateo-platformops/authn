@@ -122,10 +122,39 @@ func WaitForCertificate(client kubernetes.Interface, name string, uid types.UID)
 
 	crt, err := csrutil.WaitForCertificate(ctx, client, name, uid)
 	if err != nil {
-		// client-go's errors name the CSR, and aren't all the apiserver's.
-		return nil, kerr.Redact("waiting for the CSR's certificate", err, name)
+		// client-go's errors name the CSR and quote the approver's message:
+		// the error is described from the CSR's state instead.
+		return nil, kerr.Described("waiting for the CSR's certificate: "+waitFailure(ctx, client, name, uid), err)
 	}
 	return crt, nil
+}
+
+// waitFailure says why a wait for name's certificate ended without one, from
+// the wait's context and the CSR's own state, never from an error's text.
+func waitFailure(wait context.Context, client kubernetes.Interface, name string, uid types.UID) string {
+	if wait.Err() != nil {
+		return "timed out"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	csr, err := client.CertificatesV1().CertificateSigningRequests().Get(ctx, name, metav1.GetOptions{})
+	switch {
+	case errors.IsNotFound(err):
+		return "the CSR was deleted"
+	case err != nil:
+		return "the wait failed, and the CSR's state can't be read (" + kerr.Wrap("reading it", err).Error() + ")"
+	case csr.UID != uid:
+		return "the CSR was replaced"
+	}
+	for _, c := range csr.Status.Conditions {
+		switch c.Type {
+		case certv1.CertificateDenied:
+			return "the CSR was denied"
+		case certv1.CertificateFailed:
+			return "the signer failed the CSR"
+		}
+	}
+	return "the wait ended without a certificate"
 }
 
 // NewCertificateSigningRequest builds a CSR whose name the apiserver

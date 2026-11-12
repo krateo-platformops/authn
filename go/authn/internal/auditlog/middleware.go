@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/krateo-platformops/audit"
@@ -14,7 +15,8 @@ import (
 
 // Middleware prepares each request for its audit records. It stamps when the
 // request was received, and it makes sure the context carries a session.id:
-// the inbound W3C baggage member when there is one, a minted one otherwise.
+// the inbound W3C baggage member when it is a well-formed one (ValidSessionID),
+// a minted one otherwise.
 // Baggage is extracted here even with tracing off, when no otelhttp handler has
 // done it. Inside, audit.RecordedMiddleware marks the Server span of a request
 // that wrote a record, so observability keeps that trace whole.
@@ -29,22 +31,38 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// withSession returns ctx with a session.id baggage member: the one already in
-// ctx, else the one in the request's baggage header, else a minted one.
+// sessionIDForm is the session.id authn accepts: audit's opaque_id, 1 to 128
+// of [A-Za-z0-9_-]. A caller sets session.id, so anything else (an email, a
+// name, a forged log line) could carry an identity into the audit record's
+// join key and into every log line.
+var sessionIDForm = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+// ValidSessionID reports whether s is a session.id authn accepts.
+func ValidSessionID(s string) bool { return sessionIDForm.MatchString(s) }
+
+// SessionID returns ctx's session.id when it is one authn accepts. After
+// Middleware, a request's always is.
+func SessionID(ctx context.Context) (string, bool) {
+	v := baggage.FromContext(ctx).Member(audit.BaggageSessionKey).Value()
+	return v, ValidSessionID(v)
+}
+
+// withSession returns ctx with a session.id baggage member authn accepts
+// (ValidSessionID): the one already in ctx, else the one in the request's
+// baggage header, else a minted one, which replaces a malformed one.
 func withSession(ctx context.Context, h http.Header) context.Context {
-	if baggage.FromContext(ctx).Member(audit.BaggageSessionKey).Key() != "" {
+	if _, ok := SessionID(ctx); ok {
 		return ctx
 	}
 	ctx = propagation.Baggage{}.Extract(ctx, propagation.HeaderCarrier(h))
-	b := baggage.FromContext(ctx)
-	if b.Member(audit.BaggageSessionKey).Key() != "" {
+	if _, ok := SessionID(ctx); ok {
 		return ctx
 	}
 	m, err := baggage.NewMember(audit.BaggageSessionKey, newSessionID())
 	if err != nil {
 		return ctx
 	}
-	b, err = b.SetMember(m)
+	b, err := baggage.FromContext(ctx).SetMember(m)
 	if err != nil {
 		return ctx
 	}

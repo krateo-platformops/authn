@@ -199,7 +199,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		log.Info().Str("name", name).Int("groups", len(user.GetGroups())).
 			Msg("user info successfully fetched")
 
-		issued, err := r.gen.Generate(storage.StrategyOAuth, user)
+		issued, err := r.gen.Generate(storage.StrategyOAuth, user, kubeconfig.Logger(log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyOAuth), user, jwtutil.PrincipalHuman, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)

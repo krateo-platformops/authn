@@ -17,6 +17,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/logtest"
+	"github.com/krateo-platformops/authn/internal/logtest/gentest"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,7 +73,7 @@ func oauthLoginWith(t *testing.T, answer string, restAction bool, gen *fakeGener
 	base = context.WithValue(base, restaction.RestActionContextKey("snowplowURL"), snowplow.URL)
 	audit, records := auditlogtest.New(t)
 	gen.records = records
-	route := Login(base, &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+	route := Login(base, &rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gentest.Generator{Generator: gen, T: t}, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 	req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, Path+"?name=gh", nil))
 	req.Header.Set("X-Auth-Code", "code")
 	rec := httptest.NewRecorder()

@@ -22,7 +22,7 @@ func TestGenerateRefusesReservedGroups(t *testing.T) {
 	user := &userinfo.DefaultUser{Name: "alice", ID: "1", Groups: []string{"devs", "krateo:loa:2"}}
 
 	_, err := gen.Generate(storage.StrategyOIDC, user)
-	require.ErrorContains(t, err, `group "krateo:loa:2" is reserved`)
+	require.ErrorContains(t, err, "krateo:loa: prefix, which is reserved to authn")
 }
 
 // A step-up credential exists to carry a krateo:loa: group. Without one, the

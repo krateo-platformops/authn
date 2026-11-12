@@ -71,7 +71,7 @@ const (
 func ValidateGroups(groups []string) error {
 	for _, g := range groups {
 		if strings.Contains(g, groupSeparator) {
-			return fmt.Errorf("group %q contains a newline; it cannot be recorded in %s", g, GroupsAnnotation)
+			return fmt.Errorf("a group contains a newline; it cannot be recorded in %s", GroupsAnnotation)
 		}
 	}
 	return nil

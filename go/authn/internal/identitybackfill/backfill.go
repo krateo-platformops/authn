@@ -240,7 +240,7 @@ func missingOwner(ctx context.Context, sec *corev1.Secret, annotations map[strin
 	}
 	mapping, err := lookup.ServiceAccountMapping(ctx, crt.Subject.CommonName)
 	if err != nil {
-		return nil, false, fmt.Errorf("looking up the certificate's ServiceAccount mapping: %w", err)
+		return nil, false, kerr.Wrap("looking up the certificate's ServiceAccount mapping", err)
 	}
 	if mapping == nil {
 		return nil, true, nil
@@ -259,11 +259,11 @@ func strategyOf(ctx context.Context, username, self string, lookup Lookup) (stor
 	mapping, err := lookup.ServiceAccountMapping(ctx, username)
 	sa := mapping != nil
 	if err != nil {
-		return "", fmt.Errorf("looking up the certificate's ServiceAccount mapping: %w", err)
+		return "", kerr.Wrap("looking up the certificate's ServiceAccount mapping", err)
 	}
 	basic, err := lookup.BasicUserExists(ctx, username)
 	if err != nil {
-		return "", fmt.Errorf("looking up the certificate's basic User: %w", err)
+		return "", kerr.Wrap("looking up the certificate's basic User", err)
 	}
 
 	switch {

@@ -3,7 +3,6 @@ package config
 import (
 	"crypto/x509"
 	"fmt"
-	"strings"
 	"time"
 
 	"encoding/base64"
@@ -45,9 +44,10 @@ func generateClientCertAndKey(client kubernetes.Interface, l zerolog.Logger, o g
 	if err != nil {
 		return "", "", nil, err
 	}
-	// The CSR's name starts with the username: the log lines carry only the
-	// suffix the apiserver generated, which tells one issuance from another.
-	l = l.With().Str("csr.suffix", strings.TrimPrefix(csr.Name, csr.GenerateName)).Logger()
+	// The CSR's name starts with the username, and the apiserver truncates a
+	// long one before it adds its suffix: the log lines name the CSR by its
+	// UID, which tells one issuance from another and names no one.
+	l = l.With().Str("csr.uid", string(csr.UID)).Logger()
 	l.Debug().Msg("created certificate signing request")
 
 	// The CSR is single-use: once the certificate is read, delete it rather

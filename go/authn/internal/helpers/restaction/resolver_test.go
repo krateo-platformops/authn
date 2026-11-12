@@ -58,8 +58,9 @@ func TestResolveSendsTheTokenInTheBody(t *testing.T) {
 	assert.Equal(t, map[string]map[string]string{"extras": {"token": userToken}}, got.body)
 }
 
-// snowplow's own answer is kept: its code and reason reach the caller, its
-// message (which may name stage endpoints) only the log.
+// snowplow's own answer is kept: its code and reason reach the caller and the
+// log. Its message reaches neither: it names stage URLs, which a RESTAction
+// can build from the user's identity.
 func TestResolveKeepsSnowplowsAnswer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -79,8 +80,9 @@ func TestResolveKeepsSnowplowsAnswer(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, ce.Code)
 	assert.Equal(t, CauseRESTActionFailed, ce.Cause)
 	assert.Equal(t, "the RESTAction could not be resolved: snowplow answered 504 Timeout", ce.Error())
-	assert.False(t, strings.Contains(ce.Error(), "api.internal.example"), "snowplow's message stays in the log")
-	assert.Equal(t, err, ce.Private)
+	assert.False(t, strings.Contains(ce.Error(), "api.internal.example"), "snowplow's message isn't answered")
+	assert.ErrorIs(t, ce.Private, err)
+	assert.Equal(t, "snowplow answered 504 Timeout", ce.Private.Error(), "nor logged")
 }
 
 func TestFailedWithoutAnAnswer(t *testing.T) {

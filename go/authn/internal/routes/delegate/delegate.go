@@ -201,11 +201,12 @@ func exchangeRequest(req *http.Request) (string, error) {
 	if err := req.ParseForm(); err != nil {
 		return "", status.BadRequest(status.CauseInvalidRequestBody, fmt.Errorf("the body is not a form: %w", err))
 	}
+	// The caller's values aren't repeated: the error is logged.
 	if g := req.PostForm.Get("grant_type"); g != GrantType {
-		return "", status.BadRequest(CauseUnsupportedGrantType, fmt.Errorf("grant_type must be %q, got %q", GrantType, g))
+		return "", status.BadRequest(CauseUnsupportedGrantType, fmt.Errorf("grant_type must be %q", GrantType))
 	}
 	if t := req.PostForm.Get("subject_token_type"); t != TokenTypeJWT {
-		return "", status.BadRequest(CauseUnsupportedSubjectToken, fmt.Errorf("subject_token_type must be %q, got %q", TokenTypeJWT, t))
+		return "", status.BadRequest(CauseUnsupportedSubjectToken, fmt.Errorf("subject_token_type must be %q", TokenTypeJWT))
 	}
 	subject := req.PostForm.Get("subject_token")
 	if subject == "" {

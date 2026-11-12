@@ -90,7 +90,7 @@ func checkPlatformGroups(strategy storage.Strategy, user userinfo.Info) error {
 	for _, g := range user.GetGroups() {
 		if strings.HasPrefix(g, platformGroupPrefix) && !userinfo.IsReserved(g) {
 			return refused(RefusalPlatformGroup, status.Refused(status.CausePlatformGroupNotAllowed,
-				fmt.Errorf("group %q can't be asserted by an identity source: the %s prefix is the platform's", g, platformGroupPrefix)))
+				fmt.Errorf("a group carries the %s prefix, which an identity source can't assert: it is the platform's", platformGroupPrefix)))
 		}
 	}
 	return nil
@@ -102,7 +102,7 @@ func checkSystemGroups(user userinfo.Info) error {
 	for _, g := range user.GetGroups() {
 		if strings.HasPrefix(g, systemGroupPrefix) {
 			return refused(RefusalSystemGroup, status.Refused(status.CauseSystemGroupNotAllowed,
-				fmt.Errorf("group %q can't be issued: the %s prefix is reserved to Kubernetes", g, systemGroupPrefix)))
+				fmt.Errorf("a group carries the %s prefix, which is reserved to Kubernetes", systemGroupPrefix)))
 		}
 	}
 	return nil

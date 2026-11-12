@@ -8,6 +8,7 @@ import (
 
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/logtest"
+	"github.com/krateo-platformops/authn/internal/logtest/gentest"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +39,9 @@ func TestOAuthLoginLogsNoIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec, logs := oauthLoginWith(t, tc.answer, true, &fakeGenerator{err: tc.err})
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
+			if rec.Code == http.StatusOK {
+				require.Contains(t, logs.String(), gentest.Line, "the route hands the generator its logger")
+			}
 			logtest.NoIdentity(t, logs)
 		})
 	}

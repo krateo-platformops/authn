@@ -15,6 +15,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/logtest"
+	"github.com/krateo-platformops/authn/internal/logtest/gentest"
 	"github.com/krateo-platformops/authn/internal/status"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/stretchr/testify/require"
@@ -90,7 +91,7 @@ func TestOIDCLoginLogsNoIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rc := oidcEnv(t, tc.spec, sentinelClaims(tc.claims))
 			gen := &failingGenerator{stepUpGenerator: stepUpGenerator{notAfter: time.Now().Add(time.Hour)}, err: tc.err}
-			route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
+			route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gentest.Generator{Generator: gen, T: t}, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
 
 			req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, Path+"?name=kc", nil))
 			req.Header.Set("X-Auth-Code", "code")
@@ -99,6 +100,9 @@ func TestOIDCLoginLogsNoIdentity(t *testing.T) {
 			route.Handler().ServeHTTP(rec, req)
 
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
+			if rec.Code == http.StatusOK {
+				require.Contains(t, logs.String(), gentest.Line, "the route hands the generator its logger")
+			}
 			logtest.NoIdentity(t, logs)
 		})
 	}
@@ -127,7 +131,7 @@ func TestOIDCRESTActionLogsNoIdentity(t *testing.T) {
 			base := xcontext.BuildContext(context.Background(), xcontext.WithAccessToken("authn-jwt"))
 			base = context.WithValue(base, restaction.RestActionContextKey("snowplowURL"), snowplow.URL)
 			gen := &stepUpGenerator{notAfter: time.Now().Add(time.Hour)}
-			route := Login(base, rc, LoginOptions{KubeconfigGenerator: gen, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
+			route := Login(base, rc, LoginOptions{KubeconfigGenerator: gentest.Generator{Generator: gen, T: t}, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
 
 			req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, Path+"?name=kc", nil))
 			req.Header.Set("X-Auth-Code", "code")
@@ -136,6 +140,9 @@ func TestOIDCRESTActionLogsNoIdentity(t *testing.T) {
 			route.Handler().ServeHTTP(rec, req)
 
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
+			if rec.Code == http.StatusOK {
+				require.Contains(t, logs.String(), gentest.Line, "the route hands the generator its logger")
+			}
 			logtest.NoIdentity(t, logs)
 		})
 	}
@@ -169,7 +176,7 @@ func TestOIDCStepUpLogsNoIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rc := stepUpEnv(t, tc.stepUp, sentinelClaims(tc.claims))
 			gen := &failingGenerator{stepUpGenerator: stepUpGenerator{notAfter: time.Now().Add(15 * time.Minute)}, err: tc.err}
-			route := StepUp(t.Context(), rc, StepUpOptions{KubeconfigGenerator: gen, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
+			route := StepUp(t.Context(), rc, StepUpOptions{KubeconfigGenerator: gentest.Generator{Generator: gen, T: t}, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
 
 			req, logs := logtest.Request(httptest.NewRequest(http.MethodPost, StepUpPath+"?name=kc", nil))
 			req.Header.Set("X-Auth-Code", "code")
@@ -178,6 +185,9 @@ func TestOIDCStepUpLogsNoIdentity(t *testing.T) {
 			route.Handler().ServeHTTP(rec, req)
 
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
+			if rec.Code == http.StatusOK {
+				require.Contains(t, logs.String(), gentest.Line, "the route hands the generator its logger")
+			}
 			logtest.NoIdentity(t, logs)
 		})
 	}

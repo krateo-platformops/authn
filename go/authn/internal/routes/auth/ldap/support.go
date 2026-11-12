@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"text/template"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
@@ -154,7 +156,7 @@ var dial = func(url string) (ldap.Client, error) { return ldap.DialURL(url) }
 func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	l, err := dial(cfg.dialURL)
 	if err != nil {
-		return nil, status.Failed(CauseLDAPUnavailable, err)
+		return nil, status.Failed(CauseLDAPUnavailable, ldapResult(err))
 	}
 	defer l.Close()
 
@@ -162,7 +164,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 		// Reconnect with TLS
 		err = l.StartTLS(&tls.Config{InsecureSkipVerify: true})
 		if err != nil {
-			return nil, status.Failed(CauseLDAPUnavailable, err)
+			return nil, status.Failed(CauseLDAPUnavailable, ldapResult(err))
 		}
 	}
 
@@ -202,7 +204,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 	err = l.Bind(user.DN, password)
 	if err != nil {
 		if refusesUser(err) {
-			return nil, invalidCredentials(err)
+			return nil, invalidCredentials(ldapResult(err))
 		}
 		return nil, serverFailure(CauseLDAPBindFailed, err)
 	}
@@ -274,9 +276,25 @@ func refusesUser(err error) bool {
 // connection is LDAPUnavailable, any other error is cause.
 func serverFailure(cause status.CauseType, err error) error {
 	if ldap.IsErrorWithCode(err, ldap.ErrorNetwork) {
-		return status.Failed(CauseLDAPUnavailable, err)
+		return status.Failed(CauseLDAPUnavailable, ldapResult(err))
 	}
-	return status.Failed(cause, err)
+	return status.Failed(cause, ldapResult(err))
+}
+
+// ldapResult describes err by its LDAP result code alone, and a lost
+// connection by its kind: a server's diagnostic message can carry the DN or
+// the login name, and the error is logged as well as answered. err stays
+// reachable to errors.As (ldap.IsErrorWithCode).
+func ldapResult(err error) error {
+	var le *ldap.Error
+	if !errors.As(err, &le) {
+		return kerr.Described("the LDAP request failed", err)
+	}
+	text := fmt.Sprintf("LDAP result %d (%s)", le.ResultCode, ldap.LDAPResultCodeMap[le.ResultCode])
+	if le.ResultCode == ldap.ErrorNetwork && le.Err != nil {
+		text += ": " + kerr.Transport(le.Err)
+	}
+	return kerr.Described(text, err)
 }
 
 // ldapEntryToUserInfo is the identity of the user entry, with groups (from the

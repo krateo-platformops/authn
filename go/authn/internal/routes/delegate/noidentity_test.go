@@ -48,8 +48,11 @@ func TestDelegationLogsNoIdentity(t *testing.T) {
 		mappingsCode int
 		mappings     string
 		subject      func(t *testing.T) string
+		grant        string // the form's grant_type, when not RFC 8693's
 		code         int
 	}{
+		{name: "a grant type naming someone", mappings: mappingWith(`{"allowed":true}`), grant: logtest.Email,
+			code: http.StatusBadRequest, subject: func(t *testing.T) string { return subject(t, time.Hour, nil) }},
 		{name: "issued", mappings: mappingWith(`{"allowed":true}`), code: http.StatusOK,
 			subject: func(t *testing.T) string { return subject(t, time.Hour, portal) }},
 		{name: "actor not opted in", mappings: mappingWith(""), code: http.StatusForbidden,
@@ -58,6 +61,15 @@ func TestDelegationLogsNoIdentity(t *testing.T) {
 			subject: func(t *testing.T) string { return subject(t, time.Hour, portal) }},
 		{name: "subject expired", mappings: mappingWith(`{"allowed":true}`), code: http.StatusUnauthorized,
 			subject: func(t *testing.T) string { return subject(t, -time.Minute, nil) }},
+		{name: "subject about to expire", mappings: mappingWith(`{"allowed":true}`), code: http.StatusUnauthorized,
+			subject: func(t *testing.T) string { return subject(t, 500*time.Millisecond, portal) }},
+		{name: "subject signed by another key", mappings: mappingWith(`{"allowed":true}`), code: http.StatusUnauthorized,
+			subject: func(t *testing.T) string {
+				tok, err := jwtutil.CreateToken(jwtutil.CreateTokenOptions{Username: logtest.User, Duration: time.Hour,
+					KeyID: "current", PrivateKey: k.stranger})
+				require.NoError(t, err)
+				return tok
+			}},
 		{name: "actor has no mapping", mappings: strings.Replace(mappingWith(""), logtest.Marker+"-agent\"}", "other\"}", 1),
 			code: http.StatusForbidden, subject: func(t *testing.T) string { return subject(t, time.Hour, nil) }},
 		{name: "actor's mapping lookup fails", mappingsCode: http.StatusInternalServerError, code: http.StatusInternalServerError,
@@ -74,7 +86,11 @@ func TestDelegationLogsNoIdentity(t *testing.T) {
 				tc.mappingsCode = http.StatusOK
 			}
 			rc, _ := apiserverWith(t, tc.review, tc.mappingsCode, tc.mappings)
-			req, logs := logtest.Request(httptest.NewRequest(http.MethodPost, Path, strings.NewReader(form(tc.subject(t)).Encode())))
+			f := form(tc.subject(t))
+			if tc.grant != "" {
+				f.Set("grant_type", tc.grant)
+			}
+			req, logs := logtest.Request(httptest.NewRequest(http.MethodPost, Path, strings.NewReader(f.Encode())))
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.Header.Set("Authorization", "Bearer sa")
 			rec := httptest.NewRecorder()

@@ -26,6 +26,9 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
+// maxGeneratedNameBase is how much of a generateName the apiserver keeps.
+const maxGeneratedNameBase = 58
+
 // fakeSigner makes a fake clientset behave like the apiserver for the CSR
 // flow: it generates names from generateName, gives each CSR its own UID,
 // honours a metadata.name field selector on list and watch, and issues a
@@ -53,7 +56,13 @@ func fakeSigner(t *testing.T) (*fake.Clientset, *[]string) {
 	cli.PrependReactor("create", "certificatesigningrequests", func(a k8stesting.Action) (bool, runtime.Object, error) {
 		csr := a.(k8stesting.CreateAction).GetObject().(*certv1.CertificateSigningRequest)
 		if csr.Name == "" {
-			csr.Name = fmt.Sprintf("%s%05d", csr.GenerateName, seq.Add(1))
+			// As the apiserver does: at most 58 bytes of generateName, then
+			// a 5-character suffix (k8s.io/apiserver/pkg/storage/names).
+			base := csr.GenerateName
+			if len(base) > maxGeneratedNameBase {
+				base = base[:maxGeneratedNameBase]
+			}
+			csr.Name = fmt.Sprintf("%s%05d", base, seq.Add(1))
 		}
 		if csr.UID == "" {
 			csr.UID = types.UID(fmt.Sprintf("csr-uid-%d", seq.Add(1)))

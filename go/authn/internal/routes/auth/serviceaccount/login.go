@@ -119,7 +119,7 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// The Secret is owned by the mapping, so whoever retires the mapping
 		// (core-provider, on Undeploy) retires the credential with it, through
 		// the garbage collector, without needing delete rights on Secrets.
-		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner))
+		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner), kubeconfig.Logger(*log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyServiceAccount), user, principal, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)

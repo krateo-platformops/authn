@@ -15,8 +15,9 @@ func TestRefusal(t *testing.T) {
 		ce := Refusal(http.StatusBadRequest, code, detail)
 		assert.Equal(t, http.StatusForbidden, ce.Code, code)
 		assert.Equal(t, CauseAuthorizationCodeRejected, ce.Cause, code)
-		assert.Equal(t, detail, ce.Private, code)
+		assert.ErrorIs(t, ce.Private, detail, code)
 		assert.NotContains(t, ce.Error(), "full answer", code)
+		assert.NotContains(t, ce.Private.Error(), "full answer", "the log gets the code, never the answer")
 	}
 
 	for _, tc := range []struct {
@@ -31,8 +32,9 @@ func TestRefusal(t *testing.T) {
 		ce := Refusal(tc.status, tc.code, detail)
 		assert.Equal(t, http.StatusInternalServerError, ce.Code, tc.code)
 		assert.Equal(t, CauseTokenExchangeFailed, ce.Cause, tc.code)
-		assert.Equal(t, detail, ce.Private, tc.code)
+		assert.ErrorIs(t, ce.Private, detail, tc.code)
 		assert.NotContains(t, ce.Error(), "full answer", tc.code)
+		assert.NotContains(t, ce.Private.Error(), "full answer", tc.code)
 	}
 }
 
@@ -43,4 +45,12 @@ func TestFailedKeepsTheReasonPrivate(t *testing.T) {
 	assert.Equal(t, CauseTokenExchangeFailed, ce.Cause)
 	assert.Equal(t, err, ce.Private)
 	assert.NotContains(t, ce.Error(), "10.0.0.7")
+}
+
+// An IdP can put any text in "error": only a registered code is repeated.
+func TestRefusalRepeatsOnlyARegisteredCode(t *testing.T) {
+	ce := Refusal(http.StatusBadRequest, "zz-sentinel-user is locked", errors.New("body"))
+	assert.NotContains(t, ce.Error(), "zz-sentinel")
+	assert.NotContains(t, ce.Private.Error(), "zz-sentinel")
+	assert.Equal(t, "invalid_grant", ErrorCode("invalid_grant"))
 }

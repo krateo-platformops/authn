@@ -13,6 +13,7 @@ import (
 
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/logtest"
+	"github.com/krateo-platformops/authn/internal/logtest/gentest"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/rest"
@@ -108,7 +109,7 @@ func TestBasicLoginLogsNoIdentity(t *testing.T) {
 				tc.password = "s3cret"
 			}
 			srv := sentinelAPIServer(t, tc.user, tc.secret)
-			route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: &fakeGenerator{err: tc.generateErr},
+			route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gentest.Generator{Generator: &fakeGenerator{err: tc.generateErr}, T: t},
 				JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
 
 			req, logs := logtest.Request(httptest.NewRequest(http.MethodGet, Path, nil))
@@ -117,6 +118,9 @@ func TestBasicLoginLogsNoIdentity(t *testing.T) {
 			route.Handler().ServeHTTP(rec, req)
 
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
+			if rec.Code == http.StatusOK {
+				require.Contains(t, logs.String(), gentest.Line, "the route hands the generator its logger")
+			}
 			logtest.NoIdentity(t, logs)
 		})
 	}
