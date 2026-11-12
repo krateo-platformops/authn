@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -60,6 +61,8 @@ func TestAMalformedSessionIDIsReplaced(t *testing.T) {
 		"an email":           "zz-sentinel%40example.test",
 		"a forged log line":  "x%0A%7B%22level%22%3A%22info%22%7D",
 		"an escape sequence": "x%1B%5B31m",
+		"a bare newline":     "a%0Ab",
+		"a bare ESC":         "a%1Bb",
 		"too long":           strings.Repeat("A", 129),
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -78,6 +81,10 @@ func TestAMalformedSessionIDIsReplaced(t *testing.T) {
 			require.NoError(t, json.Unmarshal(bytes.Split(buf.Bytes(), []byte("\n"))[0], &line), buf.String())
 			id, _ := line["session.id"].(string)
 			assert.True(t, auditlog.ValidSessionID(id), "a minted id: %q", id)
+			sent, err := url.PathUnescape(inbound)
+			require.NoError(t, err)
+			assert.NotEqual(t, sent, id, "the inbound value is replaced")
+			assert.NotEqual(t, sent, recorded, "in the audit record's join key too")
 			assert.NotContains(t, buf.String(), "zz-sentinel")
 			assert.True(t, auditlog.ValidSessionID(recorded), "the audit record's join key is well-formed too: %q", recorded)
 		})
