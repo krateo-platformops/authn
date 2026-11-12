@@ -24,7 +24,8 @@ func TestPutWritesTheClaim(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
 	claim := EncodeClaim(StrategyOAuth, "gh", "1001")
 	for _, exists := range []bool{false, true} {
-		rec := &putRecorder{exists: exists}
+		// An existing Secret from before claims, with alice's certificate.
+		rec := &putRecorder{exists: exists, existingCert: identityCert(t, "alice", nil)}
 		store := Default(&rest.Config{Host: rec.serve(t).URL})
 		w, err := store.Put("alice", &AuthInfo{Strategy: StrategyOAuth, Claim: claim,
 			CertData: identityCert(t, "alice", []string{"tenants"})})
@@ -63,9 +64,33 @@ func TestPutRefusesASecretClaimedByAnother(t *testing.T) {
 		"nothing stored: the update this login would have sent, no status, no uid")
 
 	for _, existing := range []map[string]string{nil, {ClaimAnnotation: mine}, {StrategyAnnotation: "oauth"}} {
-		rec := &putRecorder{exists: true, existing: existing}
+		rec := &putRecorder{exists: true, existing: existing, existingCert: identityCert(t, "alice", nil)}
 		_, err := Default(&rest.Config{Host: rec.serve(t).URL}).Put("alice", nfo())
 		require.NoError(t, err)
 		assert.Len(t, rec.written, 2, "the create, then the update")
+	}
+}
+
+// An unclaimed Secret, written before claims existed, is replaced only when
+// its certificate was issued to this username: the derived name aliases
+// usernames (john.doe's Secret is johndoe-clientconfig), and a Secret that
+// holds another name's credential, or none it can read, is never overwritten.
+// A claimed one is decided by its claim, as above.
+func TestPutRefusesAnUnclaimedSecretItDoesntOwn(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	nfo := &AuthInfo{Strategy: StrategyOAuth, Claim: EncodeClaim(StrategyOAuth, "gh", "1001"),
+		CertData: identityCert(t, "alice", []string{"tenants"})}
+	for name, cert := range map[string]string{
+		"another name's certificate":       identityCert(t, "al.ice", nil),
+		"no certificate":                   "",
+		"a certificate that doesn't parse": "garbage",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &putRecorder{exists: true, existing: map[string]string{StrategyAnnotation: "oauth"}, existingCert: cert}
+			w, err := Default(&rest.Config{Host: rec.serve(t).URL}).Put("alice", nfo)
+			require.ErrorIs(t, err, ErrHeldByAnother)
+			require.Len(t, rec.written, 1, "only the create that found the Secret; no update")
+			assert.Equal(t, Written{Namespace: "krateo-system", Name: "alice-clientconfig", Verb: "update"}, w)
+		})
 	}
 }

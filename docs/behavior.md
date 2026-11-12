@@ -511,7 +511,13 @@ the claim; the response says only that the name isn't available. A failed read i
    them.
 2. If the name's session Secret has a **claim**, the name goes only to that identity.
 3. A Secret written **before claims existed** is adopted by the first login of the
-   strategy that wrote it (`authn.krateo.io/strategy`). A basic User or a mapping also
+   strategy that wrote it (`authn.krateo.io/strategy`), and only when its client
+   certificate was issued to that username (plumbing's `endpoints.OwnsSecret`). The
+   Secret's name is derived from the username by a rewrite that drops dots and case, so
+   `john.doe`'s pre-claim Secret is `johndoe-clientconfig`, which `johndoe` would
+   otherwise adopt and overwrite. A pre-claim Secret with no certificate authn can read,
+   such as a synthetic fixture, is no one's: an administrator deletes it if a real
+   identity needs the name. The write re-checks it (`storage.ErrHeldByAnother`). A basic User or a mapping also
    adopts one whose strategy is `unknown` or missing, since an administrator chose its
    name. An identity source never adopts one of unknown origin.
 4. With no Secret, a basic User or a mapping gets its name: an administrator chose it.

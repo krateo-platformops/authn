@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — a Secret from before claims is adopted only by the name its certificate names
+
+A session Secret's name is the username through a rewrite that drops dots and case, so
+`john.doe`'s Secret is `johndoe-clientconfig`. A Secret written before claims (0.41.0)
+carries no claim, and the strategy that wrote it adopted it at its next login, so a basic
+User `johndoe` would have adopted, and overwritten, `john.doe`'s pre-claim Secret. On 057,
+6 of 14 unclaimed Secrets hold a certificate issued to a dotted name. Adoption, and the
+write's re-check, now require the certificate to have been issued to the signing-in
+username (plumbing v1.61.0's `endpoints.OwnsSecret`); otherwise `403 UsernameUnavailable`,
+`name_held_legacy`. A pre-claim Secret with no readable certificate (a synthetic fixture
+such as demo's `acme`) is adopted by no one. Found by snowplow reading authn#147.
+
 ## 2026-11-12 — a RESTAction that identifies no one is its own cause
 
 `RESTActionFailed` meant two things with opposite advice: the RESTAction couldn't be

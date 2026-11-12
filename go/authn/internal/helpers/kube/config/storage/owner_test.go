@@ -17,13 +17,15 @@ import (
 )
 
 // putRecorder is an apiserver that answers a Secret create with 409 when
-// exists is set, answers a read with existing (annotations only), and records
-// every Secret body it receives.
+// exists is set, answers a read with existing (annotations) and, when set,
+// existingCert as its client certificate, and records every Secret body it
+// receives.
 type putRecorder struct {
-	mu       sync.Mutex
-	exists   bool
-	existing map[string]string
-	written  []corev1.Secret
+	mu           sync.Mutex
+	exists       bool
+	existing     map[string]string
+	existingCert string
+	written      []corev1.Secret
 }
 
 func (p *putRecorder) serve(t *testing.T) *httptest.Server {
@@ -32,8 +34,12 @@ func (p *putRecorder) serve(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodGet {
 			p.mu.Lock()
-			out, _ := json.Marshal(corev1.Secret{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
-				ObjectMeta: metav1.ObjectMeta{Annotations: p.existing}})
+			sec := corev1.Secret{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "Secret"},
+				ObjectMeta: metav1.ObjectMeta{Annotations: p.existing}}
+			if p.existingCert != "" {
+				sec.Data = map[string][]byte{ClientCertLabel: []byte(p.existingCert)}
+			}
+			out, _ := json.Marshal(sec)
 			p.mu.Unlock()
 			_, _ = w.Write(out)
 			return
