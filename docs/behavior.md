@@ -517,23 +517,29 @@ With it on (`storage.Naming`, `config/storage/naming.go`; the naming helpers are
     credential, so `johndoe` is refused: `name_claimed` when that Secret carries a claim,
     `name_held_legacy` when it carries none. The same holds for a Secret with neither a
     certificate nor the annotation (one authn didn't write, such as demo's synthetic
-    `acme`): it is nobody's, so it refuses, even a basic User that would adopt it without
-    the flag. The store re-checks at write time: it never replaces a Secret that isn't
-    `u`'s (`storage.ErrClaimedByAnother`, `UsernameUnavailable`), and its update names the
+    `acme`): it is nobody's, so it refuses, as it does with the flag off (rule 3 of
+    [the name guard](#the-name-guard)). The difference from the flag off: there, a claimed
+    Secret is decided by its claim alone; here, a Secret must be `u`'s to count, claimed or
+    not. The store re-checks at write time: it never replaces a Secret that isn't `u`'s
+    (`storage.ErrClaimedByAnother`, or `storage.ErrHeldByAnother` when it carries no claim;
+    both `UsernameUnavailable`), and its update names the
     `resourceVersion` it checked, so a Secret deleted and re-created by another identity in
     between is a conflict, never overwritten. A legacy-named target (a provisioned name
     that can't be exact) is checked the same way;
   - `/usernames/check` is stricter: a Secret under **either** name makes the name
     unavailable, johndoe's included when `john.doe` is checked.
 
-  **Unblocking a refused name.** authn never deletes anything; an operator does:
+  **Unblocking a refused name.** authn never deletes anything:
   - *the reverse X/Y* (`johndoe` refused because `johndoe-clientconfig` is john.doe's legacy
     Secret): once `john.doe` has signed in and holds `john.doe-clientconfig`, the operator
     deletes john.doe's legacy `johndoe-clientconfig` (after the tenant handover, acmp's
     design §3.4), and `johndoe` can sign in;
   - *a synthetic fixture* (demo's `acme` and `globex` Secrets, which authn didn't write and
     which carry no certificate): if a real identity needs that name, an administrator
-    deletes the synthetic Secret first.
+    writes that identity's claim onto it ([Moving a name to a new identity](#moving-a-name-to-a-new-identity))
+    and, with the flag on, the annotation `authn.krateo.io/username: <username>`, which makes
+    a certificate-less Secret that username's; never deletes it, since a Kyverno policy may
+    generate a tenant from it.
 - **authn's own Secret.** plumbing's `signup` writes it under `endpoints.SecretName`, the
   legacy derivation, so with the flag on authn **refuses to start** unless `AUTHN_USERNAME`
   names its Secret exactly and the two names agree (lowercase `[-a-z0-9]`, at most 63

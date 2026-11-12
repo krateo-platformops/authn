@@ -25,7 +25,7 @@ and stamps every Secret it writes with `authn.krateo.io/username` and the labels
 `authn.krateo.io/principal` and `authn.krateo.io/username-label` (`Bounded(u, 56)`), which
 acmp's tenant policy selects and names tenants by ([#144](https://github.com/krateo-platformops/authn/issues/144)).
 Readers try the exact name, then the legacy one, and use a Secret only when it is the
-username's own (plumbing v1.59.0's `endpoints.OwnsSecret`): `johndoe`'s Secret never admits,
+username's own (plumbing v1.61.0's `endpoints.OwnsSecret`): `johndoe`'s Secret never admits,
 refuses or serves `john.doe`. A user's own legacy Secret keeps their claim, which their next
 sign-in carries to the exact Secret; the legacy Secret is never written or deleted (Kyverno's
 `synchronize: true` would delete the tenant). An LDAP, OAuth or OIDC name that can't be exact
