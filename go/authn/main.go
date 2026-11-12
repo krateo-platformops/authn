@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,18 +19,14 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
 	"github.com/krateo-platformops/authn/internal/leader"
-	"github.com/krateo-platformops/authn/internal/middlewares/cors"
-	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
-	"github.com/krateo-platformops/authn/internal/routes/health"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/krateo-platformops/authn/internal/stepupsweep"
 	"github.com/krateo-platformops/authn/internal/telemetry"
 	"github.com/krateo-platformops/authn/internal/uuid"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 	"github.com/rs/zerolog"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -54,6 +49,8 @@ func main() {
 	otelTracingOn := flag.Bool("otel-tracing", telemetry.TracingEnabled(),
 		"enable OpenTelemetry tracing (OTLP/HTTP); defaults to OTEL_TRACING_ENABLED, which defaults to OTEL_ENABLED; default off")
 	servicePort := flag.Int("port", env.Int("AUTHN_PORT", 8082), "port to listen on")
+	internalPort := flag.Int("internal-port", env.Int("AUTHN_INTERNAL_PORT", 8090),
+		"port of the internal listener, for in-cluster callers only (POST /usernames/check); never route it publicly")
 	certExpiresIn := flag.Duration("cert-expires",
 		env.Duration("AUTHN_KUBECONFIG_CRT_EXPIRES_IN", time.Hour*24), "requested duration of a login certificate (default: 24h)")
 	serviceCertExpiresIn := flag.Duration("service-cert-expires",
@@ -224,7 +221,7 @@ func main() {
 		log.Fatal().Err(err).Msg("building the audit recorders")
 	}
 
-	all, err := buildRoutes(routeOptions{
+	ro := routeOptions{
 		RestConfig:             cfg,
 		Generator:              gen,
 		PrivateKey:             privateKey,
@@ -239,9 +236,6 @@ func main() {
 		Version:                Version,
 		ServiceName:            serviceName,
 		Audit:                  auditRec,
-	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("building routes")
 	}
 
 	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
@@ -255,50 +249,9 @@ func main() {
 		}
 	}
 
-	// Inside otelhttp, so the Server span is active when a record marks it.
-	var handler http.Handler = auditlog.Middleware(routes.Serve(all, log))
-
-	// OpenTelemetry HTTP server instrumentation (gated, default OFF). When
-	// metrics are opted in, emit http.server.* instruments; when tracing is
-	// opted in, wrap with otelhttp so each inbound request becomes a server
-	// span (named by URL path) and traceparent is extracted. /health is
-	// filtered out of tracing to avoid probe noise. When both are off, the
-	// handler chain is left untouched (byte-identical off-path).
-	if telemetry.MetricsEnabled() {
-		handler = telemetry.MetricsMiddleware(handler)
-	}
-	if telemetry.TracingEnabled() {
-		handler = otelhttp.NewHandler(handler, serviceName,
-			otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
-				return r.URL.Path
-			}),
-			otelhttp.WithFilter(func(r *http.Request) bool {
-				return r.URL.Path != health.Path
-			}),
-		)
-	}
-
-	if *corsOn {
-		c := cors.New(cors.Options{
-			AllowedOrigins: []string{"*"},
-			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-			// traceparent/tracestate/baggage are REQUIRED so the cross-origin
-			// browser->authn hop can carry W3C trace context to authn.
-			AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Auth-Code", "X-Code-Verifier", "traceparent", "tracestate", "baggage"},
-			ExposedHeaders:   []string{"Link"},
-			AllowCredentials: true,
-			MaxAge:           300, // Maximum value not ignored by any of major browsers
-		})
-
-		handler = c.Handler(handler)
-	}
-
-	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", *servicePort),
-		Handler:      handler,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 50 * time.Second,
-		IdleTimeout:  30 * time.Second,
+	server, internalServer, err := newListeners(ro, log, *corsOn, *servicePort, *internalPort)
+	if err != nil {
+		log.Fatal().Err(err).Msg("building the listeners")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), []os.Signal{
@@ -425,6 +378,11 @@ func main() {
 	}
 
 	go func() {
+		if err := internalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal().Err(err).Msgf("could not listen on %s (internal)", internalServer.Addr)
+		}
+	}()
+	go func() {
 		atomic.StoreInt32(&healthy, 1)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msgf("could not listen on %s", server.Addr)
@@ -443,18 +401,24 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Flush and release OpenTelemetry providers (no-op when telemetry is off).
-	if err := otelShutdown(ctx); err != nil {
+	// Both listeners stop accepting at once and drain together, within ctx.
+	shutdownErr := shutdownServers(ctx, server, internalServer)
+	if shutdownErr != nil {
+		log.Err(shutdownErr).Msg("server forced to shutdown")
+	}
+	// After the servers, so the requests they drained have written their spans,
+	// metrics and records; and on a context of their own, since a forced
+	// shutdown means ctx has expired, and a flush on it would export nothing.
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), flushTimeout)
+	defer cancelFlush()
+	if err := otelShutdown(flushCtx); err != nil {
 		log.Err(err).Msg("error shutting down OpenTelemetry")
 	}
-
-	server.SetKeepAlivesEnabled(false)
-	if err := server.Shutdown(ctx); err != nil {
-		log.Fatal().Err(err).Msg("server forced to shutdown")
-	}
-	// After the server: the requests it drained may still be writing records.
-	if err := auditShutdown(ctx); err != nil {
+	if err := auditShutdown(flushCtx); err != nil {
 		log.Err(err).Msg("flushing audit records")
+	}
+	if shutdownErr != nil {
+		os.Exit(1)
 	}
 
 	log.Info().Msg("server gracefully stopped")

@@ -538,8 +538,9 @@ otherwise pass.
 
 ### Audit records
 With `OTEL_LOGS_ENABLED` on (default `OTEL_ENABLED`, which the chart turns on), authn writes one audit record (audit
-library schema v1, AUDIT-4) per credential it writes for a verified caller, and one per
-`/delegate` decision about an authenticated actor. Records go to the OTLP logs pipeline
+library schema v1, AUDIT-4) per credential it writes for a verified caller, one per
+`/delegate` decision about an authenticated actor, and one per `/usernames/check` decision
+about a verified caller. Records go to the OTLP logs pipeline
 and nowhere else: their attributes carry identity on purpose, so they never reach a span
 or a log line.
 
@@ -548,6 +549,7 @@ or a log line.
 | basic, LDAP, OAuth, OIDC, ServiceAccount login | `authn.login.<strategy>` | the `<username>-clientconfig` Secret | `create` or `update`, as sent |
 | OIDC step-up | `authn.stepup.oidc` | the `<username>-clientconfig-stepup` Secret | `create` or `update` |
 | `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping, subresource `token` | `create` (the issuance; no status code) |
+| `/usernames/check` | `authn.username.check` | the checked name's `<username>-clientconfig` Secret | `get` (a read; no status code unless a failed lookup was answered) |
 | step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 | identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
@@ -595,6 +597,27 @@ or a log line.
   `SubjectTokenInvalid`. It's `failure` when signing fails. An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
+- **`/usernames/check`** (audit v0.10.0). The actor is the caller's mapping, of its declared
+  class, as on `/delegate`. The target is the checked name's `<username>-clientconfig`
+  Secret, the one a sign-in under that name would write and its refusals name, so one
+  `object_ref` query joins a name's checks, refusals and logins. The verb is `get` on every
+  record. The Secret is named only when deriving its name leaves the username unchanged
+  (`kubeutil.MakeDNS1123Compatible`): `Alice@Example` would otherwise land on
+  `aliceexample-clientconfig`, another user's Secret. An empty or rewritten name, or a body
+  that names none, gets the resource without a name.
+  - `success` whenever the check completed, available or not, with
+    `krateo.audit.check_result`: `available`, `reserved`, `name_claimed`,
+    `name_held_legacy`, `name_provisioned`, `name_bound` or `invalid`. That isn't a denial,
+    since the caller wasn't refused;
+  - `denied` for a mapping without `spec.usernameCheck.allowed`
+    (`username_check_not_allowed`, naming the name the body asked about), and for a body
+    that names no username or isn't JSON (`invalid_request`, audit v0.10.0). No check ran,
+    so there's no `check_result`;
+  - `failure` when a lookup fails (the caller gets `503`), with the apiserver's code only
+    when it answered.
+
+  A caller refused or failed at its mapping lookup is recorded as on ServiceAccount login
+  (above), under `authn.username.check`. A caller refused before verification gets no record.
 - **Background.** The sweep's deletes and the writes of authn's own certificate (its first
   issue and every renewal) are `controller` rows from a second scope
   (`github.com/krateo-platformops/authn/audit/controller`), with authn's own
@@ -624,6 +647,30 @@ or a log line.
   error's. A request that wrote a record marks its Server span
   `krateo.audit.recorded=true`. A failed export never blocks a login: the SDK retries and
   then drops, and `authn.audit.export.failed` counts the dropped records.
+
+### Checking a username for a new identity
+
+`POST /usernames/check`, on the internal listener only, answers whether a username could be
+given to an identity that doesn't exist yet. An access-request controller asks it before
+creating an IdP user, instead of reading `<username>-clientconfig` Secrets itself, so it needs
+no RBAC on Secrets. It reads exactly what the name guard reads (`config.NewNameLookup`), in the
+guard's order, and writes nothing:
+
+1. `reserved`: a reserved name or prefix (`usernames.Reserved`);
+2. `invalid`: not a name authn issues (`usernames.Check`: empty, longer than 63, or not in the
+   DNS-1123 form);
+3. `name_claimed` or `name_held_legacy`: a `<username>-clientconfig` Secret exists, with or
+   without a claim. With no identity to compare, **any** existing Secret makes the name
+   unavailable, even where a sign-in would admit the identity whose claim it carries or let the
+   strategy that wrote it adopt it. Neither is a new person, and an access request must never
+   hand an existing user's name to someone else;
+4. `name_provisioned`: a basic `User` or a `ServiceAccount` mapping has the name;
+5. `name_bound`: a RoleBinding or ClusterRoleBinding names it as a User.
+
+A lookup that fails is `503` `UsernameCheckFailed`, never an answer: the caller treats the name
+as unavailable and retries. Only a mapping with `spec.usernameCheck.allowed` may ask, and a
+refused caller learns nothing, since the guard isn't read for it. Every decision about a
+verified caller is an audit record (`authn.username.check`, [Audit records](#audit-records)).
 
 ### Platform names and groups
 The `krateo:` prefix is the platform's. A username starting with it is reserved

@@ -1,0 +1,22 @@
+# authn's internal listener (POST /usernames/check), for in-cluster callers
+# only. ClusterIP always, whatever service.type says, and never referenced by
+# an Ingress or HTTPRoute: whether a username is held is decided in-cluster,
+# never on a public surface.
+{{- if eq (int .Values.internal.port) (int .Values.service.port) }}
+{{- fail (printf "internal.port (%v) must differ from service.port: authn refuses to start with both listeners on one port, and the internal route must never be public" .Values.internal.port) }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "authn.fullname" . }}-internal
+  labels:
+    {{- include "authn.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.internal.port }}
+      targetPort: internal
+      protocol: TCP
+      name: internal
+  selector:
+    {{- include "authn.selectorLabels" . | nindent 4 }}

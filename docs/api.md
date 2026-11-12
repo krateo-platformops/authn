@@ -1,7 +1,7 @@
 ---
 type: API
 title: authn — API
-description: The five *.authn.krateo.io CRDs authn owns and the HTTP surface it serves on its single port.
+description: The five *.authn.krateo.io CRDs authn owns, the HTTP surface it serves publicly, and its internal listener.
 resource: serviceaccounts.serviceaccount.authn.krateo.io
 tags: [crd, http, login, strategies]
 timestamp: 2026-08-07T00:00:00Z
@@ -25,7 +25,7 @@ operator namespace** (`POD_NAMESPACE`).
 | CRD | Kind | Configures |
 |---|---|---|
 | `users.basic.authn.krateo.io` | `User` | A basic-auth user: `spec.passwordRef` (Secret selector, required), `displayName`, `avatarURL`, `groups[]`. `metadata.name` is the username. |
-| `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`, optional `delegation` {`allowed`, `maxDepth` (3, 1–8)} lets the service use `POST /delegate`, optional `principal` (`agent`, `controller` or `service`, the default) is signed into its tokens as the `principal` claim. `metadata.name` is the issued username. |
+| `serviceaccounts.serviceaccount.authn.krateo.io` | `ServiceAccount` | The intra-service exchange **allowlist**: `spec.serviceAccountRef {namespace,name}` (required — the k8s SA allowed to exchange its token), `groups[]` (→ issued cert `O=`), `displayName`, optional `delegation` {`allowed`, `maxDepth` (3, 1–8)} lets the service use `POST /delegate`, optional `principal` (`agent`, `controller` or `service`, the default) is signed into its tokens as the `principal` claim, optional `usernameCheck` {`allowed`} lets the service use the internal `POST /usernames/check`. `metadata.name` is the issued username. |
 | `ldapconfigs.ldap.authn.krateo.io` | `LDAPConfig` | An LDAP server: `dialURL` + `baseDN` (required), optional `bindDN`/`bindSecret` (anonymous bind if omitted), `tls`, `graphics`; optional `groupSearch` {`baseDN` (`spec.baseDN`), `filter` (`(\|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute` (`cn`)} finds the user's groups (#72, [below](#ldap-group-search)). |
 | `oauthconfigs.oauth.authn.krateo.io` | `OAuthConfig` | An OAuth2 provider: `clientID`, `clientSecretRef`, `authURL`, `tokenURL`, `redirectURL`, `scopes[]` (all required), optional `authStyle`, `restActionRef`, `graphics`. Sign-in needs `restActionRef`: its answer names the user, and must carry `subject`, the provider's stable user id (since 0.41.0). |
 | `oidcconfigs.oidc.authn.krateo.io` | `OIDCConfig` | An OIDC provider: `clientID`, `redirectURI`, optional `clientSecret` (omitted: a public client, which sends no `client_secret` and must send a PKCE verifier), plus `discoveryURL` and/or explicit `authorizationURL`/`tokenURL`/`userInfoURL` (discovery fills the endpoints when any is unset), and `issuer` when there is no `discoveryURL` (#50); optional `stepUp` {`acrValues`, `maxAge` (5m), `ttl` (15m)} enables `/oidc/stepup` (#49); optional `allowedGroups[]` admits only users holding at least one of those groups (others get `403 GroupNotAllowed`); optional `additionalScopes`, `restActionRef`, `graphics`. |
@@ -55,6 +55,32 @@ material, a stored credential or a secret, or if authn mints a credential.
 | POST | `/serviceaccount/login` | `Authorization: Bearer <projected SA token, audience authn>` → TokenReview → allowlist mapping → login response. |
 | POST | `/delegate` | Agent delegation ([design](./design/agent-delegation.md)), shaped like RFC 8693 token exchange. `Authorization: Bearer <the service's projected SA token, audience authn>`, and a form body with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token_type=urn:ietf:params:oauth:token-type:jwt` and `subject_token=<a person's authn JWT>`. The service must be mapped with `spec.delegation.allowed`. The answer is `{access_token, issued_token_type, token_type: "Bearer", expires_in}`: a JWT with the person's `sub`, `username` and `groups`, minus reserved `krateo:loa:` groups, and RFC 8693 `act: {sub: <service>, principal: <its mapping's kind>}`, nested for a chain. The token keeps the subject token's own `principal`. It lives at most 15 minutes and never past the subject token. No kubeconfig is minted. |
 | GET | `/health` | `{name,version}` once serving, `503` otherwise (process lifecycle only). |
+
+### The internal listener
+
+A second port (`internal.port`, default `8090`, env `AUTHN_INTERNAL_PORT`) serves calls only
+in-cluster services make, through the ClusterIP Service `<release>-internal`. No Ingress or
+HTTPRoute may reference it: the public routes forward every path to the public port, and the
+public port answers these paths `404`. `TestInternalSurface` pins the list and checks that none
+of it is public.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/usernames/check` | Whether a username could be given to a new identity (an access-request controller asks before creating one). `Authorization: Bearer <the service's projected SA token, audience authn>`; the service must be mapped with `spec.usernameCheck.allowed`. JSON body `{"username": "<name>"}`, the field required (an empty value is checked, and is `invalid`). `200` `{"available": true}` or `{"available": false, "reason": "<reason>"}`, reason one of `invalid` (not a name authn issues), `reserved`, `name_claimed`, `name_held_legacy`, `name_provisioned`, `name_bound`: the sign-in name guard's, in its order, but stricter: any existing `<username>-clientconfig` makes the name unavailable. It issues nothing. |
+
+### `/usernames/check` failures
+
+The calling service authenticates exactly as on `/serviceaccount/login`, so every
+`/serviceaccount/login` cause applies to it, with the same code. None of them answers
+availability. On top of those:
+
+| `details.causes[0].reason` | Code | Meaning | Caller should |
+|---|---|---|---|
+| `UsernameCheckNotAllowed` | 403 | The service's `ServiceAccount` mapping doesn't set `spec.usernameCheck.allowed: true` | Ask for access |
+| `MissingUsername` | 400 | The JSON body has no `username` field | Fix the client |
+| `UsernameCheckFailed` | 503 | authn could not complete a lookup (the apiserver didn't answer, or refused) | Treat the name as unavailable and retry |
+
+A body that isn't a JSON object of at most 4 KiB is `400` `InvalidRequestBody`.
 
 ### The login response contract
 

@@ -135,6 +135,19 @@
         }
       }
     },
+    "internal": {
+      "type": "object",
+      "title": "Internal listener",
+      "additionalProperties": false,
+      "description": "authn's internal listener, for in-cluster callers only (POST /usernames/check), served by the ClusterIP Service <release>-internal. Never route it publicly.",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        }
+      }
+    },
     "ingress": {
       "type": "object",
       "title": "Ingress",

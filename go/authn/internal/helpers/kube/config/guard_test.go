@@ -15,7 +15,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // fakeLookup answers the name guard from fixed facts and counts what it was
@@ -230,6 +232,35 @@ func TestClusterLookup(t *testing.T) {
 	sec, err = l.SessionSecret(ctx, "nobody")
 	require.NoError(t, err)
 	assert.Nil(t, sec)
+}
+
+// The binding lookup reads every namespace's RoleBindings in one uncached
+// List, and a List that fails is an error, never "not bound": an access-request
+// controller relies on /usernames/check alone for bindings (acmp, 2026-11-12),
+// so a lookup that answered false on a failed read would hand out a bound name.
+func TestClusterLookupBindingsFailClosedAndSpanAllNamespaces(t *testing.T) {
+	for _, failing := range []string{"clusterrolebindings", "rolebindings"} {
+		t.Run(failing, func(t *testing.T) {
+			cli := fake.NewSimpleClientset()
+			var rbNamespaces []string
+			cli.PrependReactor("list", "*", func(a k8stesting.Action) (bool, runtime.Object, error) {
+				if a.GetResource().Resource == "rolebindings" {
+					rbNamespaces = append(rbNamespaces, a.GetNamespace())
+				}
+				if a.GetResource().Resource == failing {
+					return true, nil, errors.New("apiserver unavailable")
+				}
+				return false, nil, nil
+			})
+			got, err := (&clusterLookup{cli: cli}).BoundAsUser(context.Background(), "alice")
+			require.Error(t, err)
+			assert.False(t, got)
+			if failing == "rolebindings" {
+				assert.Equal(t, []string{metav1.NamespaceAll}, rbNamespaces,
+					"RoleBindings must be listed once, across all namespaces")
+			}
+		})
+	}
 }
 
 // An identity source may not assert a `krateo:` group: those carry platform

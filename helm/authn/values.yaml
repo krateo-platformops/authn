@@ -62,6 +62,13 @@ service:
   type: ClusterIP
   port: 8082
 
+# authn's internal listener: calls only in-cluster services make
+# (POST /usernames/check). It is served by its own ClusterIP Service,
+# <release>-internal, which no Ingress or HTTPRoute may reference: the public
+# Service's routes forward every path to the public port, never to this one.
+internal:
+  port: 8090
+
 ingress:
   enabled: false
   className: ""

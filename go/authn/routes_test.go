@@ -344,3 +344,35 @@ func TestSmokeAnswers(t *testing.T) {
 		}
 	}
 }
+
+// internalSurface is every route on authn's internal listener.
+var internalSurface = []string{"POST /usernames/check"}
+
+// TestInternalSurface pins the internal listener's routes, and that none of
+// them is on the public listener: the public routes (HTTPRoutes forward every
+// path to authn's public port) must never reach an internal-only call, or
+// anyone could ask whether a name is held.
+func TestInternalSurface(t *testing.T) {
+	internal := buildInternalRoutes(routeOptions{ServiceAccountAudience: "authn"})
+	var got []string
+	for _, r := range internal {
+		got = append(got, r.Method()+" "+r.Pattern())
+	}
+	sort.Strings(got)
+	require.Equal(t, internalSurface, got, "the internal surface changed: review the new route, then update internalSurface")
+
+	public := map[string]bool{}
+	for _, r := range publicRoutes(t, &mintCounter{}) {
+		public[r.Pattern()] = true
+	}
+	for _, r := range internal {
+		assert.False(t, public[r.Pattern()], "%s is internal-only but the public listener serves it", r.Pattern())
+	}
+
+	// And the public listener answers the path as unknown.
+	h := routes.Serve(publicRoutes(t, &mintCounter{}), testLogger())
+	req := httptest.NewRequest(http.MethodPost, "/usernames/check", strings.NewReader(`{"username":"alice"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the public listener must not serve /usernames/check")
+}
