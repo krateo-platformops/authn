@@ -176,7 +176,7 @@ func authenticate(wri http.ResponseWriter, req *http.Request, base context.Conte
 		log.Debug().Str("name", name).Strs("fields", restaction.Keys(additionalFieldstoReplace)).Msg("values to replace")
 		tok, err = updateConfig(tok, additionalFieldstoReplace)
 		if err != nil {
-			err = status.Failed(CauseRESTActionFailed, fmt.Errorf("the RESTAction's answer is unusable: %w", err))
+			err = restaction.IdentityInvalid(fmt.Errorf("the RESTAction's answer is unusable: %w", err))
 			status.LogFailure(log, err).Str("name", name).Msg("unable to parse updated idtoken from restaction")
 			encode.Failure(wri, status.FromError(err))
 			return nil, tok, nil, false
@@ -205,13 +205,14 @@ const (
 	CauseAuthorizationCodeRejected                  = codeexchange.CauseAuthorizationCodeRejected
 
 	// Failures of authn or its IdP (500).
-	CauseOIDCConfigLookupFailed   status.CauseType = "OIDCConfigLookupFailed"
-	CauseOIDCConfigInvalid        status.CauseType = "OIDCConfigInvalid"
-	CauseOIDCDiscoveryFailed      status.CauseType = "OIDCDiscoveryFailed"
-	CauseClientSecretLookupFailed status.CauseType = "ClientSecretLookupFailed"
-	CauseTokenExchangeFailed                       = codeexchange.CauseTokenExchangeFailed
-	CauseUserInfoFailed           status.CauseType = "UserInfoFailed"
-	CauseRESTActionFailed                          = restaction.CauseRESTActionFailed
+	CauseOIDCConfigLookupFailed    status.CauseType = "OIDCConfigLookupFailed"
+	CauseOIDCConfigInvalid         status.CauseType = "OIDCConfigInvalid"
+	CauseOIDCDiscoveryFailed       status.CauseType = "OIDCDiscoveryFailed"
+	CauseClientSecretLookupFailed  status.CauseType = "ClientSecretLookupFailed"
+	CauseTokenExchangeFailed                        = codeexchange.CauseTokenExchangeFailed
+	CauseUserInfoFailed            status.CauseType = "UserInfoFailed"
+	CauseRESTActionFailed                           = restaction.CauseRESTActionFailed
+	CauseRESTActionIdentityInvalid                  = restaction.CauseRESTActionIdentityInvalid
 )
 
 // checkAllowedGroups admits nfo when allowed is empty, or when nfo holds at

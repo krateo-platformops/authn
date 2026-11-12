@@ -235,7 +235,8 @@ the same login fails again), and `500` when authn or its IdP failed.
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecret` Secret, or it has no value under the key. A named Secret never makes the client public | Retry later |
 | `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code: the token endpoint unreachable or failing, refusing authn's client credentials (`invalid_client`), redirecting (refused, never followed: the request carries the code, the verifier and, for a confidential client, the client secret), or answering something unusable. Only the status and the `error` code are logged; the IdP's answer is neither logged nor returned | Retry later |
 | `UserInfoFailed` | 500 | The UserInfo call, made for claims the ID token omits, failed: unreachable, not `200` (a redirect is refused), not JSON, or a field authn asked for has the wrong type | Retry later |
-| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved, or its answer isn't a usable identity. When snowplow answered, the message carries its code and its reason, when that is one of Kubernetes' StatusReasons, else `unknown` (e.g. `snowplow answered 504 Timeout`); snowplow's own message is neither returned nor logged: it can name stage URLs built from the user's identity | Retry later |
+| `RESTActionFailed` | 500 | The `restActionRef` RESTAction could not be resolved: snowplow answered an error, or nothing answered. When snowplow answered, the message carries its code and its reason, when that is one of Kubernetes' StatusReasons, else `unknown` (e.g. `snowplow answered 504 Timeout`); snowplow's own message is neither returned nor logged: it can name stage URLs built from the user's identity | Retry later |
+| `RESTActionIdentityInvalid` | 500 | The RESTAction was resolved, but its answer isn't a usable identity: a field it sets has the wrong type (e.g. `groups` not a list). Retrying won't change it. An answer that isn't JSON at all is snowplow's failure, `RESTActionFailed` | Tell an administrator |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 Before #81, a missing or unreadable OIDCConfig answered `417` without a cause, and
@@ -256,7 +257,8 @@ any failed code exchange answered `417`.
 | `OAuthConfigLookupFailed` | 500 | authn could not read the OAuthConfig | Retry later |
 | `ClientSecretLookupFailed` | 500 | authn could not read the `clientSecretRef` Secret, or it has no such key | Retry later |
 | `TokenExchangeFailed` | 500 | The code exchange failed for a reason other than the code (see `/oidc/login`), or the token type isn't `bearer` (in any case, RFC 6749 §7.1) while a RESTAction needs it | Retry later |
-| `RESTActionFailed` | 500 | The RESTAction could not be resolved, or its answer isn't a usable identity (see `/oidc/login`). Its answer must carry `name` and `subject`, the provider's stable user id (for GitHub `(.userInfo.id\|tostring)`); without `subject`, authn can't tell this user from one who takes the same login later. An OAuthConfig without `restActionRef` identifies no one and answers this too | Tell an administrator |
+| `RESTActionFailed` | 500 | The RESTAction could not be resolved: snowplow answered an error, or nothing answered (see `/oidc/login`) | Retry later |
+| `RESTActionIdentityInvalid` | 500 | The RESTAction was resolved, but its answer isn't a usable identity (see `/oidc/login`). Its answer must carry `name` and `subject`, the provider's stable user id (for GitHub `(.userInfo.id\|tostring)`); without `subject`, authn can't tell this user from one who takes the same login later. An OAuthConfig without `restActionRef` identifies no one and answers this too | Tell an administrator |
 | `IssuanceFailed` | 500 | The caller was authenticated, but authn could not issue its clientconfig or sign its JWT | Retry later |
 
 ### `/oidc/stepup` failures

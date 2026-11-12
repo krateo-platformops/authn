@@ -415,7 +415,9 @@ authenticating with the long-lived `authn` service JWT. Two resolution paths:
 
 The returned `status` map may set `subject`, `name`, `email`, `preferredUsername`,
 `groups`, `avatarURL` (`updateConfig`); a wrong type for one of them is
-`RESTActionFailed`, and any other key is ignored. On OAuth, `name` and `subject` are
+`RESTActionIdentityInvalid` (an answer that can't identify anyone, for an administrator
+to fix, unlike `RESTActionFailed`, a RESTAction that couldn't be resolved), and any other
+key is ignored. On OAuth, `name` and `subject` are
 required: `subject` is the provider's stable user id, the identity the name guard
 checks (below). On OIDC, `subject` is ignored: the identity is the ID token's `iss` and
 `sub`, which no RESTAction can change.

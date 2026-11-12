@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — a RESTAction that identifies no one is its own cause
+
+`RESTActionFailed` meant two things with opposite advice: the RESTAction couldn't be
+resolved (snowplow answered an error, or nothing answered: retry later), or it was
+resolved and its answer can't identify anyone (no `name` or `subject`, a field of the
+wrong type, or an OAuthConfig with no `restActionRef`: an administrator has to fix it).
+An answer that isn't JSON at all is snowplow failing, so it stays `RESTActionFailed`. api.md gave "Retry
+later" under `/oidc/login` and "Tell an administrator" under `/oauth/login`, so a client
+couldn't follow the cause alone (found by frontend mapping login causes). The second is now
+`500` `RESTActionIdentityInvalid` on both routes; `RESTActionFailed` keeps the first. The
+status code and the response shape are unchanged.
+
 ## 2026-11-12 — an in-cluster check of whether a username is available
 
 identity-lifecycle's AccessRequest controller refused a requested username that an existing

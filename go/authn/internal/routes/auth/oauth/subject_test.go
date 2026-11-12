@@ -97,7 +97,7 @@ func TestLoginNamesTheSubject(t *testing.T) {
 }
 
 // Without a subject, authn can't tell this user from one who takes the same
-// login later, so it issues nothing: 500 RESTActionFailed, for an
+// login later, so it issues nothing: 500 RESTActionIdentityInvalid, for an
 // administrator to fix the RESTAction. The same goes for an OAuthConfig with no
 // RESTAction, which identifies no one.
 func TestLoginWithoutASubjectIssuesNothing(t *testing.T) {
@@ -113,8 +113,19 @@ func TestLoginWithoutASubjectIssuesNothing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			rec, gen := oauthLogin(t, tc.answer, tc.restAction)
 			assert.Equal(t, http.StatusInternalServerError, rec.Code)
-			assert.Contains(t, rec.Body.String(), `"reason":"RESTActionFailed"`)
+			assert.Contains(t, rec.Body.String(), `"reason":"RESTActionIdentityInvalid"`,
+				"an answer that can't identify anyone is for an administrator, not a retry")
 			assert.Zero(t, gen.calls, "nothing is issued")
 		})
 	}
+}
+
+// A RESTAction that couldn't be resolved is RESTActionFailed, for a retry, not
+// RESTActionIdentityInvalid: here snowplow answers something that isn't JSON.
+func TestAnUnresolvedRESTActionIsRESTActionFailed(t *testing.T) {
+	rec, gen := oauthLogin(t, `not json`, true)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"reason":"RESTActionFailed"`)
+	assert.NotContains(t, rec.Body.String(), "RESTActionIdentityInvalid")
+	assert.Zero(t, gen.calls, "nothing is issued")
 }

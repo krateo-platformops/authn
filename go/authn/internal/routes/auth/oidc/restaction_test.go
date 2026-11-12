@@ -59,6 +59,14 @@ func TestRESTActionCompletesTheIdentity(t *testing.T) {
 		assert.Equal(t, call{http.MethodPost, "/call/read", "at"}, calls[0], "the user's access token, in the body")
 	})
 
+	t.Run("an answer that identifies no one is RESTActionIdentityInvalid", func(t *testing.T) {
+		// Resolved, but groups isn't a list: for an administrator, not a retry.
+		rec, gen, _ := run(t, http.StatusOK, `{"status":{"groups":"ops"}}`)
+		require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+		assert.Equal(t, "RESTActionIdentityInvalid", causeOf(t, rec))
+		assert.Empty(t, gen.sessions, "nothing minted")
+	})
+
 	t.Run("a snowplow failure is RESTActionFailed", func(t *testing.T) {
 		rec, gen, calls := run(t, http.StatusGatewayTimeout, `{"kind":"Status","status":"Failure","reason":"Timeout","message":"stage timed out","code":504}`)
 		require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
