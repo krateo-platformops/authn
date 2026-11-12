@@ -423,12 +423,19 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 	}
 
 	written, err := g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner, claim)
-	if errors.Is(err, storage.ErrClaimedByAnother) {
+	switch {
+	case errors.Is(err, storage.ErrClaimedByAnother):
 		// Another identity claimed the name between the guard and this write.
 		// The certificate just minted is never stored or returned.
 		log.Warn().Str("strategy", string(strategy)).Str("refusal", string(RefusalClaimed)).
 			Err(err).Msg("username refused")
 		err = refused(RefusalClaimed, status.RefusedPrivately(status.CauseUsernameUnavailable, errUsernameUnavailable, err))
+	case errors.Is(err, storage.ErrHeldByAnother):
+		// The unclaimed Secret under this name holds another name's
+		// certificate: never replaced.
+		log.Warn().Str("strategy", string(strategy)).Str("refusal", string(RefusalHeldLegacy)).
+			Err(err).Msg("username refused")
+		err = refused(RefusalHeldLegacy, status.RefusedPrivately(status.CauseUsernameUnavailable, errUsernameUnavailable, err))
 	}
 	return certInfo, clusterInfo, notAfter, written, err
 }

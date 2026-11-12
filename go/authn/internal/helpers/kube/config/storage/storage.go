@@ -200,10 +200,19 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 		if err != nil {
 			return w, kerr.Wrap("reading the existing credential Secret", err)
 		}
-		if c := have.GetAnnotations()[ClaimAnnotation]; c != "" && c != nfo.Claim {
+		c := have.GetAnnotations()[ClaimAnnotation]
+		if c != "" && c != nfo.Claim {
 			// Nothing written; the update this login would have sent is its verb.
 			w.Verb = "update"
 			return w, fmt.Errorf("%w: the claim on the credential Secret belongs to another identity", ErrClaimedByAnother)
+		}
+		if c == "" && !endpoints.OwnsSecret(have, name) {
+			// A Secret written before claims existed whose certificate was
+			// issued to another name: the derived name aliases two usernames
+			// (john.doe and johndoe), and this write would replace the other
+			// one's credential.
+			w.Verb = "update"
+			return w, fmt.Errorf("%w: the credential Secret holds a certificate issued to another name", ErrHeldByAnother)
 		}
 	}
 
@@ -227,3 +236,7 @@ func written(w Written, verb string, code int, stored *corev1.Secret) Written {
 // ErrClaimedByAnother: Put found the Secret claimed by another identity, and
 // stored nothing.
 var ErrClaimedByAnother = stderrors.New("the username is claimed by another identity")
+
+// ErrHeldByAnother: Put found an unclaimed Secret, written before claims
+// existed, whose certificate was issued to another name, and wrote nothing.
+var ErrHeldByAnother = stderrors.New("the username's Secret holds another name's credential")

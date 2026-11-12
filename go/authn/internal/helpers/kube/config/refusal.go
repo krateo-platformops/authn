@@ -17,8 +17,9 @@ const (
 	// RefusalClaimed: another identity holds the name's claim. A login that
 	// loses the race to a simultaneous first login gets it too.
 	RefusalClaimed Refusal = "name_claimed"
-	// RefusalHeldLegacy: a Secret written before claims existed, by another
-	// strategy, holds the name.
+	// RefusalHeldLegacy: a Secret written before claims existed holds the
+	// name, and either another strategy wrote it or its certificate wasn't
+	// issued to this username.
 	RefusalHeldLegacy Refusal = "name_held_legacy"
 	// RefusalProvisioned: an administrator provisioned the name as a basic User
 	// or ServiceAccount mapping.

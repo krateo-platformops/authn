@@ -9,6 +9,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
+	"github.com/krateo-platformops/plumbing/endpoints"
 	"github.com/krateo-platformops/plumbing/usernames"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
@@ -40,10 +41,12 @@ type NameLookup interface {
 // reach an identity it wasn't meant for:
 //   - A username issued before is issued again only to the identity recorded
 //     in its claim (storage.ClaimAnnotation).
-//   - A Secret written before claims existed is adopted by the first login of
-//     the strategy that wrote it. An administrator-provisioned identity (basic,
-//     serviceaccount) also adopts a Secret whose strategy is unknown: the
-//     administrator chose its name.
+//   - A Secret written before claims existed goes only to the username its
+//     client certificate was issued to (endpoints.OwnsSecret), since its name
+//     is a lossy rewrite of the username. Given that, it is adopted by the first
+//     login of the strategy that wrote it; an administrator-provisioned
+//     identity (basic, serviceaccount) also adopts one whose strategy is
+//     unknown: the administrator chose its name.
 //   - An identity source (ldap, oauth, oidc) chooses its own usernames, so
 //     it may not take a reserved name, a name an administrator provisioned,
 //     or a name any RBAC binding already grants rights to, unless the name is
@@ -152,7 +155,17 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 			}
 			return "", refuse(RefusalClaimed, "is claimed by another identity")
 		}
-		// Written before claims existed: the strategy that wrote it adopts it.
+		// Written before claims existed, so nothing says whose it is but its
+		// certificate. Adopt it only when that certificate was issued to this
+		// username (endpoints.OwnsSecret): the Secret's name is derived from
+		// the username by a rewrite that drops dots and case, so john.doe's
+		// Secret is johndoe-clientconfig, and johndoe would otherwise adopt it,
+		// and overwrite it (snowplow's review of the derived-name rule). A
+		// Secret with no certificate it can read is no one's.
+		if !endpoints.OwnsSecret(sec, username) {
+			return "", refuse(RefusalHeldLegacy, "has a Secret written before claims existed whose certificate wasn't issued to it")
+		}
+		// The strategy that wrote it adopts it.
 		wrote := storage.Strategy(ann[storage.StrategyAnnotation])
 		if wrote == strategy {
 			g.log.Info().Str("strategy", string(strategy)).

@@ -2,9 +2,18 @@ package config
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
@@ -55,6 +64,23 @@ func secretWith(annotations map[string]string) *corev1.Secret {
 	return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "x-clientconfig", Annotations: annotations}}
 }
 
+// issuedTo is secretWith holding a client certificate issued to cn, as authn
+// stores it (base64 of the PEM block): what a Secret written before claims
+// existed proves its owner with.
+func issuedTo(t testing.TB, cn string, annotations map[string]string) *corev1.Secret {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: cn},
+		NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	sec := secretWith(annotations)
+	sec.Data = map[string][]byte{storage.ClientCertLabel: []byte(base64.StdEncoding.EncodeToString(
+		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})))}
+	return sec
+}
+
 func userAs(name, issuer, id string, groups ...string) *userinfo.DefaultUser {
 	u := userinfo.NewDefaultUser(name, "random", groups, nil)
 	u.Subject = userinfo.Subject{Issuer: issuer, ID: id}
@@ -90,7 +116,16 @@ func TestNameGuard(t *testing.T) {
 			lookup: fakeLookup{secret: secretWith(map[string]string{storage.ClaimAnnotation: claimOf(storage.StrategyOAuth, alice)})},
 			code:   403, cause: status.CauseUsernameUnavailable},
 		{name: "a pre-claim Secret its own strategy wrote is adopted", strategy: storage.StrategyOAuth, user: alice,
-			lookup: fakeLookup{secret: secretWith(map[string]string{storage.StrategyAnnotation: "oauth"}), bound: true}},
+			lookup: fakeLookup{secret: issuedTo(t, "alice", map[string]string{storage.StrategyAnnotation: "oauth"}), bound: true}},
+		// The derived name aliases usernames (john.doe's Secret is
+		// johndoe-clientconfig): an unclaimed Secret is adopted only by the
+		// name its certificate was issued to.
+		{name: "a pre-claim Secret its strategy wrote for another name isn't adopted", strategy: storage.StrategyOAuth, user: alice,
+			lookup: fakeLookup{secret: issuedTo(t, "al.ice", map[string]string{storage.StrategyAnnotation: "oauth"})},
+			code:   403, cause: status.CauseUsernameUnavailable},
+		{name: "a pre-claim Secret with no certificate is no one's", strategy: storage.StrategyOAuth, user: alice,
+			lookup: fakeLookup{secret: secretWith(map[string]string{storage.StrategyAnnotation: "oauth"})},
+			code:   403, cause: status.CauseUsernameUnavailable},
 		{name: "a pre-claim Secret another strategy wrote", strategy: storage.StrategyOAuth, user: alice,
 			lookup: fakeLookup{secret: secretWith(map[string]string{storage.StrategyAnnotation: "basic"})},
 			code:   403, cause: status.CauseUsernameUnavailable},
@@ -101,9 +136,17 @@ func TestNameGuard(t *testing.T) {
 			lookup: fakeLookup{secret: secretWith(nil)},
 			code:   403, cause: status.CauseUsernameUnavailable},
 		{name: "a provisioned identity adopts a Secret of unknown origin", strategy: storage.StrategyBasic, user: admin,
-			lookup: fakeLookup{secret: secretWith(map[string]string{storage.StrategyAnnotation: "unknown"})}},
+			lookup: fakeLookup{secret: issuedTo(t, admin.GetUserName(), map[string]string{storage.StrategyAnnotation: "unknown"})}},
 		{name: "a provisioned identity adopts an unannotated Secret", strategy: storage.StrategyServiceAccount, user: admin,
-			lookup: fakeLookup{secret: secretWith(nil)}},
+			lookup: fakeLookup{secret: issuedTo(t, admin.GetUserName(), nil)}},
+		{name: "a provisioned identity doesn't adopt another name's unannotated Secret", strategy: storage.StrategyBasic, user: admin,
+			lookup: fakeLookup{secret: issuedTo(t, admin.GetUserName()+".x", nil)},
+			code:   403, cause: status.CauseUsernameUnavailable},
+		// A synthetic Secret with no certificate (demo's acme, globex): no one
+		// can prove it theirs, so a provisioned identity is refused too (acmp).
+		{name: "a provisioned identity doesn't adopt a Secret with no certificate", strategy: storage.StrategyBasic, user: admin,
+			lookup: fakeLookup{secret: secretWith(nil)},
+			code:   403, cause: status.CauseUsernameUnavailable},
 		{name: "a provisioned identity can't take a name an identity source holds", strategy: storage.StrategyBasic, user: admin,
 			lookup: fakeLookup{secret: secretWith(map[string]string{storage.StrategyAnnotation: "oauth"})},
 			code:   403, cause: status.CauseUsernameUnavailable},
@@ -347,6 +390,41 @@ func TestAnAdminClaimMovesALegacyNameToANewIdentity(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, adminClaim, claim, "the claim the sign-in keeps is the admin's")
+		})
+	}
+}
+
+// The case the fix exists for, with the names it aliases: john.doe's
+// pre-claim Secret is johndoe-clientconfig. Its owner, john.doe, adopts it;
+// johndoe, whose name derives the same Secret, is refused as
+// name_held_legacy, and so is anyone when the Secret has no certificate.
+func TestAPreClaimSecretGoesOnlyToTheNameItsCertificateNames(t *testing.T) {
+	sec := func(cert string) *corev1.Secret {
+		if cert == "" {
+			return secretWith(map[string]string{storage.StrategyAnnotation: "basic"})
+		}
+		return issuedTo(t, cert, map[string]string{storage.StrategyAnnotation: "basic"})
+	}
+	for _, tc := range []struct {
+		name, user, cert string
+		adopted          bool
+	}{
+		{"its dotted owner adopts it", "john.doe", "john.doe", true},
+		{"the name that aliases it is refused", "johndoe", "john.doe", false},
+		{"no certificate: no one adopts it", "john.doe", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := nameGuard{lookup: &fakeLookup{secret: sec(tc.cert)}, log: zerolog.Nop()}
+			_, err := g.admit(context.Background(), storage.StrategyBasic, userAs(tc.user, "krateo-system", tc.user))
+			if tc.adopted {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, RefusalHeldLegacy, RefusalOf(err), "the audit record's denial reason")
+			st := status.FromError(err)
+			assert.Equal(t, http.StatusForbidden, st.Code)
+			assert.NotContains(t, st.Message, "certificate", "the answer stays opaque; the reason is private")
 		})
 	}
 }
