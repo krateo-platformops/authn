@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"testing"
@@ -426,5 +427,39 @@ func TestAPreClaimSecretGoesOnlyToTheNameItsCertificateNames(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, st.Code)
 			assert.NotContains(t, st.Message, "certificate", "the answer stays opaque; the reason is private")
 		})
+	}
+}
+
+// A pre-claim Secret whose strategy is unknown or missing, and whose
+// certificate is the username's, is adopted only by an identity an
+// administrator provisioned (basic, serviceaccount), who chose the name. An
+// identity source (ldap, oauth, oidc) chooses its own usernames, so it never
+// adopts one of unknown origin: name_held_legacy.
+func TestOnlyAProvisionedIdentityAdoptsAnOwnedSecretOfUnknownOrigin(t *testing.T) {
+	for _, wrote := range []map[string]string{
+		{storage.StrategyAnnotation: string(storage.StrategyUnknown)},
+		nil,
+	} {
+		for _, tc := range []struct {
+			strategy storage.Strategy
+			adopted  bool
+		}{
+			{storage.StrategyBasic, true},
+			{storage.StrategyServiceAccount, true},
+			{storage.StrategyLDAP, false},
+			{storage.StrategyOAuth, false},
+			{storage.StrategyOIDC, false},
+		} {
+			t.Run(fmt.Sprintf("%s/%v", tc.strategy, wrote), func(t *testing.T) {
+				g := nameGuard{lookup: &fakeLookup{secret: issuedTo(t, "alice", wrote)}, log: zerolog.Nop()}
+				_, err := g.admit(context.Background(), tc.strategy, userAs("alice", "kc", "1"))
+				if tc.adopted {
+					require.NoError(t, err)
+					return
+				}
+				require.Error(t, err)
+				assert.Equal(t, RefusalHeldLegacy, RefusalOf(err))
+			})
+		}
 	}
 }
