@@ -22,10 +22,10 @@ actor, caller, nor a person's groups, nor an object named after a user. The ruli
 strict, with one exception: an ID token's `iss` on an issuer mismatch, which names the IdP.
 authn's errors say what failed, not who; the apiserver's are wrapped to an operation, a
 Kubernetes-defined reason and a code (`internal/helpers/kube/kerr`); text other systems
-write (an LDAP server's diagnostics, an IdP's `error_description`, snowplow's message,
-the TokenReview's verdict) is reduced to its code or answered without being logged. Every
+write (an LDAP server's diagnostics, an IdP's `error_description`, snowplow's message and
+any reason of its own, the TokenReview's verdict) is reduced to its code or answered without being logged. Every
 line of a request, the issuance's included, carries the request's `session.id`, accepted
-only in audit's opaque form; identity lives in the audit record, which the `session.id`
+only in audit's `session_id` format (audit#32); identity lives in the audit record, which the `session.id`
 joins. Sentinel tests (`internal/logtest`) drive the logins, `/delegate`, the generator,
 the backfill and the step-up sweep through their main branches and fail if a sentinel
 identity reaches a line; they cover the branches they drive, not every possible line.

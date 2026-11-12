@@ -131,14 +131,16 @@ Config names (an OIDCConfig's, a RESTAction's) and the IdP's URLs are configurat
 - **Text other systems write** never reaches a line: an LDAP server's diagnostic message
   (only the result code, e.g. `LDAP result 49 (Invalid Credentials)`), an IdP's
   `error_description` and token-endpoint body (only a registered OAuth `error` code,
-  e.g. `invalid_grant`), snowplow's message (only its code and reason). The
+  e.g. `invalid_grant`), snowplow's message (only its code, and its reason when that is
+  one of Kubernetes' own StatusReasons, else `unknown`). The
   TokenReview's `status.error` goes in `CauseError.Answered`: the caller is answered it,
   no line carries it.
 - **Every line of a request carries its `session.id`**, the issuance's included: a route
   hands the generator its logger (`kubeconfig.Logger`), so the name guard's, the
   generator's and the CSR's lines join the request's audit record, where the identity
-  is. A `session.id` is accepted only in audit's opaque form, 1 to 128 of
-  `[A-Za-z0-9_-]` (`auditlog.ValidSessionID`); `auditlog.Middleware` replaces any other
+  is. A `session.id` is accepted only in audit's `session_id` format (audit#32): 1 to 128
+  of `[A-Za-z0-9._-]` (`auditlog.ValidSessionID`, until audit v0.11.0 exports
+  `audit.ValidSessionID`); `auditlog.Middleware` replaces any other
   inbound value with a minted one, so neither a log line nor an audit record's join key
   is a caller's free text.
 - CSR lines name the CSR by its UID (`csr.uid`): its name starts with the username, and
@@ -614,8 +616,8 @@ or a log line.
   them, once (`audit.AuthorizationAnnotations()`, schema v1's `content_annotations`). The startup backfill writes only to stamp one of them or an owner,
   so every backfill write is a record. The renewer's annotation sync is recorded when it
   changes one of them, not for the validity window alone.
-- **Every record** carries the request's `session.id` (inbound W3C baggage when it is
-  audit's opaque form, otherwise minted per request; `auditlog.ValidSessionID`), the
+- **Every record** carries the request's `session.id` (inbound W3C baggage when it has
+  audit's `session_id` format, otherwise minted per request; `auditlog.ValidSessionID`), the
   source IPs, the user agent and whether the target's namespace is a preview sandbox
   (from the Namespace's labels, read and cached for 5 minutes; the chart grants `get` on
   authn's own Namespace only). Its body is a closed set of texts, never an
