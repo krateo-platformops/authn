@@ -62,6 +62,7 @@ type fakeAPIServer struct {
 	mu      sync.Mutex
 	updates map[string]map[string]string // secret name -> annotations written
 	owners  map[string][]metav1.OwnerReference
+	labels  map[string]map[string]string // secret name -> labels written
 	// refuse answers the PUT of these Secrets with that HTTP status, as the
 	// apiserver does for a conflict or a forbidden write.
 	refuse map[string]int
@@ -69,7 +70,8 @@ type fakeAPIServer struct {
 
 func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
 	t.Helper()
-	f := &fakeAPIServer{updates: map[string]map[string]string{}, owners: map[string][]metav1.OwnerReference{}}
+	f := &fakeAPIServer{updates: map[string]map[string]string{}, owners: map[string][]metav1.OwnerReference{},
+		labels: map[string]map[string]string{}}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		base := "/api/v1/namespaces/" + ns + "/secrets"
@@ -92,6 +94,7 @@ func newFakeAPIServer(t *testing.T, items []corev1.Secret) *fakeAPIServer {
 			f.mu.Lock()
 			f.updates[sec.Name] = sec.Annotations
 			f.owners[sec.Name] = sec.OwnerReferences
+			f.labels[sec.Name] = sec.Labels
 			f.mu.Unlock()
 			_, _ = w.Write(body)
 		default:

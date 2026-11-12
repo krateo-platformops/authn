@@ -148,6 +148,19 @@
         }
       }
     },
+    "exactUsernames": {
+      "type": "object",
+      "title": "Exact session-Secret names",
+      "additionalProperties": false,
+      "description": "authn#140. On: a session Secret is named <username>-clientconfig exactly, read exact-then-legacy with an ownership check, and every Secret authn writes carries authn.krateo.io/username, authn.krateo.io/principal and authn.krateo.io/username-label. Turn on for a cluster only once snowplow's exact-then-legacy reader is rolled out there and the Kyverno tenant handover is done (tenant-namespace-on-login deleted). Rendered as AUTHN_EXACT_USERNAMES.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "default": false
+        }
+      }
+    },
     "ingress": {
       "type": "object",
       "title": "Ingress",

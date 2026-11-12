@@ -15,6 +15,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/certrenewal"
 	"github.com/krateo-platformops/authn/internal/env"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
@@ -88,6 +89,10 @@ func main() {
 	serviceAccountAudience := flag.String("serviceaccount-audience",
 		env.String("AUTHN_SERVICEACCOUNT_AUDIENCE", serviceaccount.DefaultAudience),
 		"audience the projected ServiceAccount token must carry for the /serviceaccount/login strategy")
+
+	exactUsernames := flag.Bool("exact-usernames", env.Bool(storage.EnvExactUsernames, false),
+		"name each session Secret after the exact username, read it exact-then-legacy, and stamp the identity keys (authn#140, authn#144); "+
+			"turn on only once snowplow reads exact-then-legacy and the tenant handover is done")
 
 	basicDecoySecret := flag.String("basic-decoy-secret",
 		env.String("AUTHN_BASIC_DECOY_SECRET", ""),
@@ -173,7 +178,15 @@ func main() {
 		log.Fatal().Err(err).Msg("resolving kubeconfig for rest client")
 	}
 
+	// How session Secrets are named (authn#140). Off, authn behaves as it
+	// always has.
+	naming := storage.Naming{Exact: *exactUsernames}
+	if naming.Exact {
+		log.Info().Msg("exact session-Secret names on")
+	}
+
 	gen := kubeconfig.NewGenerator(cfg,
+		kubeconfig.Naming(naming),
 		kubeconfig.KubernetesURL(*kubernetesURL),
 		kubeconfig.CertDuration(*certExpiresIn),
 		kubeconfig.ClusterName(*clusterName),
@@ -235,7 +248,8 @@ func main() {
 		Healthy:                &healthy,
 		Version:                Version,
 		ServiceName:            serviceName,
-		Audit:                  auditRec,
+		Audit:                  auditRec.WithNaming(naming),
+		Naming:                 naming,
 	}
 
 	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
@@ -282,6 +296,7 @@ func main() {
 		Threshold:  *certRenewalThreshold,
 		Log:        log,
 		Audit:      auditCtl,
+		Naming:     naming,
 	})
 	if err != nil {
 		// A clientconfig authn cannot create has never been a reason to refuse
@@ -324,17 +339,21 @@ func main() {
 			MappingNamespace: operatorNamespace,
 			Log:              log,
 			Audit:            auditCtl,
+			Naming:           naming,
 		})
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")
 		} else {
-			log.Info().
+			evt := log.Info().
 				Int("scanned", res.Scanned).
 				Int("stamped", res.Stamped).
 				Int("skipped", res.Skipped).
 				Int("owned", res.Owned).
-				Int("orphaned", res.Orphaned).
-				Msg("identity annotation backfill done")
+				Int("orphaned", res.Orphaned)
+			if naming.Exact {
+				evt = evt.Int("inconsistent", res.Inconsistent)
+			}
+			evt.Msg("identity annotation backfill done")
 		}
 
 		// Delete expired step-up credentials (#49): they are never renewed,

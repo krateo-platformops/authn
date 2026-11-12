@@ -12,6 +12,8 @@ data:
   # The actor of the audit records of authn's own background writes (AUDIT-4).
   POD_SERVICE_ACCOUNT: {{ include "authn.serviceAccountName" . }}
   AUTHN_BASIC_DECOY_SECRET: {{ include "authn.fullname" . }}-basic-decoy
+  # Exact session-Secret names (authn#140): see values.yaml, exactUsernames.
+  AUTHN_EXACT_USERNAMES: {{ (.Values.exactUsernames).enabled | default false | quote }}
   {{- range $key, $value := .Values.env }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
