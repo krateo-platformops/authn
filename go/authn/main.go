@@ -38,7 +38,7 @@ import (
 )
 
 const (
-	serviceName = "auth"
+	serviceName = "authn"
 )
 
 var (
