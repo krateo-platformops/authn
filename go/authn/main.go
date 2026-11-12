@@ -14,7 +14,6 @@ import (
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/certrenewal"
 	"github.com/krateo-platformops/authn/internal/env"
-	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
@@ -188,14 +187,6 @@ func main() {
 		log.Info().Msg("exact session-Secret names on")
 	}
 
-	gen := kubeconfig.NewGenerator(cfg,
-		kubeconfig.Naming(naming),
-		kubeconfig.KubernetesURL(*kubernetesURL),
-		kubeconfig.CertDuration(*certExpiresIn),
-		kubeconfig.ClusterName(*clusterName),
-		kubeconfig.Log(log),
-	)
-
 	// JWT signing key: an RSA private key, PEM-encoded, mounted from a Secret.
 	// The matching public key must be published in the JWKS under *jwtKeyID.
 	if *jwtKeyID == "" {
@@ -236,6 +227,22 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("building the audit recorders")
 	}
+
+	// Everything that writes or reads session Secrets, with the naming.
+	comps := newComponents(componentConfig{
+		RestConfig:          cfg,
+		Naming:              naming,
+		Log:                 log,
+		Audit:               auditCtl,
+		KubernetesURL:       *kubernetesURL,
+		ClusterName:         *clusterName,
+		CertDuration:        *certExpiresIn,
+		SelfUsername:        *authnUsername,
+		StorageNamespace:    *storageNamespace,
+		ServiceCertDuration: *serviceCertExpiresIn,
+		RenewalThreshold:    *certRenewalThreshold,
+	})
+	gen := comps.Generator
 
 	ro := routeOptions{
 		RestConfig:             cfg,
@@ -288,19 +295,7 @@ func main() {
 	// the username and an existing one is deleted and recreated, so two writers
 	// would delete each other's in-flight requests. Every replica serves logins
 	// regardless, so authn can run with more than one replica.
-	renewer, err := certrenewal.New(certrenewal.Options{
-		RestConfig: cfg,
-		Namespace:  *storageNamespace,
-		CAData:     string(cfg.CAData),
-		ServerURL:  *kubernetesURL,
-		Username:   *authnUsername,
-		Groups:     []string{"authn"},
-		Duration:   *serviceCertExpiresIn,
-		Threshold:  *certRenewalThreshold,
-		Log:        log,
-		Audit:      auditCtl,
-		Naming:     naming,
-	})
+	renewer, err := certrenewal.New(comps.Renewer)
 	if err != nil {
 		// A clientconfig authn cannot create has never been a reason to refuse
 		// logins (only snowplow-backed identity enrichment degrades), so this
@@ -335,15 +330,10 @@ func main() {
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill: resolving the operator namespace")
 		}
-		res, err := identitybackfill.Run(lctx, identitybackfill.Options{
-			RestConfig:       cfg,
-			Namespaces:       []string{operatorNamespace, *storageNamespace},
-			SelfUsername:     *authnUsername,
-			MappingNamespace: operatorNamespace,
-			Log:              log,
-			Audit:            auditCtl,
-			Naming:           naming,
-		})
+		backfill := comps.Backfill
+		backfill.Namespaces = []string{operatorNamespace, *storageNamespace}
+		backfill.MappingNamespace = operatorNamespace
+		res, err := identitybackfill.Run(lctx, backfill)
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")
 		} else {
