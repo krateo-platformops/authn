@@ -14,6 +14,28 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-12 — a new User or mapping name is one its Secret is named after (#140)
+
+A basic User's or a ServiceAccount mapping's name is the username it signs in as, but its
+session Secret is named after `kubeutil.MakeDNS1123Compatible(name)`. A Kubernetes object
+name may have dots and run to 253 characters, so `alice.smith` got `alicesmith-clientconfig`,
+a tenant generated from that Secret bound `alicesmith`, and two long names could share one
+Secret. Both CRDs now refuse, at create, a name that transform would rewrite: it must match
+`^[a-z0-9][-a-z0-9]{0,62}$`, which a unit test proves is exactly the set of names the
+transform leaves unchanged. Existing names are untouched (Diego): those objects keep working
+and stay updatable, and renaming them would be a migration, since a new name is a new Secret.
+
+The rule is checked at create only (`oldSelf.hasValue() || …`, `optionalOldSelf: true`)
+rather than left to CRD validation ratcheting, because ratcheting doesn't cover it. Ratcheting
+forgives an error only where the value the rule sits on is unchanged, and a root-level rule
+sits on the whole object. On kind 1.36.4, with a plain `self.metadata.name.matches(…)` rule
+added over an existing `alice.smith`, its spec patch and even a label-only change were refused
+with the rule's message. The name is immutable, so checking it at create is the same promise:
+the integration suite (`apis/`, the storage-integration workflow's `crd-names` job) shows an
+existing dotted object's spec patch, label, finalizer add and remove and delete accepted, and
+new dotted, 64-character and server-side-applied names refused, for both CRDs. The rule's
+estimated CEL cost is about 2.2M, under the apiserver's 10M per-expression limit.
+
 ## 2026-11-12 — authn's service name is `authn`
 
 authn named itself `auth`: the OpenTelemetry resource's `service.name`, its audit records'

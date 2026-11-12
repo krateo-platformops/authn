@@ -231,13 +231,23 @@ controller that writes status — and it resolves them **in its operator namespa
 (`POD_NAMESPACE`, `internal/helpers/kube/util/util.go:23-38`).
 
 ### `User` (`basic.authn.krateo.io`) — `apis/authn/basic/v1alpha1/types.go`
+- `metadata.name` is the issued username. A new User's name must be one its session
+  Secret is named after unchanged: a lowercase DNS-1123 label of at most 63 characters
+  (`^[a-z0-9][-a-z0-9]{0,62}$`, the names `kubeutil.MakeDNS1123Compatible` leaves as
+  they are). The CRD's root CEL rule refuses any other name at create, with the message
+  "the name must be a lowercase DNS-1123 label of at most 63 characters …", so a name like
+  `alice.smith` can't get a Secret, or a tenant, named `alicesmith` (#140). It is checked
+  at create only (`optionalOldSelf`, `oldSelf.hasValue() || …`): a User created before
+  the rule keeps its name, and stays updatable and deletable. `apis/names_test.go` proves
+  the pattern is the transform's; `apis/names_integration_test.go` shows both halves on a
+  1.36 apiserver.
 - `spec.passwordRef` (`SecretKeySelector`, required) — Secret holding the password.
 - `spec.displayName`, `spec.avatarURL` (both required by the CRD schema),
   `spec.groups[]` (optional).
 
 ### `ServiceAccount` (`serviceaccount.authn.krateo.io`) — `apis/authn/serviceaccount/v1alpha1/types.go`
 The intra-service-auth exchange allowlist; `metadata.name` is the issued username
-(like `User`).
+(like `User`), and a new mapping's name is held to the same create-time rule as a User's.
 - `spec.serviceAccountRef` (`ObjectRef {namespace,name}`, required) — the Kubernetes
   ServiceAccount allowed to exchange its (audience-bound) token for this identity.
   The CR's existence is the allowlist: an SA with no matching CR cannot exchange.
