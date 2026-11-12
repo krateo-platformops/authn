@@ -20,6 +20,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/kerr"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
 	"github.com/krateo-platformops/authn/internal/status"
@@ -135,7 +136,7 @@ func (r *route) Handler() http.HandlerFunc {
 		if lookup == nil {
 			if lookup, err = kubeconfig.NewNameLookup(r.rc); err != nil {
 				record(username, audit.OutcomeFailure, "", auditlog.NoCheckDenial, 0)
-				fail(checkFailed(err), "username check failed")
+				fail(checkFailed(kerr.Wrap("building the name lookup", err)), "username check failed")
 				return
 			}
 		}
@@ -144,7 +145,9 @@ func (r *route) Handler() http.HandlerFunc {
 			// Fail closed: the caller can't know, so it treats the name as
 			// unavailable and retries.
 			record(username, audit.OutcomeFailure, "", auditlog.NoCheckDenial, answeredCode(err))
-			fail(checkFailed(fmt.Errorf("checking the username: %w", err)), "username check failed")
+			// kerr keeps only the error's identity-free class, whatever the
+			// lookup wrote: no log line carries the name asked about.
+			fail(checkFailed(kerr.Wrap("checking the username", err)), "username check failed")
 			return
 		}
 		record(username, audit.OutcomeSuccess, checkResult(why), auditlog.NoCheckDenial, 0)
