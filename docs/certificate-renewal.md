@@ -113,8 +113,9 @@ certificate, but it takes effect immediately only after a pod restart.
 **RBAC:** none added. The annotations are written with the `get` and `update` on
 `secrets` that authn already holds.
 
-**Single writer, any number of replicas:** the CSR object is named after the username,
-so two writers would race on the CSR named `authn`. The loop therefore runs only on the
+**Single writer, any number of replicas:** plumbing's `signup` gives authn's own CSR a
+fixed name, authn's own username (`authn`); a login's CSR instead gets a generated name.
+So two writers would race on the CSR named `authn`. The loop therefore runs only on the
 replica holding the `authn-cert-renewal` Lease (`go/authn/internal/leader`, client-go
 leader election). The other replicas serve logins and stand by:
 - a crashed leader is replaced within 15s;
