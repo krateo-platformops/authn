@@ -87,7 +87,7 @@ type Delegation struct {
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=16
-	// +kubebuilder:validation:items:XValidation:rule="self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$') && size(self) <= 253 || self.matches('^https://[^/?#@ ]+(/[^?# ]*)?$')",message="an audience is a DNS-1123 subdomain or an absolute https URI with no userinfo, query or fragment"
+	// +kubebuilder:validation:items:XValidation:rule="self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$') && size(self) <= 253 || self.matches('^https://[^/?#@]+(/[^?#]*)?$') && self.matches('^[!-~]+$')",message="an audience is a DNS-1123 subdomain or an absolute https URI, all printable ASCII, with no userinfo, query or fragment"
 	// +kubebuilder:validation:items:MaxLength=2048
 	Audiences []string `json:"audiences,omitempty"`
 }

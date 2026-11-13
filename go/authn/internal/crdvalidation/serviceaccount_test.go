@@ -99,6 +99,8 @@ func TestServiceAccountDelegationValidation(t *testing.T) {
 				{"https://cmp.krateo.dev/mcp?x=1", false},
 				{"https://cmp.krateo.dev/mcp#frag", false},
 				{"https://", false},
+				{"https://cmp.krateo.dev/m\tcp", false},     // a control character: audit's format refuses it
+				{"https://cmp.krateo.dev/mcp\u00e9", false}, // non-ASCII: audit's format refuses it
 				{strings.Repeat("a", 254), false},
 			} {
 				obj := mapping("aud-"+string(rune('a'+i)), map[string]any{"allowed": true, "audiences": strs(tc.audience)})
