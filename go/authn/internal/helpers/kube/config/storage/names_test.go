@@ -26,3 +26,25 @@ func TestStepUpSecretNameNeverCollidesWithASession(t *testing.T) {
 	assert.False(t, strings.HasSuffix(StepUpSecretName("alice"), "-clientconfig"),
 		"step-up Secrets are not listed as session credentials by suffix")
 }
+
+// ClientConfigSecretName(u) is u's own name only when the derivation leaves u
+// unchanged (authn#138); otherwise it is a rewrite another username may share.
+func TestOwnsDerivedName(t *testing.T) {
+	for u, own := range map[string]bool{
+		"alice":                 true,
+		"admin":                 true,
+		"svc-1":                 true,
+		"":                      false,
+		"Alice":                 false,
+		"Alice@Example":         false,
+		"alice:example":         false,
+		"john.doe":              false,
+		strings.Repeat("a", 64): false,
+		strings.Repeat("a", 63): true,
+	} {
+		assert.Equal(t, own, OwnsDerivedName(u), "%q", u)
+		if own {
+			assert.Equal(t, u+"-clientconfig", ClientConfigSecretName(u))
+		}
+	}
+}

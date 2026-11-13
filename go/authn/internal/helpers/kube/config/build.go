@@ -390,15 +390,24 @@ func secretFor(user userinfo.Info, name func(string) string) string {
 	return name(user.GetUserName())
 }
 
-// secretFor is the Secret an issuance for user writes, as g's naming names it
-// (storage.Naming): the step-up one when stepUp. With legacy naming it is
-// secretFor's. With exact naming it is "" for a username its Secrets can't be
-// named after exactly: its legacy name is a rewrite, which may be another
-// username's Secret, so a refused or failed issuance's record names the Secret
-// resource without a name (audit's name_not_issued rule). An issuance that
-// stores one under its legacy name still reports the Secret it wrote.
+// secretFor is the Secret a refused or failed issuance's record names, as g's
+// naming names it (storage.Naming): the step-up one when stepUp. It names a
+// Secret only when that name is the username's own; otherwise the record
+// names the Secret resource without a name, as name_missing does, so a query
+// for another user's Secret never shows refusals of names that were never
+// theirs:
+//   - legacy naming: "" unless the derivation leaves the username unchanged
+//     (storage.OwnsDerivedName, authn#138);
+//   - exact naming: "" for a username its Secrets can't be named after exactly
+//     (audit's name_not_issued rule).
+//
+// It names only the would-be Secret of a record: an issuance that stores one
+// reports the Secret it actually wrote.
 func (g *kubeconfigGenerator) secretFor(user userinfo.Info, stepUp bool) string {
 	if !g.naming.Exact {
+		if !storage.OwnsDerivedName(user.GetUserName()) {
+			return ""
+		}
 		if stepUp {
 			return secretFor(user, storage.StepUpSecretName)
 		}

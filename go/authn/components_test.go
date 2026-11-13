@@ -28,7 +28,9 @@ func TestNewComponentsGiveEveryComponentTheNaming(t *testing.T) {
 		secret string
 	}{
 		{storage.Naming{Exact: true}, "john.doe-clientconfig"},
-		{storage.Naming{}, "johndoe-clientconfig"},
+		// Legacy naming rewrites john.doe to johndoe-clientconfig, which may be
+		// another user's, so the refusal names none (authn#138).
+		{storage.Naming{}, ""},
 	} {
 		c := newComponents(componentConfig{
 			RestConfig: &rest.Config{Host: srv.URL, TLSClientConfig: rest.TLSClientConfig{CAData: []byte("ca")}},

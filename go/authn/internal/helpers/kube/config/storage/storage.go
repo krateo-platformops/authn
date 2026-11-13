@@ -13,6 +13,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/secrets"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/plumbing/endpoints"
+	"github.com/krateo-platformops/plumbing/kubeutil"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,6 +56,19 @@ func CertValidityAnnotations(certData string) map[string]string {
 // definition, which consumers such as snowplow and core-provider share.
 func ClientConfigSecretName(username string) string {
 	return endpoints.SecretName(username)
+}
+
+// OwnsDerivedName reports whether ClientConfigSecretName(username) is
+// username's own name: the derivation (endpoints.SecretName, which is
+// kubeutil.MakeDNS1123Compatible plus the suffix) leaves the username
+// unchanged. Otherwise the derived name is a rewrite (Alice@Example and
+// alice:example both become aliceexample-clientconfig), which can be another
+// username's Secret. An audit record of a refusal or a check names the
+// derived Secret only when this holds, else the Secret resource without a
+// name (snowplow's rule, authn#138). The condition is the derivation's own
+// transform, so the two can't drift. An empty username owns nothing.
+func OwnsDerivedName(username string) bool {
+	return username != "" && kubeutil.MakeDNS1123Compatible(username) == username
 }
 
 // StepUpSecretName names the Secret holding username's short-lived step-up
