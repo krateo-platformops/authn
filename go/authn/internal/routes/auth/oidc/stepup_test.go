@@ -244,7 +244,9 @@ const stepUpGold = `{"acrValues":["gold"],"ttl":"20m"}`
 
 // A proven, fresh step-up mints only a step-up credential, carrying exactly
 // the granted krateo:loa:2. It never touches the session credential, and the
-// token is bounded by the step-up certificate.
+// token is bounded by the step-up certificate. Its audit record, as the route
+// writes it, conforms: a success naming the step-up Secret it stored, with the
+// apiserver's status.
 func TestStepUpGrantsAShortLivedCredential(t *testing.T) {
 	rc := stepUpEnv(t, stepUpGold, map[string]any{"acr": "gold", "auth_time": float64(time.Now().Add(-time.Minute).Unix())})
 	gen := &stepUpGenerator{notAfter: time.Now().Add(12 * time.Minute)} // the signer granted less than asked
@@ -272,6 +274,20 @@ func TestStepUpGrantsAShortLivedCredential(t *testing.T) {
 	exp, err := claims.GetExpirationTime()
 	require.NoError(t, err)
 	assert.WithinDuration(t, gen.notAfter, exp.Time, 5*time.Second, "the token ends with the step-up certificate")
+
+	r := auditlogtest.Only(t, gen.records)
+	assert.Equal(t, "authn.stepup.oidc", auditlogtest.String(r, "krateo.action"))
+	assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, storage.StepUpSecretName("alice"), auditlogtest.String(r, "krateo.audit.object_ref.name"))
+	assert.Equal(t, "create", auditlogtest.String(r, "krateo.audit.verb"))
+	assert.Empty(t, auditlogtest.String(r, "krateo.audit.denial_reason"))
+	code := int64(0)
+	for _, kv := range audittest.Attributes(r) {
+		if string(kv.Key) == "http.response.status_code" {
+			code = kv.Value.AsInt64()
+		}
+	}
+	assert.Equal(t, int64(201), code, "the apiserver's answer to the step-up Secret's create")
 }
 
 func TestStepUpRefusals(t *testing.T) {
