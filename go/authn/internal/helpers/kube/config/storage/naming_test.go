@@ -202,3 +202,15 @@ func TestNamingOwns(t *testing.T) {
 func TestAuthorizationDiffersCountsDoubtAsAChange(t *testing.T) {
 	assert.True(t, exactNaming.AuthorizationDiffers(nil, &corev1.Secret{}))
 }
+
+// The claim an administrator writes by hand (docs/behavior.md, a synthetic
+// fixture) must be byte for byte what EncodeClaim renders: compact JSON, and
+// Go's escapes for <, > and &. A spaced or unescaped one is another identity.
+func TestEncodeClaimIsTheExactStringToWrite(t *testing.T) {
+	assert.Equal(t, `["oidc","https://keycloak.example/realms/krateo","<subject>"]`,
+		strings.NewReplacer(`\u003c`, "<", `\u003e`, ">").Replace(
+			EncodeClaim(StrategyOIDC, "https://keycloak.example/realms/krateo", "<subject>")))
+	assert.Equal(t, `["oidc","https://kc/realms/a?b=1\u0026c=2","\u003csub\u003e"]`,
+		EncodeClaim(StrategyOIDC, "https://kc/realms/a?b=1&c=2", "<sub>"))
+	assert.NotEqual(t, `["oidc", "https://kc", "1"]`, EncodeClaim(StrategyOIDC, "https://kc", "1"), "no spaces")
+}

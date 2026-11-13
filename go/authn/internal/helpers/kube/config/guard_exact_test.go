@@ -346,31 +346,26 @@ func TestAdoptionLinesKeepTheirText(t *testing.T) {
 	}
 }
 
-// An unclaimed Secret whose certificate is the username's, but whose
-// strategy is unknown or missing, is adopted by a provisioned identity and
-// never by an identity source, with either naming. Since #148 a Secret with
-// no certificate is refused before this rule, so it is pinned with owned ones.
-func TestOnlyAProvisionedIdentityAdoptsAnOwnedSecretOfUnknownOrigin(t *testing.T) {
-	for _, naming := range []storage.Naming{{}, exact} {
-		for _, ann := range []map[string]string{nil, {storage.StrategyAnnotation: "unknown"}} {
-			for _, tc := range []struct {
-				strategy storage.Strategy
-				want     Refusal
-			}{
-				{storage.StrategyOIDC, RefusalHeldLegacy},
-				{storage.StrategyLDAP, RefusalHeldLegacy},
-				{storage.StrategyBasic, ""},
-				{storage.StrategyServiceAccount, ""},
-			} {
-				sec := ownedBy(t, sharedY, userY, ann)
-				var lookup NameLookup = &fakeLookup{secret: sec}
-				if naming.Exact {
-					lookup = &namesLookup{secrets: map[string]*corev1.Secret{sharedY: sec}}
-				}
-				_, err := (&nameGuard{lookup: lookup, log: zerolog.Nop(), naming: naming}).
-					admit(context.Background(), tc.strategy, userAs(userY, "kc", "y"))
-				assert.Equal(t, tc.want, RefusalOf(err), "exact=%v %s %v", naming.Exact, tc.strategy, ann)
-			}
+// With exact names on, as with them off (guard_test.go's
+// TestOnlyAProvisionedIdentityAdoptsAnOwnedSecretOfUnknownOrigin): an unclaimed
+// Secret the username owns, of unknown or missing strategy, is adopted by a
+// provisioned identity and never by an identity source.
+func TestExactNamingOnlyAProvisionedIdentityAdoptsAnOwnedSecretOfUnknownOrigin(t *testing.T) {
+	for _, ann := range []map[string]string{nil, {storage.StrategyAnnotation: "unknown"}} {
+		for _, tc := range []struct {
+			strategy storage.Strategy
+			want     Refusal
+		}{
+			{storage.StrategyOIDC, RefusalHeldLegacy},
+			{storage.StrategyOAuth, RefusalHeldLegacy},
+			{storage.StrategyLDAP, RefusalHeldLegacy},
+			{storage.StrategyBasic, ""},
+			{storage.StrategyServiceAccount, ""},
+		} {
+			l := &namesLookup{secrets: map[string]*corev1.Secret{sharedY: ownedBy(t, sharedY, userY, ann)}}
+			_, err := (&nameGuard{lookup: l, log: zerolog.Nop(), naming: exact}).
+				admit(context.Background(), tc.strategy, userAs(userY, "kc", "y"))
+			assert.Equal(t, tc.want, RefusalOf(err), "%s %v", tc.strategy, ann)
 		}
 	}
 }

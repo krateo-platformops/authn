@@ -535,11 +535,27 @@ With it on (`storage.Naming`, `config/storage/naming.go`; the naming helpers are
     deletes john.doe's legacy `johndoe-clientconfig` (after the tenant handover, acmp's
     design §3.4), and `johndoe` can sign in;
   - *a synthetic fixture* (demo's `acme` and `globex` Secrets, which authn didn't write and
-    which carry no certificate): if a real identity needs that name, an administrator
-    writes that identity's claim onto it ([Moving a name to a new identity](#moving-a-name-to-a-new-identity))
-    and, with the flag on, the annotation `authn.krateo.io/username: <username>`, which makes
-    a certificate-less Secret that username's; never deletes it, since a Kyverno policy may
-    generate a tenant from it.
+    which carry no certificate): if a real identity needs that name, an administrator writes
+    **both** that identity's claim and the username onto it, in one command, and **never
+    deletes it**, since a Kyverno policy may generate a tenant from it:
+
+    ```sh
+    kubectl annotate secret acme-clientconfig -n <authn namespace> \
+      'authn.krateo.io/claim=["oidc","https://keycloak.example/realms/krateo","<subject>"]' \
+      'authn.krateo.io/username=acme'
+    ```
+
+    - **Why both.** With the flag off the claim alone decides. With the flag on a Secret
+      counts only once it is the username's (`endpoints.OwnsSecret`), and a Secret with no
+      certificate is the username's only through `authn.krateo.io/username`; then the claim
+      decides. With the claim alone, the name stays refused with the flag on.
+    - **The claim is an exact string.** It is compared byte for byte with what authn renders
+      (`storage.EncodeClaim`, Go's `json.Marshal` of `[strategy, issuer, id]`): compact JSON,
+      no spaces, for OIDC the issuer exactly as the ID token's `iss` and the id as its `sub`
+      (the other strategies' issuer and id are in [the name guard](#the-name-guard)'s subject
+      table). Go escapes `<`, `>` and `&` as `\u003c`, `\u003e` and
+      `\u0026`, so an issuer or id containing one must carry the escape; a hand-typed claim
+      with a space, or with a literal `&`, never matches.
 - **authn's own Secret.** plumbing's `signup` writes it under `endpoints.SecretName`, the
   legacy derivation, so with the flag on authn **refuses to start** unless `AUTHN_USERNAME`
   names its Secret exactly and the two names agree (lowercase `[-a-z0-9]`, at most 63
