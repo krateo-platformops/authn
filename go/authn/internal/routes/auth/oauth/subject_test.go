@@ -15,10 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/krateo-platformops/audit"
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/logtest"
 	"github.com/krateo-platformops/authn/internal/logtest/gentest"
+	"github.com/krateo-platformops/authn/internal/status"
 	xcontext "github.com/krateo-platformops/plumbing/context"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,4 +145,27 @@ func TestLoginIssuanceFailureIsRecorded(t *testing.T) {
 	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 	require.Equal(t, 1, gen.calls)
 	auditlogtest.OnlyWriteFailed(t, gen.records, "authn.login.oauth", "alice", http.StatusInternalServerError)
+}
+
+// A verified identity the name guard refuses is one denied record,
+// conformant, naming the Secret it would have written, with the guard's
+// reason and no status code: authn refused before asking the apiserver
+// (AUDIT-4).
+func TestLoginRefusalIsRecorded(t *testing.T) {
+	gen := &fakeGenerator{
+		err: kubeconfig.Refused(kubeconfig.RefusalClaimed,
+			status.Refused(status.CauseUsernameUnavailable, errors.New("the username isn't available to this identity"))),
+		written: storage.Written{Namespace: "krateo-system", Name: storage.ClientConfigSecretName("alice"), Verb: "create"},
+	}
+	rec, _ := oauthLoginWith(t, `{"status":{"subject":"1001","name":"Alice","preferredUsername":"alice","groups":["devs"]}}`, true, gen)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	require.Equal(t, 1, gen.calls)
+	assert.NotContains(t, rec.Body.String(), "accessToken")
+	r := auditlogtest.Only(t, gen.records)
+	assert.Equal(t, "authn.login.oauth", auditlogtest.String(r, "krateo.action"))
+	assert.Equal(t, audit.OutcomeDenied, auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, audit.DenialReasonNameClaimed, auditlogtest.String(r, "krateo.audit.denial_reason"))
+	assert.Equal(t, storage.ClientConfigSecretName("alice"), auditlogtest.String(r, "krateo.audit.object_ref.name"))
+	_, ok := auditlogtest.Int(r, "http.response.status_code")
+	assert.False(t, ok, "authn refused before asking the apiserver")
 }
