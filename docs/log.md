@@ -14,6 +14,21 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-13 — /delegate exchanges a Keycloak access token (IDE sign-in to Agentiko)
+
+IDEs (Claude Code, Cursor) sign in to Agentiko over MCP with Keycloak as the OAuth
+authorization server; authn exchanges the IDE's access token for its own token at
+`/delegate` ([#155](https://github.com/krateo-platformops/authn/issues/155); Diego's decisions
+there). The bridge's ServiceAccount mapping lists the OIDCConfigs it may exchange from
+(`spec.delegation.subjectTokens`) and the audiences it may ask for (`spec.delegation.audiences`).
+authn verifies the token against the provider's JWKS, maps the person as `/oidc/login` does,
+and issues only if their username already carries exactly their claim from a portal sign-in
+(`403 SubjectNotSignedIn` otherwise). The token is the person's, `act` the bridge, `aud` the
+requested audience, at most 15 minutes and never past the access token. audit v0.15.0 records
+the new reasons (`subject_not_signed_in`, `audience_not_allowed`) and the audience; plumbing
+v1.69.0 gives the token its `aud`. A new kind-based suite proves the CRD's audience rule
+accepts exactly what audit records.
+
 ## 2026-11-13 — a refusal names only the username's own Secret
 
 A sign-in refused after verification wrote a `denied` record naming the Secret it would have

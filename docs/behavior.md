@@ -293,6 +293,22 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.delegation` (optional) — `allowed: true` lets the service exchange a person's
   authn JWT at `POST /delegate`, and `maxDepth` (default 3, 1–8) caps the actor chain,
   its own link included. Omitted or `allowed: false`: `403 DelegationNotAllowed`.
+  `subjectTokens[]` {`oidcConfig`, `audiences[]`} (#155) lets it exchange an identity
+  provider's access token (`subject_token_type` `…:access_token`) from a listed
+  OIDCConfig in authn's namespace: the token must verify against that provider's JWKS
+  (an RSA signature, `iss` exactly, an unexpired `exp`, an `aud` the entry lists, a `sub`),
+  the person is mapped as `/oidc/login` maps an ID token (username from
+  `preferred_username`, groups from `groups`, claim `["oidc", iss, sub]`), and
+  `config.VouchForExchange` runs a sign-in's identity checks (no `system:` or `krateo:`
+  group, the OIDCConfig's `allowedGroups`, a name that isn't reserved and, with exact
+  naming, is issuable) and then the **claim-first rule**: the username's credential
+  Secret (the same Secrets the name guard reads) must already carry exactly this claim.
+  An exchange writes no Secret, so it never claims a name: no Secret is `403
+  SubjectNotSignedIn` (sign in to the portal once), another identity's claim or a
+  pre-claims Secret is the opaque `403 UsernameUnavailable`. `audiences[]` lists what the
+  issued token's `aud` may be, through RFC 8693's `audience` parameter (at most one; a
+  malformed one is `400 InvalidRequestBody`, an unlisted one `400 InvalidTarget`). Each
+  audience is audit's `token_audience` format, which the CRD's CEL rule mirrors.
   The subject token is verified against authn's current and previous keys
   (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
   minus reserved ones, and its `principal`, adds `act` (`plumbing/jwtutil.Actor`) with
@@ -742,7 +758,15 @@ or a log line.
   refused subject token: `subject_token_expired` when it verified but has lapsed or is
   about to, `subject_token_invalid` when it didn't verify (a bad signature, a kid authn
   has no key for, including a retired one, or malformed). Both answer `401`
-  `SubjectTokenInvalid`. It's `failure` when signing fails. An actor refused or failed at
+  `SubjectTokenInvalid`. For an identity provider's access token (#155) the same two
+  reasons apply (a wrong `iss`, `aud` or `alg` is `subject_token_invalid`); once it
+  verified, a refusal names the person (`on_behalf_of`) and records the sign-in's
+  reason: `subject_not_signed_in`, `name_claimed`, `name_held_legacy`,
+  `group_not_allowed`, `platform_group`, `system_group`. An audience refusal is
+  `audience_not_allowed`, carrying the requested audience in `krateo.audit.token.audience`,
+  or `invalid_request` for a malformed one or several, without the value; a success that
+  issued an audience carries it too. It's `failure` when signing fails, or when a listed
+  OIDCConfig can't be resolved or its provider's keys read. An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
 - **`/usernames/check`** (audit v0.10.0). The actor is the caller's mapping, of its declared
