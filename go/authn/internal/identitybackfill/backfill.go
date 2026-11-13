@@ -24,13 +24,29 @@
 // same name is never re-attached to a newer one. A service Secret whose mapping
 // is gone is reported as an orphan and left in place: deleting a credential is
 // an operator's decision, never this pass's.
+//
+// With exact naming on (storage.Naming.Exact, authn#140) it also stamps the
+// identity keys every Secret authn writes now carries (authn#144): the username
+// annotation, the principal label and the username-label label (acmp's
+// tenant-policy design, §2.5). The username is the certificate's CN, never the
+// Secret's name: a legacy name is shared by usernames (john.doe and johndoe
+// are both johndoe-clientconfig). A key already present is never overwritten,
+// even with another value: the tenant policy may already have generated from
+// it. Each such key is logged instead, by its kind, its name and the Secret's
+// uid, and recorded as a declined update (auditlog.Controller.IdentityKept,
+// audit's kept_existing_value), never with its value. A Secret
+// whose certificate can't be read (one authn didn't write) is skipped, and
+// legacy-named Secrets are stamped like any other.
 package identitybackfill
 
 import (
 	"context"
 	"fmt"
-	"github.com/krateo-platformops/authn/internal/auditlog"
+	"sort"
 	"strings"
+
+	"github.com/krateo-platformops/audit"
+	"github.com/krateo-platformops/authn/internal/auditlog"
 
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
@@ -68,8 +84,12 @@ type Options struct {
 	Lookup Lookup
 	Log    zerolog.Logger
 	// Audit records each write: every one stamps an authorization-bearing
-	// annotation or an owner (AUDIT-4). Nil records nothing.
+	// annotation or an owner (AUDIT-4). With exact naming it also records each
+	// identity key left as found, one record per key. Nil records nothing.
 	Audit *auditlog.Controller
+	// Naming, with Exact set, stamps the identity keys of authn#144 too
+	// (storage.ExactIdentity). The zero value stamps what authn always has.
+	Naming storage.Naming
 }
 
 // Result counts what a run did, for the log line and for tests.
@@ -81,6 +101,9 @@ type Result struct {
 	Owned int
 	// Orphaned counts service Secrets whose mapping is gone, left in place.
 	Orphaned int
+	// Inconsistent counts Secrets holding an identity key with another value
+	// than their certificate proves, left as found (exact naming only).
+	Inconsistent int
 }
 
 // Run scans the clientconfig Secrets and stamps missing identity annotations.
@@ -130,6 +153,32 @@ func Run(ctx context.Context, o Options) (Result, error) {
 				merged[k] = v
 			}
 
+			var exact exactKeys
+			if o.Naming.Exact {
+				exact, err = missingExact(ctx, sec, merged, lookup)
+				if err != nil {
+					res.Skipped++
+					o.Log.Warn().Err(err).Str("secret.uid", string(sec.UID)).Str("namespace", ns).
+						Msg("identity keys not backfilled")
+					continue
+				}
+				ref := auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name,
+					UID: string(sec.UID), ResourceVersion: sec.ResourceVersion}
+				for _, k := range exact.conflicts {
+					// The key, never its values: they are identities.
+					o.Log.Warn().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
+						Str("kind", k.Kind).Str("key", k.Key).
+						Msg("identity key differs from the certificate; left as found")
+					o.Audit.IdentityKept(ctx, ref, k.Kind, k.Key)
+				}
+				if len(exact.conflicts) > 0 {
+					res.Inconsistent++
+				}
+				for k, v := range exact.annotations {
+					merged[k] = v
+				}
+			}
+
 			owner, orphan, err := missingOwner(ctx, sec, merged, o.MappingNamespace, lookup)
 			if err != nil {
 				o.Log.Warn().Err(err).Str("secret.uid", string(sec.UID)).Str("namespace", ns).
@@ -142,13 +191,28 @@ func Run(ctx context.Context, o Options) (Result, error) {
 					Msg("service clientconfig has no ServiceAccount mapping; left in place")
 			}
 
-			if len(missing) == 0 && owner == nil {
+			if len(missing) == 0 && owner == nil && exact.empty() {
 				continue
 			}
+			before := sec.DeepCopy()
 			sec.SetAnnotations(merged)
+			if len(exact.labels) > 0 {
+				labels := map[string]string{}
+				for k, v := range sec.GetLabels() {
+					labels[k] = v
+				}
+				for k, v := range exact.labels {
+					labels[k] = v
+				}
+				sec.SetLabels(labels)
+			}
 			if owner != nil {
 				sec.SetOwnerReferences([]metav1.OwnerReference{*owner})
 			}
+			// Every write stamps authorization-bearing content or an owner. With
+			// exact naming the content is judged by plumbing's content.DiffersWith
+			// over storage.ContentKeys, labels included.
+			record := owner != nil || !o.Naming.Exact || o.Naming.AuthorizationDiffers(before, sec)
 
 			// sec carries the resourceVersion from the list, so a concurrent
 			// writer (a login rewriting the Secret) wins with a conflict
@@ -158,7 +222,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			if err == nil {
 				ref.UID, ref.ResourceVersion = string(sec.UID), sec.ResourceVersion
 			}
-			o.Audit.IdentityWritten(ctx, auditlog.ActionIdentityBackfilled, ref, code, err)
+			if record {
+				o.Audit.IdentityWritten(ctx, auditlog.ActionIdentityBackfilled, ref, code, err)
+			}
 			if err != nil {
 				res.Skipped++
 				// The apiserver's error names the Secret, which names its user.
@@ -167,11 +233,18 @@ func Run(ctx context.Context, o Options) (Result, error) {
 					Msg("identity annotations not backfilled")
 				continue
 			}
-			if len(missing) > 0 {
+			if len(missing) > 0 || !exact.empty() {
 				res.Stamped++
+			}
+			if len(missing) > 0 {
 				o.Log.Info().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
 					Str("strategy", merged[storage.StrategyAnnotation]).
 					Msg("identity annotations backfilled")
+			}
+			if !exact.empty() {
+				o.Log.Info().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
+					Int("keys", len(exact.annotations)+len(exact.labels)).
+					Msg("identity keys backfilled")
 			}
 			if owner != nil {
 				res.Owned++
@@ -217,6 +290,80 @@ func missingAnnotations(ctx context.Context, sec *corev1.Secret, self string, lo
 		}
 	}
 	return missing, nil
+}
+
+// exactKeys is what authn#144's backfill stamps on one Secret, and the keys it
+// found holding another value.
+type exactKeys struct {
+	annotations, labels map[string]string
+	conflicts           []identityKey
+}
+
+// identityKey is an identity key a Secret holds with another value than its
+// certificate proves: its kind (audit.MetadataKindAnnotation or
+// audit.MetadataKindLabel) and its name. The kind is carried, never inferred
+// from the name, since a name alone doesn't say where it was found.
+type identityKey struct {
+	Kind, Key string
+}
+
+func (e exactKeys) empty() bool { return len(e.annotations) == 0 && len(e.labels) == 0 }
+
+// missingExact returns the identity keys of authn#144 sec lacks
+// (storage.ExactIdentity), derived from its certificate: the username is the
+// CN, never the Secret's name. annotations are sec's as this pass will write
+// them, so the principal follows the strategy just stamped. A key present with
+// another value is reported in conflicts and never overwritten. A principal
+// that can't be proven (strategy unknown, a service identity whose mapping is
+// gone) is left off, and a policy selecting on it fails closed.
+func missingExact(ctx context.Context, sec *corev1.Secret, annotations map[string]string, lookup Lookup) (exactKeys, error) {
+	crt, err := kube.ParseCertificateBase64(string(sec.Data[storage.ClientCertLabel]))
+	if err != nil {
+		return exactKeys{}, fmt.Errorf("reading the stored certificate: %w", err)
+	}
+	username := crt.Subject.CommonName
+	if username == "" {
+		return exactKeys{}, fmt.Errorf("the stored certificate names no one")
+	}
+
+	strategy := storage.Strategy(annotations[storage.StrategyAnnotation])
+	declared := ""
+	provable := true
+	if strategy == storage.StrategyServiceAccount {
+		mapping, err := lookup.ServiceAccountMapping(ctx, username)
+		if err != nil {
+			return exactKeys{}, kerr.Wrap("looking up the certificate's ServiceAccount mapping", err)
+		}
+		if mapping == nil {
+			provable = false
+		} else {
+			declared = mapping.Spec.Principal
+		}
+	}
+	wantAnn, wantLabels := storage.ExactIdentity(strategy, declared, username)
+	if !provable {
+		delete(wantLabels, storage.PrincipalLabel)
+	}
+
+	out := exactKeys{annotations: map[string]string{}, labels: map[string]string{}}
+	compare := func(kind string, have, want, stamp map[string]string) {
+		for k, v := range want {
+			got, ok := have[k]
+			switch {
+			case !ok:
+				stamp[k] = v
+			case got != v:
+				out.conflicts = append(out.conflicts, identityKey{Kind: kind, Key: k})
+			}
+		}
+	}
+	compare(audit.MetadataKindAnnotation, sec.GetAnnotations(), wantAnn, out.annotations)
+	compare(audit.MetadataKindLabel, sec.GetLabels(), wantLabels, out.labels)
+	sort.Slice(out.conflicts, func(i, j int) bool {
+		a, b := out.conflicts[i], out.conflicts[j]
+		return a.Kind < b.Kind || a.Kind == b.Kind && a.Key < b.Key
+	})
+	return out, nil
 }
 
 // missingOwner returns the ownerReference a service identity's Secret lacks: its

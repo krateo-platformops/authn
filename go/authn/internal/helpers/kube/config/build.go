@@ -72,6 +72,9 @@ type IssueOptions struct {
 	// Log, when set, is the logger of the request the credential is issued
 	// for (see Logger).
 	Log *zerolog.Logger
+	// Principal is the kind of identity a ServiceAccount mapping declares
+	// (see AsPrincipal).
+	Principal string
 }
 
 // Logger makes the issuance log with l, the request's logger, instead of the
@@ -104,6 +107,15 @@ func NewIssueOptions(opts ...IssueOption) IssueOptions {
 		opt(&o)
 	}
 	return o
+}
+
+// AsPrincipal records the kind of identity a ServiceAccount mapping declares
+// (spec.principal: agent, controller, service) as the stored Secret's
+// storage.PrincipalLabel, with exact naming on. It is the serviceaccount
+// login's; every other strategy's kind follows from the strategy
+// (storage.PrincipalFor), and a mapping is never human whatever it declares.
+func AsPrincipal(principal string) IssueOption {
+	return func(o *IssueOptions) { o.Principal = principal }
 }
 
 // OwnedBy makes owner the stored Secret's ownerReference, so the Kubernetes
@@ -158,6 +170,16 @@ func Storage(s storage.AuthInfoStorage) GeneratorOption {
 	}
 }
 
+// Naming sets how the generator names and recognises session Secrets
+// (storage.Naming); the zero value, the default, is the legacy naming. It
+// applies to the default storage, the name guard and the Secret a refusal's
+// record names.
+func Naming(n storage.Naming) GeneratorOption {
+	return func(g *kubeconfigGenerator) {
+		g.naming = n
+	}
+}
+
 // Lookup replaces the cluster reads the name guard decides from (see
 // nameGuard). Tests use it; authn reads the cluster.
 func Lookup(l NameLookup) GeneratorOption {
@@ -176,7 +198,11 @@ func NewGenerator(restConfig *rest.Config, opts ...GeneratorOption) Generator {
 	}
 
 	if gen.store == nil {
-		gen.store = storage.Default(gen.restconfig)
+		if gen.naming.Exact {
+			gen.store = storage.NewStore(gen.restconfig, gen.naming)
+		} else {
+			gen.store = storage.Default(gen.restconfig)
+		}
 	}
 	if gen.lookup == nil {
 		l, err := newClusterLookup(gen.restconfig)
@@ -203,6 +229,7 @@ type kubeconfigGenerator struct {
 	log           zerolog.Logger
 	lookup        NameLookup
 	lookupErr     error
+	naming        storage.Naming
 	// csrClient sends the CSRs. Nil builds one from restconfig; a test sets
 	// a fake signer.
 	csrClient kubernetes.Interface
@@ -228,12 +255,12 @@ func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Inf
 	if g.lookupErr != nil {
 		return "", fmt.Errorf("building the name guard's cluster client: %w", g.lookupErr)
 	}
-	guard := nameGuard{lookup: g.lookup, log: log}
+	guard := nameGuard{lookup: g.lookup, log: log, naming: g.naming}
 	return guard.admit(context.Background(), strategy, user)
 }
 
 func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) (Issued, error) {
-	target := secretFor(userInfo, storage.ClientConfigSecretName)
+	target := g.secretFor(userInfo, false)
 	o := NewIssueOptions(opts...)
 	log := o.logger(g.log)
 	if err := g.checkGroups(userInfo, false, log); err != nil {
@@ -250,7 +277,7 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 
-	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o.Owner, claim, log)
+	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o, claim, log)
 	if err != nil {
 		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
 	}
@@ -292,7 +319,7 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 }
 
 func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error) {
-	target := secretFor(userInfo, storage.StepUpSecretName)
+	target := g.secretFor(userInfo, true)
 	o := NewIssueOptions(opts...)
 	log := o.logger(g.log)
 	if err := g.checkGroups(userInfo, true, log); err != nil {
@@ -308,7 +335,8 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	if err != nil {
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
-	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, nil, claim, log)
+	// A step-up credential has no owner: it expires, and the sweep deletes it.
+	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, IssueOptions{Principal: o.Principal}, claim, log)
 	if err != nil {
 		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
 	}
@@ -362,6 +390,29 @@ func secretFor(user userinfo.Info, name func(string) string) string {
 	return name(user.GetUserName())
 }
 
+// secretFor is the Secret an issuance for user writes, as g's naming names it
+// (storage.Naming): the step-up one when stepUp. With legacy naming it is
+// secretFor's. With exact naming it is "" for a username its Secrets can't be
+// named after exactly: its legacy name is a rewrite, which may be another
+// username's Secret, so a refused or failed issuance's record names the Secret
+// resource without a name (audit's name_not_issued rule). An issuance that
+// stores one under its legacy name still reports the Secret it wrote.
+func (g *kubeconfigGenerator) secretFor(user userinfo.Info, stepUp bool) string {
+	if !g.naming.Exact {
+		if stepUp {
+			return secretFor(user, storage.StepUpSecretName)
+		}
+		return secretFor(user, storage.ClientConfigSecretName)
+	}
+	if !g.naming.Issuable(user.GetUserName()) {
+		return ""
+	}
+	if stepUp {
+		return secretFor(user, g.naming.StepUpName)
+	}
+	return secretFor(user, g.naming.SessionName)
+}
+
 // orWouldWrite is written when Put sent a request, else wouldWrite(name).
 func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string) storage.Written {
 	if written.Verb != "" {
@@ -408,7 +459,7 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool, l
 
 // issue mints a certificate for userInfo valid for duration and stores it as
 // the user's session or step-up credential.
-func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, owner *metav1.OwnerReference, claim string, log zerolog.Logger) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, o IssueOptions, claim string, log zerolog.Logger) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
@@ -422,7 +473,7 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 		return certInfo, clusterInfo, notAfter, storage.Written{}, err
 	}
 
-	written, err := g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, owner, claim)
+	written, err := g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, o.Owner, o.Principal, claim)
 	switch {
 	case errors.Is(err, storage.ErrClaimedByAnother):
 		// Another identity claimed the name between the guard and this write.
@@ -440,17 +491,18 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 	return certInfo, clusterInfo, notAfter, written, err
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference, claim string) (storage.Written, error) {
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference, principal, claim string) (storage.Written, error) {
 	nfo := storage.AuthInfo{
-		Claim:    claim,
-		Owner:    owner,
-		StepUp:   stepUp,
-		Strategy: strategy,
-		CertData: certInfo.ClientCertificateData,
-		KeyData:  certInfo.ClientKeyData,
-		CAData:   clusterInfo.CertificateAuthorityData,
-		Server:   clusterInfo.Server,
-		ProxyURL: clusterInfo.ProxyURL,
+		Claim:     claim,
+		Owner:     owner,
+		Principal: principal,
+		StepUp:    stepUp,
+		Strategy:  strategy,
+		CertData:  certInfo.ClientCertificateData,
+		KeyData:   certInfo.ClientKeyData,
+		CAData:    clusterInfo.CertificateAuthorityData,
+		Server:    clusterInfo.Server,
+		ProxyURL:  clusterInfo.ProxyURL,
 	}
 
 	return g.store.Put(name, &nfo)

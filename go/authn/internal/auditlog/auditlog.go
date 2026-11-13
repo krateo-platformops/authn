@@ -49,6 +49,18 @@ const (
 type Recorder struct {
 	req     *audit.Emitter
 	preview PreviewSource
+	naming  storage.Naming
+}
+
+// WithNaming returns a copy of the Recorder that names a checked username's
+// Secret as naming does (storage.Naming). The default is the legacy naming.
+func (r *Recorder) WithNaming(n storage.Naming) *Recorder {
+	if r == nil {
+		return nil
+	}
+	c := *r
+	c.naming = n
+	return &c
 }
 
 // PreviewSource reports whether namespace is a preview sandbox, as the
@@ -256,6 +268,7 @@ const (
 var denialReasons = map[config.Refusal]string{
 	config.RefusalNameMissing:     audit.DenialReasonNameMissing,
 	config.RefusalReserved:        audit.DenialReasonNameReserved,
+	config.RefusalNotIssued:       audit.DenialReasonNameNotIssued,
 	config.RefusalClaimed:         audit.DenialReasonNameClaimed,
 	config.RefusalHeldLegacy:      audit.DenialReasonNameHeldLegacy,
 	config.RefusalProvisioned:     audit.DenialReasonNameProvisioned,

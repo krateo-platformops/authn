@@ -14,7 +14,7 @@ import (
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/certrenewal"
 	"github.com/krateo-platformops/authn/internal/env"
-	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/identitybackfill"
@@ -88,6 +88,10 @@ func main() {
 	serviceAccountAudience := flag.String("serviceaccount-audience",
 		env.String("AUTHN_SERVICEACCOUNT_AUDIENCE", serviceaccount.DefaultAudience),
 		"audience the projected ServiceAccount token must carry for the /serviceaccount/login strategy")
+
+	exactUsernames := flag.Bool("exact-usernames", env.Bool(storage.EnvExactUsernames, false),
+		"name each session Secret after the exact username, read it exact-then-legacy, and stamp the identity keys (authn#140, authn#144); "+
+			"turn on only once snowplow reads exact-then-legacy and the tenant handover is done")
 
 	basicDecoySecret := flag.String("basic-decoy-secret",
 		env.String("AUTHN_BASIC_DECOY_SECRET", ""),
@@ -173,12 +177,15 @@ func main() {
 		log.Fatal().Err(err).Msg("resolving kubeconfig for rest client")
 	}
 
-	gen := kubeconfig.NewGenerator(cfg,
-		kubeconfig.KubernetesURL(*kubernetesURL),
-		kubeconfig.CertDuration(*certExpiresIn),
-		kubeconfig.ClusterName(*clusterName),
-		kubeconfig.Log(log),
-	)
+	// How session Secrets are named (authn#140). Off, authn behaves as it
+	// always has.
+	naming, err := sessionNaming(*exactUsernames, *authnUsername)
+	if err != nil {
+		log.Fatal().Err(err).Msg("exact session-Secret names")
+	}
+	if naming.Exact {
+		log.Info().Msg("exact session-Secret names on")
+	}
 
 	// JWT signing key: an RSA private key, PEM-encoded, mounted from a Secret.
 	// The matching public key must be published in the JWKS under *jwtKeyID.
@@ -221,6 +228,22 @@ func main() {
 		log.Fatal().Err(err).Msg("building the audit recorders")
 	}
 
+	// Everything that writes or reads session Secrets, with the naming.
+	comps := newComponents(componentConfig{
+		RestConfig:          cfg,
+		Naming:              naming,
+		Log:                 log,
+		Audit:               auditCtl,
+		KubernetesURL:       *kubernetesURL,
+		ClusterName:         *clusterName,
+		CertDuration:        *certExpiresIn,
+		SelfUsername:        *authnUsername,
+		StorageNamespace:    *storageNamespace,
+		ServiceCertDuration: *serviceCertExpiresIn,
+		RenewalThreshold:    *certRenewalThreshold,
+	})
+	gen := comps.Generator
+
 	ro := routeOptions{
 		RestConfig:             cfg,
 		Generator:              gen,
@@ -236,6 +259,7 @@ func main() {
 		Version:                Version,
 		ServiceName:            serviceName,
 		Audit:                  auditRec,
+		Naming:                 naming,
 	}
 
 	// An OIDCConfig with no issuer refuses every login (#50). Name each one at
@@ -271,18 +295,7 @@ func main() {
 	// the username and an existing one is deleted and recreated, so two writers
 	// would delete each other's in-flight requests. Every replica serves logins
 	// regardless, so authn can run with more than one replica.
-	renewer, err := certrenewal.New(certrenewal.Options{
-		RestConfig: cfg,
-		Namespace:  *storageNamespace,
-		CAData:     string(cfg.CAData),
-		ServerURL:  *kubernetesURL,
-		Username:   *authnUsername,
-		Groups:     []string{"authn"},
-		Duration:   *serviceCertExpiresIn,
-		Threshold:  *certRenewalThreshold,
-		Log:        log,
-		Audit:      auditCtl,
-	})
+	renewer, err := certrenewal.New(comps.Renewer)
 	if err != nil {
 		// A clientconfig authn cannot create has never been a reason to refuse
 		// logins (only snowplow-backed identity enrichment degrades), so this
@@ -317,24 +330,23 @@ func main() {
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill: resolving the operator namespace")
 		}
-		res, err := identitybackfill.Run(lctx, identitybackfill.Options{
-			RestConfig:       cfg,
-			Namespaces:       []string{operatorNamespace, *storageNamespace},
-			SelfUsername:     *authnUsername,
-			MappingNamespace: operatorNamespace,
-			Log:              log,
-			Audit:            auditCtl,
-		})
+		backfill := comps.Backfill
+		backfill.Namespaces = []string{operatorNamespace, *storageNamespace}
+		backfill.MappingNamespace = operatorNamespace
+		res, err := identitybackfill.Run(lctx, backfill)
 		if err != nil {
 			log.Err(err).Msg("identity annotation backfill")
 		} else {
-			log.Info().
+			evt := log.Info().
 				Int("scanned", res.Scanned).
 				Int("stamped", res.Stamped).
 				Int("skipped", res.Skipped).
 				Int("owned", res.Owned).
-				Int("orphaned", res.Orphaned).
-				Msg("identity annotation backfill done")
+				Int("orphaned", res.Orphaned)
+			if naming.Exact {
+				evt = evt.Int("inconsistent", res.Inconsistent)
+			}
+			evt.Msg("identity annotation backfill done")
 		}
 
 		// Delete expired step-up credentials (#49): they are never renewed,

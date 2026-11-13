@@ -85,7 +85,9 @@ func identityCert(t *testing.T, cn string, groups []string) string {
 // two authn writes and policy reads: one it doesn't know would never be
 // compared, and a key renamed here would silently stop being recorded.
 func TestAuthorizationAnnotationsAreTheSchemas(t *testing.T) {
-	assert.ElementsMatch(t, []string{StrategyAnnotation, GroupsAnnotation}, audit.AuthorizationAnnotations())
+	// audit v0.13.0 adds the username annotation (authn#144), which authn
+	// writes only with exact names on.
+	assert.ElementsMatch(t, []string{StrategyAnnotation, GroupsAnnotation, UsernameAnnotation}, audit.AuthorizationAnnotations())
 }
 
 // A change to either authorization-bearing annotation differs; the validity

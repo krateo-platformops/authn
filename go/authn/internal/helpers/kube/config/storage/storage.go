@@ -100,6 +100,11 @@ type AuthInfo struct {
 	// It must name an object in the operator namespace by its current
 	// UID: an owner the collector can't find makes it delete the Secret.
 	Owner *metav1.OwnerReference `json:"-"`
+
+	// Principal is the kind of identity a ServiceAccount mapping declares
+	// (spec.principal), recorded as PrincipalLabel with exact naming on. Other
+	// strategies' kind follows from the strategy (PrincipalFor).
+	Principal string `json:"-"`
 }
 
 // AuthInfoStorage stores issued credentials. authn never reads one back over
@@ -135,10 +140,19 @@ func Default(rc *rest.Config) AuthInfoStorage {
 	return &secretStore{rc: rc}
 }
 
+// NewStore is Default naming the Secrets as naming says: with exact naming on,
+// a Secret is written under Naming.SessionName (or StepUpName), carries the
+// identity keys (ExactIdentity), and an existing Secret under that name that
+// isn't the username's (endpoints.OwnsSecret) is never overwritten.
+func NewStore(rc *rest.Config, naming Naming) AuthInfoStorage {
+	return &secretStore{rc: rc, naming: naming}
+}
+
 var _ AuthInfoStorage = (*secretStore)(nil)
 
 type secretStore struct {
-	rc *rest.Config
+	rc     *rest.Config
+	naming Naming
 }
 
 func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
@@ -149,9 +163,9 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 
 	sec := corev1.Secret{}
 	if nfo.StepUp {
-		sec.SetName(StepUpSecretName(name))
+		sec.SetName(st.naming.StepUpName(name))
 	} else {
-		sec.SetName(ClientConfigSecretName(name))
+		sec.SetName(st.naming.SessionName(name))
 	}
 	sec.SetNamespace(ns)
 	w := Written{Namespace: ns, Name: sec.Name}
@@ -168,6 +182,15 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 	}
 	if nfo.Claim != "" {
 		annotations[ClaimAnnotation] = nfo.Claim
+	}
+	if st.naming.Exact {
+		// The username is the authenticated identity's, never parsed from a
+		// Secret name (authn#140, authn#144).
+		ann, labels := ExactIdentity(nfo.Strategy, nfo.Principal, name)
+		for k, v := range ann {
+			annotations[k] = v
+		}
+		sec.SetLabels(labels)
 	}
 	sec.SetAnnotations(annotations)
 	if nfo.Owner != nil {
@@ -195,24 +218,35 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 	// The Secret exists. If it is claimed by another identity, this write would
 	// hand that identity's name to this one: two first logins of the same new
 	// name can both pass the name guard, and only one may be stored.
-	if nfo.Claim != "" {
+	if nfo.Claim != "" || st.naming.Exact {
 		have, err := secrets.Get(context.TODO(), st.rc, &core.SecretKeySelector{Name: sec.Name, Namespace: ns})
 		if err != nil {
 			return w, kerr.Wrap("reading the existing credential Secret", err)
 		}
+		// Whose the Secret is (endpoints.OwnsSecret: the username annotation,
+		// else the certificate's CN). One that isn't this username's is never
+		// replaced when it carries no claim (authn#148: written before claims,
+		// under a name that is a lossy rewrite, so john.doe's is
+		// johndoe-clientconfig) or, with exact naming, at all (authn#140).
+		// With legacy naming a claimed one is decided by its claim, below.
 		c := have.GetAnnotations()[ClaimAnnotation]
+		if !st.naming.Owns(have, name) && (c == "" || st.naming.Exact) {
+			w.Verb = "update"
+			if c != "" {
+				return w, fmt.Errorf("%w: the credential Secret under this name holds another username's credential", ErrClaimedByAnother)
+			}
+			return w, fmt.Errorf("%w: the credential Secret holds a certificate issued to another name", ErrHeldByAnother)
+		}
 		if c != "" && c != nfo.Claim {
 			// Nothing written; the update this login would have sent is its verb.
 			w.Verb = "update"
 			return w, fmt.Errorf("%w: the claim on the credential Secret belongs to another identity", ErrClaimedByAnother)
 		}
-		if c == "" && !endpoints.OwnsSecret(have, name) {
-			// A Secret written before claims existed whose certificate was
-			// issued to another name: the derived name aliases two usernames
-			// (john.doe and johndoe), and this write would replace the other
-			// one's credential.
-			w.Verb = "update"
-			return w, fmt.Errorf("%w: the credential Secret holds a certificate issued to another name", ErrHeldByAnother)
+		if st.naming.Exact {
+			// The update replaces exactly the Secret just proven the
+			// username's: one deleted and re-created in between (by another
+			// identity's login, say) is a conflict, never overwritten.
+			sec.ResourceVersion = have.ResourceVersion
 		}
 	}
 

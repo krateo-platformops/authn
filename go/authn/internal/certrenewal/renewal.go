@@ -35,10 +35,12 @@ package certrenewal
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"time"
+
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/plumbing/endpoints"
-	"time"
 
 	"github.com/krateo-platformops/authn/apis/core"
 	"github.com/krateo-platformops/authn/internal/helpers/kube"
@@ -85,6 +87,12 @@ type Options struct {
 	// Audit records each write of the certificate's Secret (AUDIT-4). Nil
 	// records nothing.
 	Audit *auditlog.Controller
+	// Naming, with Exact set (authn#140), reads the Secret under every name it
+	// may have, uses one only when it is this identity's
+	// (endpoints.OwnsSecret), never replaces another identity's, and stamps
+	// the identity keys (storage.ExactIdentity, principal service). The zero
+	// value is what authn always did.
+	Naming storage.Naming
 }
 
 // Renewer keeps one identity's clientconfig Secret holding a valid certificate.
@@ -100,6 +108,7 @@ type Renewer struct {
 	threshold float64
 	log       zerolog.Logger
 	audit     *auditlog.Controller
+	naming    storage.Naming
 }
 
 func New(o Options) (*Renewer, error) {
@@ -138,6 +147,7 @@ func New(o Options) (*Renewer, error) {
 		threshold: o.Threshold,
 		log:       o.Log,
 		audit:     o.Audit,
+		naming:    o.Naming,
 	}, nil
 }
 
@@ -147,7 +157,13 @@ func SecretName(username string) string {
 	return storage.ClientConfigSecretName(username)
 }
 
-// SecretName is the clientconfig Secret this renewer keeps current.
+// errHeldByAnother: the Secret authn's certificate is written to holds another
+// identity's credential (exact naming), so nothing is issued over it.
+var errHeldByAnother = errors.New("the clientconfig Secret under authn's name holds another identity's credential")
+
+// SecretName is the clientconfig Secret this renewer keeps current. signup
+// (plumbing) writes it under endpoints.SecretName, whatever the naming: for
+// authn's own username, by default "authn", the exact name is the same.
 func (r *Renewer) SecretName() string { return r.secret }
 
 // RenewAt is the instant a certificate falls due for renewal: the point at
@@ -241,6 +257,21 @@ func (r *Renewer) issue(ctx context.Context, reason string) (time.Duration, erro
 		Dur("requested", r.requested).
 		Msg("issuing authn client certificate")
 
+	if r.naming.Exact {
+		// signup replaces whatever Secret holds r.secret. One that isn't
+		// authn's (another username's, sharing the legacy name) is never
+		// replaced: the renewal fails, and is retried.
+		held, err := r.heldByAnother(ctx)
+		if err != nil || held {
+			if err == nil {
+				err = errHeldByAnother
+			}
+			w := r.wouldWrite(ctx)
+			r.audit.ServiceCertIssued(ctx, auditlog.SecretRef{Namespace: w.Namespace, Name: w.Name}, w.Verb, 0, err)
+			return retryInterval, fmt.Errorf("issuing authn's client certificate: %w", err)
+		}
+	}
+
 	ep, written, err := signup.DoWritten(ctx, signup.Options{
 		RestConfig:   r.rc,
 		Namespace:    r.namespace,
@@ -313,14 +344,8 @@ func (r *Renewer) wouldWrite(ctx context.Context) endpoints.Written {
 // missing Secret, a missing key and an unreadable certificate are all reported
 // as "nothing usable stored" (nil certificate) — they call for the same response.
 func (r *Renewer) current(ctx context.Context) (*x509.Certificate, *corev1.Secret, error) {
-	sec, err := secrets.Get(ctx, r.rc, &core.SecretKeySelector{
-		Namespace: r.namespace,
-		Name:      r.secret,
-	})
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil, nil
-		}
+	sec, err := r.stored(ctx)
+	if err != nil || sec == nil {
 		return nil, nil, err
 	}
 
@@ -336,6 +361,43 @@ func (r *Renewer) current(ctx context.Context) (*x509.Certificate, *corev1.Secre
 	}
 
 	return crt, sec, nil
+}
+
+// stored reads the Secret holding authn's credential: r.secret with legacy
+// naming; with exact naming the first, in storage.Naming.SessionNames order,
+// that is authn's own (endpoints.OwnsSecret), since a Secret found under a name
+// may be another username's. nil when there is none.
+func (r *Renewer) stored(ctx context.Context) (*corev1.Secret, error) {
+	names := []string{r.secret}
+	if r.naming.Exact {
+		names = r.naming.SessionNames(r.username)
+	}
+	for _, name := range names {
+		sec, err := secrets.Get(ctx, r.rc, &core.SecretKeySelector{Namespace: r.namespace, Name: name})
+		switch {
+		case apierrors.IsNotFound(err):
+			continue
+		case err != nil:
+			return nil, err
+		case !r.naming.Exact || r.naming.Owns(sec, r.username):
+			return sec, nil
+		}
+		r.log.Warn().Msg("a clientconfig Secret under authn's name isn't authn's; left as found")
+	}
+	return nil, nil
+}
+
+// heldByAnother reports whether r.secret, the Secret signup writes, exists and
+// holds another identity's credential.
+func (r *Renewer) heldByAnother(ctx context.Context) (bool, error) {
+	sec, err := secrets.Get(ctx, r.rc, &core.SecretKeySelector{Namespace: r.namespace, Name: r.secret})
+	switch {
+	case apierrors.IsNotFound(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return !r.naming.Owns(sec, r.username), nil
 }
 
 // annotate records the GRANTED validity window on the Secret it was just
@@ -387,10 +449,28 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 		}
 	}
 
+	var wantLabels map[string]string
+	if r.naming.Exact {
+		// authn's own identity: the username it is issued to, principal
+		// service (authn#140, authn#144).
+		ann, labels := storage.ExactIdentity(storage.StrategySelf, "", r.username)
+		for k, v := range ann {
+			want[k] = v
+		}
+		wantLabels = labels
+	}
+
 	have := sec.GetAnnotations()
+	haveLabels := sec.GetLabels()
 	stale := false
 	for k, v := range want {
 		if have[k] != v {
+			stale = true
+			break
+		}
+	}
+	for k, v := range wantLabels {
+		if haveLabels[k] != v {
 			stale = true
 			break
 		}
@@ -399,6 +479,7 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 		return
 	}
 
+	before := sec.DeepCopy()
 	merged := map[string]string{}
 	for k, v := range have {
 		merged[k] = v
@@ -406,10 +487,21 @@ func (r *Renewer) syncAnnotations(ctx context.Context, sec *corev1.Secret) {
 	for k, v := range want {
 		merged[k] = v
 	}
-	// Only a change to an authorization-bearing annotation is a change an
-	// audit record is owed for; the validity window alone is observability.
-	authz := storage.AuthorizationAnnotationsDiffer(have, merged)
+	// Only a change to an authorization-bearing annotation (or, with exact
+	// naming, label) is a change an audit record is owed for; the validity
+	// window alone is observability.
 	sec.SetAnnotations(merged)
+	if len(wantLabels) > 0 {
+		labels := map[string]string{}
+		for k, v := range haveLabels {
+			labels[k] = v
+		}
+		for k, v := range wantLabels {
+			labels[k] = v
+		}
+		sec.SetLabels(labels)
+	}
+	authz := r.naming.AuthorizationDiffers(before, sec)
 
 	ref := auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name}
 	code, err := secrets.Update(ctx, r.rc, sec)
