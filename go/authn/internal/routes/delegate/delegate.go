@@ -19,6 +19,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/encode"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/serviceaccount"
@@ -101,7 +102,8 @@ func Route(rc *rest.Config, opts Options) routes.Route {
 	for _, k := range opts.PreviousKeys {
 		keys[k.KID] = k.Pub
 	}
-	return &route{rc: rc, opts: opts, keys: keys, idpKeys: map[string]*jwtutil.JWKSKeySource{}}
+	return &route{rc: rc, opts: opts, keys: keys, tokenKeys: resolvers.NewTokenKeysResolver(rc),
+		idpKeys: map[string]*jwtutil.JWKSKeySource{}}
 }
 
 var _ routes.Route = (*route)(nil)
@@ -111,6 +113,8 @@ type route struct {
 	opts Options
 	keys keySet
 
+	// tokenKeys resolves the actor's subject-token sources (authn#155).
+	tokenKeys *resolvers.TokenKeysResolver
 	// idpKeys caches an identity provider's key source by its JWKS URL, so
 	// its keys are fetched once and refreshed by the source (authn#155).
 	mu      sync.Mutex
@@ -370,6 +374,13 @@ func withoutReserved(groups []string) []string {
 // expired (401): the caller must get a fresh one from the person's session.
 func subjectInvalid(err error) status.CauseError {
 	return status.CauseError{Code: http.StatusUnauthorized, Cause: CauseSubjectTokenInvalid, Err: err}
+}
+
+// subjectInvalidPrivately is subjectInvalid answering public, with the
+// verification's detail, which may name the provider's key URL or a kid,
+// kept private for the server log.
+func subjectInvalidPrivately(public string, private error) status.CauseError {
+	return status.CauseError{Code: http.StatusUnauthorized, Cause: CauseSubjectTokenInvalid, Err: errors.New(public), Private: private}
 }
 
 // chainDepth counts the actors in a chain.

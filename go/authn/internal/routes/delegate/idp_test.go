@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,11 +73,17 @@ func newRealm(t *testing.T) realm {
 }
 
 // accessToken is a Keycloak access token for alice, signed by key, with
-// claims overriding the defaults.
+// claims overriding the defaults (nil removes one).
 func (k realm) accessToken(t *testing.T, key *rsa.PrivateKey, method jwt.SigningMethod, claims map[string]any) string {
 	t.Helper()
+	return k.sign(t, key, method, nil, claims)
+}
+
+// sign is accessToken with header overriding its header too.
+func (k realm) sign(t *testing.T, key *rsa.PrivateKey, method jwt.SigningMethod, header, claims map[string]any) string {
+	t.Helper()
 	c := jwt.MapClaims{
-		"iss": k.issuer, "sub": "uid-alice", "aud": mcpAudience, "preferred_username": "alice",
+		"iss": k.issuer, "sub": "uid-alice", "aud": mcpAudience, "typ": "Bearer", "preferred_username": "alice",
 		"groups": []any{"tenants"}, "exp": time.Now().Add(5 * time.Minute).Unix(), "iat": time.Now().Unix(),
 	}
 	for name, v := range claims {
@@ -88,6 +95,13 @@ func (k realm) accessToken(t *testing.T, key *rsa.PrivateKey, method jwt.Signing
 	}
 	tok := jwt.NewWithClaims(method, c)
 	tok.Header["kid"] = kcKID
+	for name, v := range header {
+		if v == nil {
+			delete(tok.Header, name)
+			continue
+		}
+		tok.Header[name] = v
+	}
 	var signed string
 	var err error
 	if method == jwt.SigningMethodHS256 {
@@ -108,9 +122,19 @@ func (k realm) claimOf(sub string) string {
 // points at the realm and admits allowedGroups.
 func idpAPIServer(t *testing.T, k realm, delegation string, allowedGroups []string) *rest.Config {
 	t.Helper()
-	t.Setenv("POD_NAMESPACE", "krateo-system")
 	allowed, err := json.Marshal(allowedGroups)
 	require.NoError(t, err)
+	return idpAPIServerWith(t, delegation, map[string]string{"keycloak": `{"discoveryURL":"` + k.issuer +
+		`/.well-known/openid-configuration","clientID":"krateo-portal","redirectURI":"https://cmp.example/auth","allowedGroups":` +
+		string(allowed) + `}`})
+}
+
+// idpAPIServerWith is apiserver serving the OIDCConfigs specs, by name; any
+// other OIDCConfig is not found.
+func idpAPIServerWith(t *testing.T, delegation string, specs map[string]string) *rest.Config {
+	t.Helper()
+	t.Setenv("POD_NAMESPACE", "krateo-system")
+	const configs = "/apis/oidc.authn.krateo.io/v1alpha1/namespaces/krateo-system/oidcconfigs/"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -118,11 +142,16 @@ func idpAPIServer(t *testing.T, k realm, delegation string, allowedGroups []stri
 			_, _ = w.Write([]byte(reviewOK))
 		case r.Method == http.MethodGet && r.URL.Path == "/apis/serviceaccount.authn.krateo.io/v1alpha1/namespaces/krateo-system/serviceaccounts":
 			_, _ = w.Write([]byte(mapping(delegation)))
-		case r.Method == http.MethodGet && r.URL.Path == "/apis/oidc.authn.krateo.io/v1alpha1/namespaces/krateo-system/oidcconfigs/keycloak":
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, configs):
+			name := strings.TrimPrefix(r.URL.Path, configs)
+			spec, ok := specs[name]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}`))
+				return
+			}
 			_, _ = w.Write([]byte(`{"apiVersion":"oidc.authn.krateo.io/v1alpha1","kind":"OIDCConfig",
-				"metadata":{"name":"keycloak","namespace":"krateo-system"},
-				"spec":{"discoveryURL":"` + k.issuer + `/.well-known/openid-configuration","clientID":"krateo-portal",
-				"redirectURI":"https://cmp.example/auth","allowedGroups":` + string(allowed) + `}}`))
+				"metadata":{"name":"` + name + `","namespace":"krateo-system"},"spec":` + spec + `}`))
 		default:
 			t.Errorf("unexpected apiserver call: %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -261,6 +290,37 @@ func TestExchangeRefusals(t *testing.T) {
 				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"exp": time.Now().Add(-5 * time.Minute).Unix()})
 			},
 			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenExpired},
+		{name: "an ID token the provider signed",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"typ": "ID"})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "a refresh token the provider signed",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"typ": "Refresh"})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "no typ at all",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"typ": nil})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "a kid the provider doesn't publish, on a token issued before its keys were read",
+			token: func(t *testing.T) string {
+				return kc.sign(t, stranger, jwt.SigningMethodRS256, map[string]any{"kid": "forged"},
+					map[string]any{"iat": time.Now().Add(-time.Minute).Unix()})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "no issue time",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"iat": nil})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "issued in the future",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"iat": time.Now().Add(10 * time.Minute).Unix()})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
 		{name: "no sub",
 			token: func(t *testing.T) string {
 				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"sub": nil})
@@ -296,6 +356,8 @@ func TestExchangeRefusals(t *testing.T) {
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
 			assert.Equal(t, tc.cause, cause(t, rec))
 			assert.NotContains(t, rec.Body.String(), "access_token")
+			assert.NotContains(t, rec.Body.String(), kc.issuer, "the answer never names the provider's addresses")
+			assert.NotContains(t, rec.Body.String(), "forged", "nor a kid")
 
 			r := auditlogtest.Only(t, records)
 			assert.Equal(t, audit.OutcomeDenied, auditlogtest.String(r, "krateo.audit.outcome"))
@@ -326,4 +388,77 @@ func TestExchangeOfAnAuthnTokenCarriesTheAudience(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, jwt.ClaimStrings{"agentiko"}, aud)
 	assert.Equal(t, "agentiko", auditlogtest.String(auditlogtest.Only(t, records), audit.KeyTokenAudience))
+}
+
+// An RFC 9068 access token, marked typ at+jwt in its header and carrying no
+// typ claim, is an access token too.
+func TestExchangeOfAnRFC9068AccessToken(t *testing.T) {
+	k, kc := newKeys(t), newRealm(t)
+	h, _ := k.idpRoute(t, idpAPIServer(t, kc, idpDelegation, nil), secrets{"alice": claimed(kc.claimOf("uid-alice"))})
+	tok := kc.sign(t, kc.key, jwt.SigningMethodRS256, map[string]any{"typ": "at+jwt"}, map[string]any{"typ": nil})
+	_, nfo := issued(t, k, exchange(h, "sa", idpForm(tok)))
+	assert.Equal(t, "alice", nfo.Username)
+}
+
+// A source that can't be resolved doesn't fail exchanges another source
+// verifies: it is skipped.
+func TestExchangeSkipsAnUnresolvableSource(t *testing.T) {
+	k, kc := newKeys(t), newRealm(t)
+	delegation := `{"allowed":true,"subjectTokens":[{"oidcConfig":"gone","audiences":["` + mcpAudience + `"]},` +
+		`{"oidcConfig":"keycloak","audiences":["` + mcpAudience + `"]}]}`
+	rc := idpAPIServerWith(t, delegation, map[string]string{"keycloak": `{"discoveryURL":"` + kc.issuer + `/.well-known/openid-configuration"}`})
+	h, _ := k.idpRoute(t, rc, secrets{"alice": claimed(kc.claimOf("uid-alice"))})
+	_, nfo := issued(t, k, exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil))))
+	assert.Equal(t, "alice", nfo.Username)
+}
+
+// authn's failures to verify an identity provider's token (500
+// IssuanceFailed, a failure record that names no subject): its sources can't
+// be resolved, its OIDCConfig maps identities through a RESTAction, or its
+// keys can't be read. The answer names neither the provider's addresses nor
+// the OIDCConfig; the log does.
+func TestExchangeFailures(t *testing.T) {
+	k, kc := newKeys(t), newRealm(t)
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	discovery := `"discoveryURL":"` + kc.issuer + `/.well-known/openid-configuration"`
+	for _, tc := range []struct {
+		name   string
+		specs  map[string]string
+		token  func(t *testing.T) string
+		answer string
+	}{
+		{name: "the only source's OIDCConfig is missing", specs: map[string]string{},
+			answer: "couldn't be resolved"},
+		{name: "the only source's provider is down", specs: map[string]string{"keycloak": `{"discoveryURL":"` + gone.URL + `/.well-known/openid-configuration"}`},
+			answer: "couldn't be resolved"},
+		{name: "the OIDCConfig maps identities through a RESTAction",
+			specs:  map[string]string{"keycloak": `{` + discovery + `,"restActionRef":{"name":"userinfo","namespace":"krateo-system"}}`},
+			answer: "RESTAction"},
+		{name: "a kid the provider's keys, read just now, may predate",
+			specs: map[string]string{"keycloak": `{` + discovery + `}`},
+			token: func(t *testing.T) string {
+				return kc.sign(t, k.stranger, jwt.SigningMethodRS256, map[string]any{"kid": "kc2"}, nil)
+			},
+			answer: "signing keys couldn't be read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tokenFor := tc.token
+			if tokenFor == nil {
+				tokenFor = func(t *testing.T) string { return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil) }
+			}
+			h, records := k.idpRoute(t, idpAPIServerWith(t, idpDelegation, tc.specs), secrets{"alice": claimed(kc.claimOf("uid-alice"))})
+			rec := exchange(h, "sa", idpForm(tokenFor(t)))
+			require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+			assert.Equal(t, "IssuanceFailed", cause(t, rec))
+			assert.Contains(t, rec.Body.String(), tc.answer)
+			for _, private := range []string{kc.issuer, gone.URL, "keycloak", "userinfo", "kc2"} {
+				assert.NotContains(t, rec.Body.String(), private)
+			}
+
+			r := auditlogtest.Only(t, records)
+			assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(r, "krateo.audit.outcome"))
+			assert.Empty(t, auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
+		})
+	}
 }

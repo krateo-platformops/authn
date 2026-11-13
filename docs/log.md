@@ -27,7 +27,13 @@ and issues only if their username already carries exactly their claim from a por
 requested audience, at most 15 minutes and never past the access token. audit v0.15.0 records
 the new reasons (`subject_not_signed_in`, `audience_not_allowed`) and the audience; plumbing
 v1.69.0 gives the token its `aud`. A new kind-based suite proves the CRD's audience rule
-accepts exactly what audit records.
+accepts exactly what audit records. The security review then tightened it: only an access
+token (`typ: at+jwt` or Keycloak's `typ: Bearer`, never an ID or refresh token) with an `iat`;
+a `kid` the provider no longer publishes is the token's fault (`401`, plumbing v1.70.0's
+`jwtutil.NotPublished`), not authn's; an OIDCConfig with `restActionRef` is refused, so an
+exchange never maps a person differently from their sign-in; one unresolvable source no longer
+fails exchanges another source verifies; discovery is cached and capped at 1 MiB; and no
+answer names the provider's addresses, a `kid` or the OIDCConfig.
 
 ## 2026-11-13 — a refusal names only the username's own Secret
 

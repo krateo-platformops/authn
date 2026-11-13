@@ -162,6 +162,9 @@ For IDE sign-in to Agentiko over MCP, Diego decided on 2026-11-13:
    (what the issued token's `aud` may be).
 
 The access token is verified against the provider's JWKS (RSA only, `iss` exactly,
-`exp`, `aud`), unlike `/oidc/login`'s ID token, which comes back-channel from the token
-endpoint and needs no signature check. The issued token never outlives the access token,
+`iat`, `exp`, `aud`) and must be an access token (`typ: at+jwt` in its header, or
+Keycloak's `typ: Bearer` claim), so an ID token the same realm signed can't be
+exchanged. An OIDCConfig with `restActionRef` is refused: the exchange would map the
+person differently from the sign-in that ran the RESTAction (Diego, 2026-11-13). `/oidc/login`'s ID token, by contrast,
+comes back-channel from the token endpoint and needs no signature check. The issued token never outlives the access token,
 so with Keycloak's short access tokens the bridge re-exchanges every few minutes.

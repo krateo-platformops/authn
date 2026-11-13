@@ -296,8 +296,16 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   `subjectTokens[]` {`oidcConfig`, `audiences[]`} (#155) lets it exchange an identity
   provider's access token (`subject_token_type` `…:access_token`) from a listed
   OIDCConfig in authn's namespace: the token must verify against that provider's JWKS
-  (an RSA signature, `iss` exactly, an unexpired `exp`, an `aud` the entry lists, a `sub`),
-  the person is mapped as `/oidc/login` maps an ID token (username from
+  (an RSA signature, `iss` exactly, an `iat` not in the future, an unexpired `exp`, an
+  `aud` the entry lists, a `sub`) and be an access token (header `typ: at+jwt` per RFC
+  9068, or claim `typ: Bearer` as Keycloak marks them; never an ID or refresh token). A
+  `kid` the provider's freshly read key set lacks, on a token issued before that read, is
+  `SubjectTokenInvalid`, not authn's failure (plumbing's `jwtutil.NotPublished`). A listed
+  OIDCConfig that can't be resolved is skipped; only when no other one issued the token
+  is it `500 IssuanceFailed`. An OIDCConfig with `restActionRef` is refused (`500`): an
+  exchange doesn't run that RESTAction, so it would map the person differently from their
+  sign-in. The OIDCConfig is read on every exchange; its provider's discovery document is
+  cached 5 minutes (30 seconds after a failure) and read up to 1 MiB. The person is mapped as `/oidc/login` maps an ID token (username from
   `preferred_username`, groups from `groups`, claim `["oidc", iss, sub]`), and
   `config.VouchForExchange` runs a sign-in's identity checks (no `system:` or `krateo:`
   group, the OIDCConfig's `allowedGroups`, a name that isn't reserved and, with exact
@@ -765,8 +773,9 @@ or a log line.
   `group_not_allowed`, `platform_group`, `system_group`. An audience refusal is
   `audience_not_allowed`, carrying the requested audience in `krateo.audit.token.audience`,
   or `invalid_request` for a malformed one or several, without the value; a success that
-  issued an audience carries it too. It's `failure` when signing fails, or when a listed
-  OIDCConfig can't be resolved or its provider's keys read. An actor refused or failed at
+  issued an audience carries it too. It's `failure` when signing fails, or when no listed
+  OIDCConfig issued the token and one can't be resolved, its OIDCConfig sets
+  `restActionRef`, or its provider's keys can't be read. An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
 - **`/usernames/check`** (audit v0.10.0). The actor is the caller's mapping, of its declared

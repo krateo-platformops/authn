@@ -136,20 +136,20 @@ func TestTokenKeys(t *testing.T) {
 		return c
 	}
 
-	got, err := tokenKeys(context.Background(), cfg(serve(t, full), ""))
+	got, err := tokenKeys(context.Background(), cfg(serve(t, full), ""), fetchDiscovery)
 	require.NoError(t, err)
 	assert.Equal(t, OIDCTokenKeys{Issuer: discoveredIssuer, JWKSURI: "https://idp.example/certs", AllowedGroups: []string{"tenants"}}, got)
 
-	got, err = tokenKeys(context.Background(), cfg(serve(t, full), discoveredIssuer))
+	got, err = tokenKeys(context.Background(), cfg(serve(t, full), discoveredIssuer), fetchDiscovery)
 	require.NoError(t, err, "a matching spec.issuer")
 	assert.Equal(t, discoveredIssuer, got.Issuer)
 
-	_, err = tokenKeys(context.Background(), cfg(serve(t, full), "https://other.example"))
+	_, err = tokenKeys(context.Background(), cfg(serve(t, full), "https://other.example"), fetchDiscovery)
 	assert.ErrorIs(t, err, ErrIssuerConflict)
 
-	_, err = tokenKeys(context.Background(), cfg("", discoveredIssuer))
+	_, err = tokenKeys(context.Background(), cfg("", discoveredIssuer), fetchDiscovery)
 	assert.ErrorIs(t, err, ErrNoJWKS, "no discoveryURL")
 
-	_, err = tokenKeys(context.Background(), cfg(serve(t, map[string]string{"issuer": discoveredIssuer}), ""))
+	_, err = tokenKeys(context.Background(), cfg(serve(t, map[string]string{"issuer": discoveredIssuer}), ""), fetchDiscovery)
 	assert.ErrorIs(t, err, ErrNoJWKS, "no jwks_uri")
 }

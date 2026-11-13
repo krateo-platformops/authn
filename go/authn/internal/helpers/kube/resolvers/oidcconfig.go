@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	oidcv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oidc/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
@@ -43,7 +45,7 @@ type DiscoveryEndpointResponse struct {
 }
 
 func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
-	res, err := getOIDCConfig(rc, name)
+	res, err := getOIDCConfig(ctx, rc, name)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +54,7 @@ func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1al
 
 // getOIDCConfig reads the OIDCConfig name in the operator namespace, as
 // stored.
-func getOIDCConfig(rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
+func getOIDCConfig(ctx context.Context, rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
@@ -69,7 +71,7 @@ func getOIDCConfig(rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, erro
 	res := &oidcv1alpha1.OIDCConfig{}
 	err = cli.Get().Resource("oidcconfigs").
 		Namespace(ns).Name(name).
-		Do(context.Background()).
+		Do(ctx).
 		Into(res)
 	if err != nil {
 		return nil, err
@@ -85,31 +87,93 @@ var ErrNoJWKS = errors.New("the identity provider's signing keys are unknown")
 // OIDCTokenKeys is what verifying an access token an OIDCConfig's provider
 // issued takes (authn#155): the issuer the token must carry, where the
 // provider's signing keys are published, and the config's allowedGroups.
+// MapsThroughRESTAction says the config sets restActionRef: its sign-in maps
+// the person through a RESTAction, which a token exchange doesn't run, so an
+// exchange refuses the config (Diego, 2026-11-13) rather than map the person
+// differently from their sign-in.
 type OIDCTokenKeys struct {
-	Issuer        string
-	JWKSURI       string
-	AllowedGroups []string
+	Issuer                string
+	JWKSURI               string
+	AllowedGroups         []string
+	MapsThroughRESTAction bool
 }
 
-// OIDCConfigTokenKeys reads the OIDCConfig name and its provider's discovery
-// document for OIDCTokenKeys.
-func OIDCConfigTokenKeys(ctx context.Context, rc *rest.Config, name string) (OIDCTokenKeys, error) {
-	cfg, err := getOIDCConfig(rc, name)
+// Discovery documents are cached for DiscoveryTTL after a successful fetch,
+// and for DiscoveryFailureTTL after a failed one, so a provider that is down
+// isn't fetched on every exchange either.
+const (
+	DiscoveryTTL        = 5 * time.Minute
+	DiscoveryFailureTTL = 30 * time.Second
+)
+
+// TokenKeysResolver resolves OIDCConfigs' OIDCTokenKeys for token exchanges
+// (authn#155). It reads the OIDCConfig on every call, as a sign-in does, so a
+// change to its allowedGroups, issuer or restActionRef applies at once. The
+// provider's discovery document, which only the provider changes, is cached
+// by URL. It is safe for concurrent use.
+type TokenKeysResolver struct {
+	rc  *rest.Config
+	now func() time.Time
+
+	mu   sync.Mutex
+	docs map[string]cachedDiscovery
+}
+
+type cachedDiscovery struct {
+	doc   DiscoveryEndpointResponse
+	err   error
+	until time.Time
+}
+
+func NewTokenKeysResolver(rc *rest.Config) *TokenKeysResolver {
+	return &TokenKeysResolver{rc: rc, now: time.Now, docs: map[string]cachedDiscovery{}}
+}
+
+// TokenKeys reads the OIDCConfig name and its provider's discovery document
+// for OIDCTokenKeys.
+func (r *TokenKeysResolver) TokenKeys(ctx context.Context, name string) (OIDCTokenKeys, error) {
+	cfg, err := getOIDCConfig(ctx, r.rc, name)
 	if err != nil {
 		return OIDCTokenKeys{}, err
 	}
-	return tokenKeys(ctx, cfg)
+	return tokenKeys(ctx, cfg, r.discovery)
 }
 
-// tokenKeys is cfg's OIDCTokenKeys. The issuer follows the login's rule
-// (resolveOIDCConfig): spec.issuer when set, which must then equal the
-// discovered issuer, else the discovered one. The keys come only from
-// discovery, which every access token's verification needs.
-func tokenKeys(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) (OIDCTokenKeys, error) {
+// discovery is the discovery document at url, from the cache while it is
+// fresh. A fetch cut short by the caller's own context isn't cached: it says
+// nothing about the provider.
+func (r *TokenKeysResolver) discovery(ctx context.Context, url string) (DiscoveryEndpointResponse, error) {
+	r.mu.Lock()
+	c, ok := r.docs[url]
+	r.mu.Unlock()
+	if ok && r.now().Before(c.until) {
+		return c.doc, c.err
+	}
+	doc, err := fetchDiscovery(ctx, url)
+	if ctx.Err() != nil {
+		return doc, err
+	}
+	ttl := DiscoveryTTL
+	if err != nil {
+		ttl = DiscoveryFailureTTL
+	}
+	r.mu.Lock()
+	r.docs[url] = cachedDiscovery{doc: doc, err: err, until: r.now().Add(ttl)}
+	r.mu.Unlock()
+	return doc, err
+}
+
+// tokenKeys is cfg's OIDCTokenKeys, its discovery document read by discover.
+// The issuer follows the login's rule (resolveOIDCConfig): spec.issuer when
+// set, which must then equal the discovered issuer, else the discovered one.
+// The keys come only from discovery, which every access token's verification
+// needs.
+func tokenKeys(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig,
+	discover func(context.Context, string) (DiscoveryEndpointResponse, error)) (OIDCTokenKeys, error) {
 	if cfg.Spec.DiscoveryURL == "" {
 		return OIDCTokenKeys{}, fmt.Errorf("%w: the OIDCConfig has no discoveryURL", ErrNoJWKS)
 	}
-	doc, err := fetchDiscovery(ctx, cfg.Spec.DiscoveryURL)
+	doc, err := discover(ctx, cfg.Spec.DiscoveryURL)
 	if err != nil {
 		return OIDCTokenKeys{}, err
 	}
@@ -126,7 +190,8 @@ func tokenKeys(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) (OIDCTokenKeys
 	if doc.JWKSURI == "" {
 		return OIDCTokenKeys{}, fmt.Errorf("%w: the discovery document has no jwks_uri", ErrNoJWKS)
 	}
-	return OIDCTokenKeys{Issuer: issuer, JWKSURI: doc.JWKSURI, AllowedGroups: cfg.Spec.AllowedGroups}, nil
+	return OIDCTokenKeys{Issuer: issuer, JWKSURI: doc.JWKSURI, AllowedGroups: cfg.Spec.AllowedGroups,
+		MapsThroughRESTAction: cfg.Spec.RESTActionRef != nil}, nil
 }
 
 // resolveOIDCConfig completes cfg for a login: the endpoints, and the issuer
@@ -237,6 +302,11 @@ func doDiscovery(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) error {
 	return applyDiscovery(cfg, DiscoveryEndpointResponse{})
 }
 
+// maxDiscoveryBody caps how much of a discovery document authn reads. A real
+// one is a few KiB; the cap keeps a misbehaving or hostile endpoint from
+// filling authn's memory.
+const maxDiscoveryBody = 1 << 20
+
 func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpointResponse, error) {
 	var doc DiscoveryEndpointResponse
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
@@ -251,9 +321,12 @@ func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpoint
 	if resp.StatusCode != http.StatusOK {
 		return doc, fmt.Errorf("%w: %s answered %d", ErrDiscoveryFailed, discoveryURL, resp.StatusCode)
 	}
-	endpointsDataJson, err := io.ReadAll(resp.Body)
+	endpointsDataJson, err := io.ReadAll(io.LimitReader(resp.Body, maxDiscoveryBody+1))
 	if err != nil {
 		return doc, fmt.Errorf("%w: reading the response: %v", ErrDiscoveryFailed, err)
+	}
+	if len(endpointsDataJson) > maxDiscoveryBody {
+		return doc, fmt.Errorf("%w: %s answered more than %d bytes", ErrDiscoveryFailed, discoveryURL, maxDiscoveryBody)
 	}
 	if err := json.Unmarshal(endpointsDataJson, &doc); err != nil {
 		return doc, fmt.Errorf("%w: the response is not a discovery document: %v", ErrDiscoveryFailed, err)

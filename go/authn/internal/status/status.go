@@ -284,6 +284,14 @@ func Failed(cause CauseType, err error) CauseError {
 	return CauseError{Code: http.StatusInternalServerError, Cause: cause, Err: err}
 }
 
+// FailedPrivately is a failure on authn's side (500) that answers public and
+// keeps the real reason, private, for the server log. Use it where the reason
+// names authn's configuration or a dependency's address, such as an identity
+// provider's key URL, which the caller has no use for.
+func FailedPrivately(cause CauseType, public, private error) CauseError {
+	return CauseError{Code: http.StatusInternalServerError, Cause: cause, Err: public, Private: private}
+}
+
 // IssueFailure renders an error from issuing a credential, what naming it. An
 // error that already carries a cause, such as the name guard's refusal, is
 // answered as it is: wrapping it would turn a refusal into a 500. Any other
