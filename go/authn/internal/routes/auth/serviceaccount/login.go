@@ -119,7 +119,10 @@ func (r *loginRoute) Handler() http.HandlerFunc {
 		// The Secret is owned by the mapping, so whoever retires the mapping
 		// (core-provider, on Undeploy) retires the credential with it, through
 		// the garbage collector, without needing delete rights on Secrets.
-		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner), kubeconfig.Logger(*log))
+		// The mapping's declared kind is the Secret's principal label (with exact
+		// naming on, authn#140, authn#144): never human, whatever its groups.
+		issued, err := r.gen.Generate(storage.StrategyServiceAccount, user, kubeconfig.OwnedBy(owner),
+			kubeconfig.AsPrincipal(string(principal)), kubeconfig.Logger(*log))
 		r.audit.Issuance(req, auditlog.LoginAction(storage.StrategyServiceAccount), user, principal, issued, err)
 		if err != nil {
 			err = status.IssueFailure("clientconfig", err)
@@ -168,11 +171,11 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 
 // Principal is the kind of identity a ServiceAccount mapping declares in
 // spec.principal: agent, controller, or service when it declares none.
+// It is the rule the Secret's principal label follows (storage.PrincipalFor),
+// so the token and the Secret can't disagree.
 func Principal(mapping *sav1alpha1.ServiceAccount) jwtutil.Principal {
-	if p := jwtutil.Principal(mapping.Spec.Principal); p.Known() && p != jwtutil.PrincipalHuman {
-		return p
-	}
-	return jwtutil.PrincipalService
+	p, _ := storage.PrincipalFor(storage.StrategyServiceAccount, mapping.Spec.Principal)
+	return jwtutil.Principal(p)
 }
 
 // Verified is what Authenticate established about its caller, so a route can

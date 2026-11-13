@@ -9,6 +9,7 @@ import (
 
 	"github.com/krateo-platformops/authn/apis/core"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/restaction"
 	"github.com/krateo-platformops/authn/internal/routes"
 	"github.com/krateo-platformops/authn/internal/routes/auth/basic"
@@ -44,6 +45,9 @@ type routeOptions struct {
 	ServiceName            string
 	// Audit records credential issuance (AUDIT-4). Nil records nothing.
 	Audit *auditlog.Recorder
+	// Naming is how session Secrets are named (AUTHN_EXACT_USERNAMES,
+	// authn#140); the zero value is the legacy naming.
+	Naming storage.Naming
 }
 
 // buildRoutes returns every route authn serves. It is the whole HTTP surface:
@@ -156,6 +160,7 @@ func buildInternalRoutes(o routeOptions) []routes.Route {
 	return []routes.Route{
 		// Whether a username could be given to a new identity, for an
 		// access-request controller that opted in (spec.usernameCheck).
-		usernames.Route(o.RestConfig, usernames.Options{Audience: o.ServiceAccountAudience, Audit: o.Audit}),
+		usernames.Route(o.RestConfig, usernames.Options{Audience: o.ServiceAccountAudience,
+			Audit: o.Audit.WithNaming(o.Naming), Naming: o.Naming}),
 	}
 }

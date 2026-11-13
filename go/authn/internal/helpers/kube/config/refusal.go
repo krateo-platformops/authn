@@ -14,6 +14,12 @@ const (
 	RefusalNameMissing Refusal = "name_missing"
 	// RefusalReserved: an identity source asked for a reserved name.
 	RefusalReserved Refusal = "name_reserved"
+	// RefusalNotIssued: with exact naming (authn#140), an identity source
+	// asked for a name its Secret can't be named after exactly
+	// (endpoints.ExactSecretName: not a DNS-1123 subdomain, or longer than
+	// endpoints.MaxExactUsernameLength). Its legacy name would be a rewrite,
+	// which may be another username's.
+	RefusalNotIssued Refusal = "name_not_issued"
 	// RefusalClaimed: another identity holds the name's claim. A login that
 	// loses the race to a simultaneous first login gets it too.
 	RefusalClaimed Refusal = "name_claimed"
@@ -60,7 +66,7 @@ func refused(reason Refusal, err error) error { return refusedError{reason: reas
 
 // Refusals lists every Refusal, for a caller that maps them (the audit record's
 // denial reason) to prove its map complete.
-var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
+var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalNotIssued, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
 	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup,
 	RefusalStepUpNotEnabled, RefusalInsufficientAssurance, RefusalStaleAuthentication}
 

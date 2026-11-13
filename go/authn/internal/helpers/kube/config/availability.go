@@ -50,6 +50,21 @@ var Unavailables = []Unavailable{UnavailableInvalid, UnavailableReserved, Unavai
 // An error is a lookup that failed: the caller can't know, so it must treat
 // the name as unavailable and retry.
 func CheckUsername(ctx context.Context, lookup NameLookup, username string) (Unavailable, error) {
+	return CheckUsernameWith(ctx, lookup, storage.Naming{}, username)
+}
+
+// CheckUsernameWith is CheckUsername under naming. With exact naming
+// (authn#140) a name is invalid when its Secret can't be named after it
+// exactly (endpoints.ExactSecretName), as a sign-in from an identity source
+// is refused (name_not_issued), and every name the session Secret may have is
+// read, exact first (storage.Naming.SessionNames). Still stricter than a
+// sign-in: a Secret under EITHER name makes the name unavailable, even a
+// legacy one that is another username's (john.doe's legacy name is
+// johndoe-clientconfig, which may be johndoe's), which a sign-in passes over.
+// The first Secret found says why: name_claimed when it carries a claim and is
+// the name's own (endpoints.OwnsSecret) or sits under the name authn would
+// write; name_held_legacy otherwise.
+func CheckUsernameWith(ctx context.Context, lookup NameLookup, naming storage.Naming, username string) (Unavailable, error) {
 	if lookup == nil {
 		return "", errors.New("no name lookup")
 	}
@@ -58,18 +73,37 @@ func CheckUsername(ctx context.Context, lookup NameLookup, username string) (Una
 	if username != "" && reservedName(username) {
 		return UnavailableReserved, nil
 	}
-	if err := usernames.Check(username); err != nil {
-		return UnavailableInvalid, nil
-	}
-	sec, err := lookup.SessionSecret(ctx, username)
-	if err != nil {
-		return "", err
-	}
-	if sec != nil {
-		if sec.GetAnnotations()[storage.ClaimAnnotation] != "" {
-			return UnavailableClaimed, nil
+	if naming.Exact {
+		if !naming.Issuable(username) {
+			return UnavailableInvalid, nil
 		}
-		return UnavailableHeldLegacy, nil
+		for i, name := range naming.SessionNames(username) {
+			sec, err := lookup.Secret(ctx, name)
+			if err != nil {
+				return "", err
+			}
+			if sec == nil {
+				continue
+			}
+			if sec.GetAnnotations()[storage.ClaimAnnotation] != "" && (i == 0 || naming.Owns(sec, username)) {
+				return UnavailableClaimed, nil
+			}
+			return UnavailableHeldLegacy, nil
+		}
+	} else {
+		if err := usernames.Check(username); err != nil {
+			return UnavailableInvalid, nil
+		}
+		sec, err := lookup.SessionSecret(ctx, username)
+		if err != nil {
+			return "", err
+		}
+		if sec != nil {
+			if sec.GetAnnotations()[storage.ClaimAnnotation] != "" {
+				return UnavailableClaimed, nil
+			}
+			return UnavailableHeldLegacy, nil
+		}
 	}
 	provisioned, err := lookup.Provisioned(ctx, username)
 	if err != nil {

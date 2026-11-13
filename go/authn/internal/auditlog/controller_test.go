@@ -116,3 +116,61 @@ func TestServiceCertIssuedRecordsConform(t *testing.T) {
 		assert.False(t, has)
 	})
 }
+
+// A key the backfill left as found is one denied update per key, carrying
+// audit's kept_existing_value and the key as <kind>:<key>, conformant for the
+// controller writer. Nothing was sent: no method, no status code.
+func TestIdentityKeptRecordsConform(t *testing.T) {
+	ref := SecretRef{Namespace: "krateo-system", Name: "alice-clientconfig", UID: "uid-a", ResourceVersion: "7"}
+	for _, tc := range []struct{ kind, key, want string }{
+		{audit.MetadataKindAnnotation, "authn.krateo.io/username", "annotation:authn.krateo.io/username"},
+		{audit.MetadataKindLabel, "authn.krateo.io/principal", "label:authn.krateo.io/principal"},
+		{audit.MetadataKindLabel, "authn.krateo.io/username-label", "label:authn.krateo.io/username-label"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			rec := audittest.NewRecorder(t)
+			c := NewController(&provider{rec: rec}, authnSA, func(context.Context, string) (bool, bool) { return false, true })
+			c.IdentityKept(context.Background(), ref, tc.kind, tc.key)
+			got := rec.Only(t)
+			audittest.AssertConformant(t, audit.WriterController, got)
+			audittest.AssertRequiredKeysDetected(t, audit.WriterController, got)
+
+			attrs := audittest.Attributes(got)
+			for key, want := range map[string]string{
+				"user.name":                      authnSA,
+				"krateo.action":                  ActionIdentityInconsistent,
+				"krateo.audit.verb":              "update",
+				"krateo.audit.outcome":           audit.OutcomeDenied,
+				"krateo.audit.denial_reason":     audit.DenialReasonKeptExistingValue,
+				"krateo.audit.authorization_key": tc.want,
+				audit.KeyObjectName:              ref.Name,
+			} {
+				v, ok := attr(t, attrs, key)
+				assert.True(t, ok, "%s is recorded", key)
+				assert.Equal(t, want, v.AsString(), key)
+			}
+			for _, absent := range []string{"http.request.method", "http.response.status_code"} {
+				_, ok := attr(t, attrs, absent)
+				assert.False(t, ok, "%s: nothing was sent", absent)
+			}
+			assert.Equal(t, msgIdentityKept, got.Body().AsString())
+		})
+	}
+}
+
+// The kind is the key's, not inferred from its name: the username annotation's
+// name under the label kind isn't a declared key. That record is still
+// written, without the key, and Check reports it, so a mismatched bump shows
+// up as a non-conformant record instead of a refusal going unrecorded.
+func TestIdentityKeptOfAnUndeclaredKeyIsRecordedAndCaught(t *testing.T) {
+	rec := audittest.NewRecorder(t)
+	c := NewController(&provider{rec: rec}, authnSA, func(context.Context, string) (bool, bool) { return false, true })
+	c.IdentityKept(context.Background(), SecretRef{Namespace: "krateo-system", Name: "alice-clientconfig"},
+		audit.MetadataKindLabel, "authn.krateo.io/username")
+	got := rec.Only(t)
+	attrs := audittest.Attributes(got)
+	_, ok := attr(t, attrs, "krateo.audit.authorization_key")
+	assert.False(t, ok, "no key is spelled for an undeclared one")
+	vs := audit.Check(audit.WriterController, attrs)
+	assert.Contains(t, vs, audit.Violation{Key: "krateo.audit.authorization_key", Reason: audit.ReasonMissing})
+}

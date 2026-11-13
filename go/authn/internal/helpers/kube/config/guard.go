@@ -9,7 +9,6 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
-	"github.com/krateo-platformops/plumbing/endpoints"
 	"github.com/krateo-platformops/plumbing/usernames"
 	"github.com/rs/zerolog"
 	corev1 "k8s.io/api/core/v1"
@@ -51,9 +50,15 @@ type NameLookup interface {
 //     it may not take a reserved name, a name an administrator provisioned,
 //     or a name any RBAC binding already grants rights to, unless the name is
 //     already claimed by this same identity.
+//
+// With exact naming (storage.Naming.Exact, authn#140) the guard reads every
+// name the username's session Secret may have, exact first, and decides only
+// from the Secrets that are the username's own (endpoints.OwnsSecret): see
+// admitExact.
 type nameGuard struct {
 	lookup NameLookup
 	log    zerolog.Logger
+	naming storage.Naming
 }
 
 // fromIdentitySource reports whether the strategy's usernames come from an
@@ -143,41 +148,37 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		return "", refuse(RefusalReserved, "is reserved")
 	}
 
-	sec, err := g.lookup.SessionSecret(ctx, username)
-	if err != nil {
-		return "", failed(err)
-	}
-	if sec != nil {
-		ann := sec.GetAnnotations()
-		if have := ann[storage.ClaimAnnotation]; have != "" {
-			if have == claim {
-				return claim, nil
+	// The Secrets under every name the username's session Secret may have,
+	// in the order they are tried (storage.Naming.SessionNames): one with
+	// legacy naming, exact then legacy with exact naming; nil where none is.
+	var found []*corev1.Secret
+	if g.naming.Exact {
+		// An identity source chooses its name, so one its Secret can't be named
+		// after exactly is refused, before any read (authn#140). An
+		// administrator chose a provisioned name: it keeps its legacy name.
+		if external && !g.naming.Issuable(username) {
+			return "", refuse(RefusalNotIssued, "can't name its Secret exactly")
+		}
+		for _, name := range g.naming.SessionNames(username) {
+			sec, err := g.lookup.Secret(ctx, name)
+			if err != nil {
+				return "", failed(err)
 			}
-			return "", refuse(RefusalClaimed, "is claimed by another identity")
+			found = append(found, sec)
 		}
-		// Written before claims existed, so nothing says whose it is but its
-		// certificate. Adopt it only when that certificate was issued to this
-		// username (endpoints.OwnsSecret): the Secret's name is derived from
-		// the username by a rewrite that drops dots and case, so john.doe's
-		// Secret is johndoe-clientconfig, and johndoe would otherwise adopt it,
-		// and overwrite it (snowplow's review of the derived-name rule). A
-		// Secret with no certificate it can read is no one's.
-		if !endpoints.OwnsSecret(sec, username) {
-			return "", refuse(RefusalHeldLegacy, "has a Secret written before claims existed whose certificate wasn't issued to it")
+	} else {
+		sec, err := g.lookup.SessionSecret(ctx, username)
+		if err != nil {
+			return "", failed(err)
 		}
-		// The strategy that wrote it adopts it.
-		wrote := storage.Strategy(ann[storage.StrategyAnnotation])
-		if wrote == strategy {
-			g.log.Info().Str("strategy", string(strategy)).
-				Msg("username claimed by its first login since claims exist")
-			return claim, nil
-		}
-		if !external && (wrote == "" || wrote == storage.StrategyUnknown) {
-			g.log.Info().Str("strategy", string(strategy)).
-				Msg("username claimed by its provisioned identity")
-			return claim, nil
-		}
-		return "", refuse(RefusalHeldLegacy, "has a Secret written by %q, not by a %s login", wrote, strategy)
+		found = []*corev1.Secret{sec}
+	}
+	held, err := g.heldBy(found, username, refuse)
+	if err != nil {
+		return "", err
+	}
+	if len(held) > 0 {
+		return g.decideHeld(held, strategy, claim, external, refuse)
 	}
 
 	if !external {
@@ -196,6 +197,85 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 	}
 	if bound {
 		return "", refuse(RefusalBound, "is already granted rights by a RoleBinding or ClusterRoleBinding")
+	}
+	return claim, nil
+}
+
+// heldBy returns, of the Secrets found under the username's names (nil
+// where a name has none; the first is the name authn writes), the ones the
+// guard decides from (decideHeld). It is the one place ownership
+// (endpoints.OwnsSecret: the username annotation, else the certificate's CN)
+// is decided:
+//   - a Secret the username owns counts;
+//   - a claimed Secret it doesn't own counts with legacy naming, as authn has
+//     always decided from a claim alone; with exact naming (authn#140) it
+//     doesn't, and neither admits nor refuses the username by its claim;
+//   - another username's Secret under the legacy name is passed over (exact
+//     naming: john.doe's legacy johndoe-clientconfig is johndoe's), so the
+//     username is judged on its own name only;
+//   - under the name authn would write, a Secret that doesn't count refuses:
+//     writing would replace another username's credential (name_claimed when
+//     it carries a claim, name_held_legacy when it carries none). With legacy
+//     naming that is an unclaimed Secret from before claims whose certificate
+//     wasn't issued to this username (authn#148: its name is a lossy rewrite,
+//     so john.doe's is johndoe-clientconfig), or one with no certificate authn
+//     can read, which is no one's.
+//
+// Nothing read is ever written here, and the legacy Secret is never touched.
+func (g *nameGuard) heldBy(found []*corev1.Secret, username string, refuse func(Refusal, string, ...any) error) ([]*corev1.Secret, error) {
+	var own []*corev1.Secret
+	for i, sec := range found {
+		if sec == nil {
+			continue
+		}
+		claimed := sec.GetAnnotations()[storage.ClaimAnnotation] != ""
+		switch {
+		case g.naming.Owns(sec, username), claimed && !g.naming.Exact:
+			own = append(own, sec)
+		case i > 0:
+		case claimed:
+			return nil, refuse(RefusalClaimed, "is the name of a Secret holding another username's credential")
+		default:
+			return nil, refuse(RefusalHeldLegacy, "has a Secret written before claims existed whose certificate wasn't issued to it")
+		}
+	}
+	return own, nil
+}
+
+// decideHeld decides from the username's existing session Secrets (one with
+// legacy naming; up to two, exact and legacy, with exact naming). A claim on
+// any decides: another identity's refuses, and this identity's admits. With
+// no claim, each was written before claims existed, and is adopted by the
+// first login of the strategy that wrote it, or, for an administrator-
+// provisioned identity, one whose strategy is unknown. The claim returned is
+// the one the write records, so this identity's claim on its legacy Secret is
+// carried over to its exact one.
+func (g *nameGuard) decideHeld(held []*corev1.Secret, strategy storage.Strategy, claim string, external bool, refuse func(Refusal, string, ...any) error) (string, error) {
+	claimed := false
+	for _, sec := range held {
+		if have := sec.GetAnnotations()[storage.ClaimAnnotation]; have != "" {
+			if have != claim {
+				return "", refuse(RefusalClaimed, "is claimed by another identity")
+			}
+			claimed = true
+		}
+	}
+	if claimed {
+		return claim, nil
+	}
+	for _, sec := range held {
+		// Written before claims existed: the strategy that wrote it adopts it.
+		wrote := storage.Strategy(sec.GetAnnotations()[storage.StrategyAnnotation])
+		switch {
+		case wrote == strategy:
+			g.log.Info().Str("strategy", string(strategy)).
+				Msg("username claimed by its first login since claims exist")
+		case !external && (wrote == "" || wrote == storage.StrategyUnknown):
+			g.log.Info().Str("strategy", string(strategy)).
+				Msg("username claimed by its provisioned identity")
+		default:
+			return "", refuse(RefusalHeldLegacy, "has a Secret written by %q, not by a %s login", wrote, strategy)
+		}
 	}
 	return claim, nil
 }
