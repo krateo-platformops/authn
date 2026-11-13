@@ -145,6 +145,35 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 65535
+        },
+        "networkPolicy": {
+          "type": "object",
+          "title": "Internal listener NetworkPolicy",
+          "additionalProperties": false,
+          "description": "A NetworkPolicy on authn's pods: the public port stays open, the internal port admits only `from`. Enforced only where the cluster's network enforces NetworkPolicies.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "from": {
+              "type": "array",
+              "minItems": 1,
+              "description": "NetworkPolicy ingress peers (namespaceSelector and/or podSelector) allowed to reach the internal port. Never empty: an empty `from` admits everyone.",
+              "items": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": false,
+                "properties": {
+                  "namespaceSelector": {
+                    "type": "object"
+                  },
+                  "podSelector": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },

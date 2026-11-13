@@ -68,6 +68,25 @@ service:
 # Service's routes forward every path to the public port, never to this one.
 internal:
   port: 8090
+  # A NetworkPolicy on authn's pods: the public port (service.port) stays open
+  # as it is without one, and the internal port admits only the callers below.
+  # On by default (Diego, 2026-11-12); it takes effect only where the cluster's
+  # network enforces NetworkPolicies (GKE Dataplane V2 does). TLS on the
+  # internal listener is a follow-up.
+  networkPolicy:
+    enabled: true
+    # The NetworkPolicy peers allowed to reach the internal port, as written
+    # in a NetworkPolicy's ingress `from` (namespaceSelector and/or
+    # podSelector). A podSelector alone selects pods in authn's own namespace.
+    # It must not be empty: an empty `from` would admit everyone, so the
+    # chart refuses to render one. The default is identity-lifecycle's
+    # controller in authn's namespace, which leaves its public intake pods
+    # (app.kubernetes.io/name: identity-lifecycle-intake) out.
+    from:
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: identity-lifecycle
+            app.kubernetes.io/instance: identity-lifecycle
 
 # Exact session-Secret names (authn#140). Off (the default), authn names a
 # user's session Secret as it always has: the username made DNS-1123 compatible

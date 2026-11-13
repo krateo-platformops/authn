@@ -14,13 +14,10 @@ import (
 
 // The chart renders exactUsernames.enabled into the ConfigMap as the variable
 // main reads (storage.EnvExactUsernames), "false" by default and "true" when
-// turned on (authn#140). It needs helm, and is skipped without it; lint.yaml
-// renders the chart's defaults in CI either way.
+// turned on (authn#140). It needs helm (helmForTest): skipped without it,
+// except in the chart-tests workflow, where a missing helm fails it.
 func TestChartRendersTheExactUsernamesFlag(t *testing.T) {
-	helm, err := exec.LookPath("helm")
-	if err != nil {
-		t.Skip("helm is not installed")
-	}
+	helm := helmForTest(t)
 	chart := copyChart(t, filepath.Join("..", "..", "helm", "authn"))
 	for _, tc := range []struct {
 		name string

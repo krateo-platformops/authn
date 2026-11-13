@@ -100,3 +100,42 @@ func TestCheckUsernameFailsClosed(t *testing.T) {
 func TestUnavailablesListsEveryReason(t *testing.T) {
 	assert.ElementsMatch(t, []Unavailable{"invalid", "reserved", "name_claimed", "name_held_legacy", "name_provisioned", "name_bound"}, Unavailables)
 }
+
+// With an expected claim, a claimed name says whose claim it is: the
+// expected identity's or another's. Without one, or for any other answer,
+// nothing is said about the claimant.
+func TestCheckUsernameForComparesTheClaim(t *testing.T) {
+	mine := storage.EncodeClaim(storage.StrategyOIDC, "https://kc/realms/krateo", "user-1")
+	theirs := storage.EncodeClaim(storage.StrategyOIDC, "https://kc/realms/krateo", "user-2")
+	claimed := secretWith(map[string]string{storage.ClaimAnnotation: theirs})
+	mineClaimed := secretWith(map[string]string{storage.ClaimAnnotation: mine})
+	legacy := secretWith(map[string]string{storage.StrategyAnnotation: "oidc"})
+	for _, tc := range []struct {
+		name     string
+		l        *stepLookup
+		expected string
+		why      Unavailable
+		by       ClaimedBy
+	}{
+		{"claimed by the expected identity", &stepLookup{secret: mineClaimed}, mine, UnavailableClaimed, ClaimedByYou},
+		{"claimed by another", &stepLookup{secret: claimed}, mine, UnavailableClaimed, ClaimedByAnother},
+		{"the same subject at another issuer is another", &stepLookup{secret: secretWith(map[string]string{
+			storage.ClaimAnnotation: storage.EncodeClaim(storage.StrategyOIDC, "https://other", "user-1")})}, mine, UnavailableClaimed, ClaimedByAnother},
+		{"the same issuer and subject by another strategy is another", &stepLookup{secret: secretWith(map[string]string{
+			storage.ClaimAnnotation: storage.EncodeClaim(storage.StrategyOAuth, "https://kc/realms/krateo", "user-1")})}, mine, UnavailableClaimed, ClaimedByAnother},
+		{"no expected claim: nothing about the claimant", &stepLookup{secret: claimed}, "", UnavailableClaimed, ""},
+		{"held without a claim: nothing to compare", &stepLookup{secret: legacy}, mine, UnavailableHeldLegacy, ""},
+		{"available", &stepLookup{}, mine, "", ""},
+		{"bound", &stepLookup{bound: true}, mine, UnavailableBound, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			why, by, err := CheckUsernameFor(context.Background(), tc.l, storage.Naming{}, "alice", tc.expected)
+			require.NoError(t, err)
+			assert.Equal(t, tc.why, why)
+			assert.Equal(t, tc.by, by)
+		})
+	}
+	why, err := CheckUsername(context.Background(), &stepLookup{secret: mineClaimed}, "alice")
+	require.NoError(t, err)
+	assert.Equal(t, UnavailableClaimed, why, "CheckUsername is CheckUsernameFor without a claimant")
+}

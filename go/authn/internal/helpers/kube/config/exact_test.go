@@ -236,3 +236,49 @@ func TestCheckUsernameWithExactNaming(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, UnavailableHeldLegacy, why)
 }
+
+// /usernames/check with exact naming and a claimant (authn#146 on #147): a
+// claimed name, under its exact name or its own legacy one, says whether the
+// claim is the expected identity's, and only for a claimed answer. The X/Y
+// pair is still held, never claimed, so it names no claimant.
+func TestCheckUsernameForWithExactNaming(t *testing.T) {
+	ctx := context.Background()
+	mine := storage.EncodeClaim(storage.StrategyOIDC, "https://kc/realms/krateo", "user-1")
+	theirs := storage.EncodeClaim(storage.StrategyOIDC, "https://kc/realms/krateo", "user-2")
+	for _, tc := range []struct {
+		name     string
+		username string
+		secrets  func(t *testing.T) map[string]*corev1.Secret
+		expected string
+		want     Unavailable
+		by       ClaimedBy
+	}{
+		{"exact Secret, the expected claim", userX, func(t *testing.T) map[string]*corev1.Secret {
+			return map[string]*corev1.Secret{exactX: ownedBy(t, exactX, userX, map[string]string{storage.ClaimAnnotation: mine})}
+		}, mine, UnavailableClaimed, ClaimedByYou},
+		{"exact Secret, another's claim", userX, func(t *testing.T) map[string]*corev1.Secret {
+			return map[string]*corev1.Secret{exactX: ownedBy(t, exactX, userX, map[string]string{storage.ClaimAnnotation: theirs})}
+		}, mine, UnavailableClaimed, ClaimedByAnother},
+		{"its own legacy Secret, the expected claim", userX, func(t *testing.T) map[string]*corev1.Secret {
+			return map[string]*corev1.Secret{sharedY: ownedBy(t, sharedY, userX, map[string]string{storage.ClaimAnnotation: mine})}
+		}, mine, UnavailableClaimed, ClaimedByYou},
+		{"exact Secret, no claimant: no ClaimedBy", userX, func(t *testing.T) map[string]*corev1.Secret {
+			return map[string]*corev1.Secret{exactX: ownedBy(t, exactX, userX, map[string]string{storage.ClaimAnnotation: mine})}
+		}, "", UnavailableClaimed, ""},
+		{"X/Y: johndoe's claimed Secret under john.doe's legacy name is held, not claimed", userX, func(t *testing.T) map[string]*corev1.Secret {
+			return map[string]*corev1.Secret{sharedY: ownedBy(t, sharedY, userY, map[string]string{storage.ClaimAnnotation: mine})}
+		}, mine, UnavailableHeldLegacy, ""},
+		{"available, with a claimant: no ClaimedBy", userX, nil, mine, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := namesLookup{}
+			if tc.secrets != nil {
+				l.secrets = tc.secrets(t)
+			}
+			why, by, err := CheckUsernameFor(ctx, &l, exact, tc.username, tc.expected)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, why)
+			assert.Equal(t, tc.by, by)
+		})
+	}
+}

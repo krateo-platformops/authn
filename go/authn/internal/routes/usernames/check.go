@@ -50,6 +50,40 @@ type Request struct {
 	// Username is the name to check. It must be present; an empty one is
 	// checked, and is invalid.
 	Username *string `json:"username"`
+	// Claimant, when set, is the identity the caller expects to hold the
+	// name: when the name is claimed, the answer says whether the claim is
+	// this identity's (ClaimedBy), without naming anyone (Diego,
+	// 2026-11-12). An access-request controller sends the identity it created.
+	Claimant *Claimant `json:"claimant,omitempty"`
+}
+
+// Claimant is an identity as authn's claim names it: the login strategy, its
+// issuer and the identity's stable id there. For a Keycloak user that is
+// strategy "oidc", the realm's issuer exactly as in its ID tokens, and the
+// user's id (the token's sub).
+type Claimant struct {
+	Strategy string `json:"strategy"`
+	Issuer   string `json:"issuer"`
+	Subject  string `json:"subject"`
+}
+
+// claimantStrategies are the strategies a claimant can name: those whose
+// logins record a claim.
+var claimantStrategies = map[storage.Strategy]bool{
+	storage.StrategyBasic: true, storage.StrategyLDAP: true, storage.StrategyOAuth: true,
+	storage.StrategyOIDC: true, storage.StrategyServiceAccount: true,
+}
+
+// claim is c's claim (storage.EncodeClaim), or the refusal of a claimant
+// that can't name an identity.
+func (c *Claimant) claim() (string, error) {
+	if c.Strategy == "" || c.Issuer == "" || c.Subject == "" {
+		return "", errors.New(`a "claimant" must carry "strategy", "issuer" and "subject"`)
+	}
+	if !claimantStrategies[storage.Strategy(c.Strategy)] {
+		return "", errors.New(`a "claimant"'s "strategy" must be one of basic, ldap, oauth, oidc, serviceaccount`)
+	}
+	return storage.EncodeClaim(storage.Strategy(c.Strategy), c.Issuer, c.Subject), nil
 }
 
 // Response is the 200 answer.
@@ -58,6 +92,10 @@ type Response struct {
 	// Reason is why the name is unavailable, one of kubeconfig.Unavailables;
 	// omitted when it is available.
 	Reason kubeconfig.Unavailable `json:"reason,omitempty"`
+	// ClaimedBy is whether the name's claim is the request's Claimant's: "you"
+	// or "another". Only when the request carried a claimant and the reason is
+	// name_claimed; omitted otherwise.
+	ClaimedBy kubeconfig.ClaimedBy `json:"claimedBy,omitempty"`
 }
 
 // Options configures the route.
@@ -129,7 +167,7 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
-		username, err := readUsername(req)
+		username, expected, err := readRequest(req)
 		if err != nil {
 			record("", audit.OutcomeDenied, "", auditlog.CheckInvalidRequest, 0)
 			fail(err, "username check request refused")
@@ -144,7 +182,7 @@ func (r *route) Handler() http.HandlerFunc {
 				return
 			}
 		}
-		why, err := kubeconfig.CheckUsernameWith(req.Context(), lookup, r.opts.Naming, username)
+		why, claimedBy, err := kubeconfig.CheckUsernameFor(req.Context(), lookup, r.opts.Naming, username, expected)
 		if err != nil {
 			// Fail closed: the caller can't know, so it treats the name as
 			// unavailable and retries.
@@ -154,14 +192,14 @@ func (r *route) Handler() http.HandlerFunc {
 			fail(checkFailed(kerr.Wrap("checking the username", err)), "username check failed")
 			return
 		}
-		record(username, audit.OutcomeSuccess, checkResult(why), auditlog.NoCheckDenial, 0)
+		record(username, audit.OutcomeSuccess, checkResult(why, claimedBy), auditlog.NoCheckDenial, 0)
 
 		// No identity in the log line, the caller's or the name's: the audit
 		// record carries both (Diego, 2026-11-12).
 		log.Info().Bool("available", why == "").Str("reason", string(why)).Msg("username checked")
 		wri.Header().Set("Content-Type", "application/json")
 		wri.Header().Set("Cache-Control", "no-store")
-		_ = json.NewEncoder(wri).Encode(Response{Available: why == "", Reason: why})
+		_ = json.NewEncoder(wri).Encode(Response{Available: why == "", Reason: why, ClaimedBy: claimedBy})
 	}
 }
 
@@ -184,10 +222,24 @@ var checkResults = map[kubeconfig.Unavailable]string{
 	kubeconfig.UnavailableBound:       audit.CheckResultNameBound,
 }
 
-// checkResult is why's check_result, "" for an answer audit doesn't declare
-// (which TestEveryAnswerHasACheckResult keeps from existing): a record then
-// carries none rather than one Check would refuse.
-func checkResult(why kubeconfig.Unavailable) string { return checkResults[why] }
+// claimedResults is a claimed name's check_result when the request named the
+// identity it expects (audit v0.14.0): whether the claim is that identity's.
+// A request with no claimant gets name_claimed, as before.
+var claimedResults = map[kubeconfig.ClaimedBy]string{
+	kubeconfig.ClaimedByYou:     audit.CheckResultNameClaimedByClaimant,
+	kubeconfig.ClaimedByAnother: audit.CheckResultNameClaimedByAnother,
+}
+
+// checkResult is the answer's check_result: why's, or, for a claimed name
+// compared with a claimant, whose claim it is. It is "" for an answer audit
+// doesn't declare (which TestEveryAnswerHasACheckResult keeps from existing):
+// a record then carries none rather than one Check would refuse.
+func checkResult(why kubeconfig.Unavailable, claimedBy kubeconfig.ClaimedBy) string {
+	if why == kubeconfig.UnavailableClaimed && claimedBy != "" {
+		return claimedResults[claimedBy]
+	}
+	return checkResults[why]
+}
 
 // answeredCode is the apiserver's status code when it answered the failed
 // lookup, 0 when nothing answered (a timeout, a refused connection): only an
@@ -205,19 +257,35 @@ func allowed(m *sav1alpha1.ServiceAccount) bool {
 	return m != nil && m.Spec.UsernameCheck != nil && m.Spec.UsernameCheck.Allowed
 }
 
-// readUsername reads the request's username: a JSON body with the field
-// present, possibly empty.
+// readUsername reads the request's username, for a record that names it;
+// see readRequest.
 func readUsername(req *http.Request) (string, error) {
+	username, _, err := readRequest(req)
+	return username, err
+}
+
+// readRequest reads the request's username and, when it carries a claimant,
+// that claimant's claim ("" for none): a JSON body with the username present,
+// possibly empty, and a claimant that names an identity.
+// present, possibly empty.
+func readRequest(req *http.Request) (string, string, error) {
 	body, err := io.ReadAll(io.LimitReader(req.Body, maxBody+1))
 	if err != nil || len(body) > maxBody {
-		return "", status.BadRequest(CauseInvalidRequestBody, errors.New("the body must be a JSON object of at most 4 KiB"))
+		return "", "", status.BadRequest(CauseInvalidRequestBody, errors.New("the body must be a JSON object of at most 4 KiB"))
 	}
 	var r Request
 	if err := json.Unmarshal(body, &r); err != nil {
-		return "", status.BadRequest(CauseInvalidRequestBody, fmt.Errorf("the body is not JSON: %w", err))
+		return "", "", status.BadRequest(CauseInvalidRequestBody, fmt.Errorf("the body is not JSON: %w", err))
 	}
 	if r.Username == nil {
-		return "", status.BadRequest(CauseMissingUsername, errors.New(`the body must carry "username"`))
+		return "", "", status.BadRequest(CauseMissingUsername, errors.New(`the body must carry "username"`))
 	}
-	return *r.Username, nil
+	if r.Claimant == nil {
+		return *r.Username, "", nil
+	}
+	expected, err := r.Claimant.claim()
+	if err != nil {
+		return *r.Username, "", status.BadRequest(CauseInvalidRequestBody, err)
+	}
+	return *r.Username, expected, nil
 }

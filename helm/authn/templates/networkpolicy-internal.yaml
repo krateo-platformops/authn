@@ -1,0 +1,30 @@
+{{- if .Values.internal.networkPolicy.enabled }}
+{{- if not .Values.internal.networkPolicy.from }}
+{{- fail "internal.networkPolicy.from must list at least one peer: an empty `from` would admit everyone to the internal port" }}
+{{- end }}
+# authn's pods admit anyone on the public port, as without a policy, and only
+# the configured callers on the internal one (POST /usernames/check). Selecting
+# the pods for Ingress isolates every port the rules don't list, so both are
+# listed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "authn.fullname" . }}-internal
+  labels:
+    {{- include "authn.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "authn.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: http
+          protocol: TCP
+    - ports:
+        - port: internal
+          protocol: TCP
+      from:
+        {{- toYaml .Values.internal.networkPolicy.from | nindent 8 }}
+{{- end }}
