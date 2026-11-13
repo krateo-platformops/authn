@@ -66,6 +66,52 @@ type Delegation struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=8
 	MaxDepth *int32 `json:"maxDepth,omitempty"`
+
+	// SubjectTokens lists the identity providers whose access tokens this
+	// service may exchange for a person's authn token (authn#155): an IDE
+	// signs the person in to Keycloak, and this service trades the
+	// person's access token for one authn token. authn verifies the access
+	// token's signature against the provider's JWKS, and the person must
+	// already hold the username's claim from a portal sign-in. Omitted: the
+	// service exchanges only authn tokens, as before.
+	// +optional
+	// +listType=map
+	// +listMapKey=oidcConfig
+	// +kubebuilder:validation:MaxItems=8
+	SubjectTokens []SubjectTokenSource `json:"subjectTokens,omitempty"`
+
+	// Audiences lists what this service may ask the issued token to be for,
+	// with RFC 8693's audience parameter: the token's "aud". An audience not
+	// listed is refused (invalid_target). Omitted: the service may ask for
+	// none, and its tokens carry no aud, as before.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:XValidation:rule="self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$') && size(self) <= 253 || self.matches('^https://[^/?#@ ]+(/[^?# ]*)?$')",message="an audience is a DNS-1123 subdomain or an absolute https URI with no userinfo, query or fragment"
+	// +kubebuilder:validation:items:MaxLength=2048
+	Audiences []string `json:"audiences,omitempty"`
+}
+
+// SubjectTokenSource is an identity provider whose access tokens a service
+// may exchange, and the audiences those tokens must carry.
+type SubjectTokenSource struct {
+	// OIDCConfig names the OIDCConfig, in authn's namespace, whose issuer
+	// signs the access tokens (its discovery document gives the JWKS): the
+	// same configuration the portal signs people in with, so the person's
+	// claim matches.
+	// +kubebuilder:validation:MinLength=1
+	OIDCConfig string `json:"oidcConfig"`
+
+	// Audiences lists what the access token's "aud" must contain at least
+	// one of: the resource it was issued for, such as the MCP endpoint
+	// https://<host>/mcp (RFC 8707). Required: an access token for another
+	// resource is never exchanged.
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=8
+	// +listType=set
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=2048
+	Audiences []string `json:"audiences"`
 }
 
 // +kubebuilder:object:root=true
