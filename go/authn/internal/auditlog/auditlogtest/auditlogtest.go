@@ -11,6 +11,7 @@ import (
 	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/embedded"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -56,6 +57,42 @@ func String(r sdklog.Record, key string) string {
 func Created(username string) storage.Written {
 	return storage.Written{Namespace: "krateo-system", Name: storage.ClientConfigSecretName(username),
 		UID: "uid-" + username, ResourceVersion: "1", Verb: "create", StatusCode: 201}
+}
+
+// WriteFailed is the write a fake generator reports when username's session
+// Secret's create was sent and the apiserver answered code: the verb and the
+// answer, nothing stored.
+func WriteFailed(username string, code int) storage.Written {
+	return storage.Written{Namespace: "krateo-system", Name: storage.ClientConfigSecretName(username),
+		Verb: "create", StatusCode: code}
+}
+
+// OnlyWriteFailed returns the single record, after checking that it conforms
+// for the request writer (Only) and records a failed issuance as WriteFailed
+// reports it: action, outcome failure, username's Secret, the create sent and
+// the apiserver's code, and no stored uid.
+func OnlyWriteFailed(t testing.TB, rec *audittest.Recorder, action, username string, code int) sdklog.Record {
+	t.Helper()
+	r := Only(t, rec)
+	assert.Equal(t, action, String(r, "krateo.action"))
+	assert.Equal(t, audit.OutcomeFailure, String(r, "krateo.audit.outcome"))
+	assert.Equal(t, storage.ClientConfigSecretName(username), String(r, "krateo.audit.object_ref.name"))
+	assert.Equal(t, "create", String(r, audit.KeyVerb))
+	assert.Empty(t, String(r, audit.KeyObjectUID), "nothing was stored")
+	got, ok := Int(r, "http.response.status_code")
+	assert.True(t, ok, "the apiserver's answer is recorded")
+	assert.Equal(t, int64(code), got)
+	return r
+}
+
+// Int returns the record's integer attribute key, and whether it is present.
+func Int(r sdklog.Record, key string) (int64, bool) {
+	for _, kv := range audittest.Attributes(r) {
+		if string(kv.Key) == key {
+			return kv.Value.AsInt64(), true
+		}
+	}
+	return 0, false
 }
 
 // NewController returns a Controller acting as serviceAccount, whose records

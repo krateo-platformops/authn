@@ -34,6 +34,8 @@ type fakeGenerator struct {
 	owners     []*metav1.OwnerReference
 	subjects   []userinfo.Subject
 	err        error
+	// written is the write Generate reports with err.
+	written storage.Written
 }
 
 func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
@@ -42,7 +44,7 @@ func (g *fakeGenerator) Generate(strategy storage.Strategy, user userinfo.Info, 
 	g.calls = append(g.calls, user.GetUserName())
 	g.subjects = append(g.subjects, user.GetSubject())
 	if g.err != nil {
-		return kubeconfig.Issued{}, g.err
+		return kubeconfig.Issued{Secret: g.written}, g.err
 	}
 	return kubeconfig.Issued{Kubeconfig: []byte(`{"kind":"Config","users":[{"name":"x","user":{"client-key-data":"LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0t"}}]}`), NotAfter: time.Now().Add(time.Hour), Secret: auditlogtest.Created(user.GetUserName())}, nil
 }
