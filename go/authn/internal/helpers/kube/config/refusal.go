@@ -49,6 +49,10 @@ const (
 	// RefusalStaleAuthentication: the step-up's ID token has no auth_time, or
 	// an authentication older than spec.stepUp.maxAge.
 	RefusalStaleAuthentication Refusal = "stale_authentication"
+	// RefusalNotSignedIn: a token exchange's subject verified, but their
+	// username has no credential Secret, so no claim says the name is theirs
+	// (authn#155): the person must sign in to the portal first.
+	RefusalNotSignedIn Refusal = "subject_not_signed_in"
 )
 
 // refusedError carries a Refusal beside the status error the caller answers
@@ -68,7 +72,7 @@ func refused(reason Refusal, err error) error { return refusedError{reason: reas
 // denial reason) to prove its map complete.
 var Refusals = []Refusal{RefusalNameMissing, RefusalReserved, RefusalNotIssued, RefusalClaimed, RefusalHeldLegacy, RefusalProvisioned,
 	RefusalBound, RefusalSystemGroup, RefusalGroupNotAllowed, RefusalPlatformGroup,
-	RefusalStepUpNotEnabled, RefusalInsufficientAssurance, RefusalStaleAuthentication}
+	RefusalStepUpNotEnabled, RefusalInsufficientAssurance, RefusalStaleAuthentication, RefusalNotSignedIn}
 
 // Refused marks err, the status error a caller answers with, as a refusal of a
 // verified identity for reason (see Admit).

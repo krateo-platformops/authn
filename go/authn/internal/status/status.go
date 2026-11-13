@@ -145,6 +145,12 @@ const (
 	// asserted a `krateo:` group. Those carry platform rights and come only
 	// from identities an administrator provisions.
 	CausePlatformGroupNotAllowed CauseType = "PlatformGroupNotAllowed"
+	// CauseSubjectNotSignedIn: a token exchange's subject verified, but
+	// their username has no credential Secret yet (authn#155): the person
+	// must sign in to the portal once, which gives the username its claim,
+	// then retry. Unlike UsernameUnavailable it says what to do, and names
+	// no one else.
+	CauseSubjectNotSignedIn CauseType = "SubjectNotSignedIn"
 )
 
 // Causes of a 400 shared by the logins that take a config name and an
