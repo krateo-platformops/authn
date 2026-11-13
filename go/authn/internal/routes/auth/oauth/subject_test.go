@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
@@ -128,4 +129,16 @@ func TestAnUnresolvedRESTActionIsRESTActionFailed(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"reason":"RESTActionFailed"`)
 	assert.NotContains(t, rec.Body.String(), "RESTActionIdentityInvalid")
 	assert.Zero(t, gen.calls, "nothing is issued")
+}
+
+// A verified identity whose Secret write fails is one failure record,
+// conformant, naming the Secret, the create sent and the apiserver's answer
+// (AUDIT-4).
+func TestLoginIssuanceFailureIsRecorded(t *testing.T) {
+	gen := &fakeGenerator{err: errors.New("creating the session Secret: InternalError (500)"),
+		written: auditlogtest.WriteFailed("alice", http.StatusInternalServerError)}
+	rec, _ := oauthLoginWith(t, `{"status":{"subject":"1001","name":"Alice","preferredUsername":"alice","groups":["devs"]}}`, true, gen)
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	require.Equal(t, 1, gen.calls)
+	auditlogtest.OnlyWriteFailed(t, gen.records, "authn.login.oauth", "alice", http.StatusInternalServerError)
 }

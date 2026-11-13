@@ -39,8 +39,9 @@ func TestHandlerSignsTheMappingsPrincipal(t *testing.T) {
 
 			key, err := rsa.GenerateKey(rand.Reader, 2048)
 			require.NoError(t, err)
+			gen := &fakeGenerator{}
 			route := Login(&rest.Config{Host: srv.URL}, LoginOptions{
-				KubeconfigGenerator: &fakeGenerator{},
+				KubeconfigGenerator: gen,
 				JwtDuration:         time.Hour,
 				JwtPrivateKey:       key,
 				JwtKeyID:            "test-key",
@@ -59,6 +60,9 @@ func TestHandlerSignsTheMappingsPrincipal(t *testing.T) {
 			nfo, err := jwtutil.Validate(&key.PublicKey, out.AccessToken)
 			require.NoError(t, err)
 			assert.Equal(t, want, nfo.Principal)
+			// The same kind labels the stored Secret (authn#144, with exact
+			// names on): the route hands it to the generator.
+			assert.Equal(t, []string{string(want)}, gen.principals)
 		})
 	}
 }

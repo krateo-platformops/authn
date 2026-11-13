@@ -46,3 +46,6 @@ experiments/**
 **/token.txt
 **/*.crt
 **/*.key
+
+# The service binary `go build` writes in go/authn
+/go/authn/authn

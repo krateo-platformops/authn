@@ -24,7 +24,8 @@ goes through `envFrom`
 1. the chart-managed ConfigMap
    ([`configmap.yaml`](../helm/authn/templates/configmap.yaml)) — `AUTHN_PORT` (from
    `service.port`), `AUTHN_NAMESPACE` + `POD_NAMESPACE` (the release namespace),
-   plus everything under `.Values.env`;
+   `AUTHN_EXACT_USERNAMES` (from `exactUsernames.enabled`), plus everything under
+   `.Values.env`;
 2. the JWT signing-key Secret — `jwt.signKeySecretName` (default `authn-jwt-signing-key`, key
    `jwt.signKeySecretKey` / `private.pem`), mounted as a **file** (not injected as an
    env value) and read via `JWT_SIGN_KEY_FILE`; the pod does not start without it. See
@@ -44,6 +45,7 @@ changes. Every flag of the binary has an env fallback (`go/authn/main.go:49-80`)
 | `internal.port` | `8090` | The internal listener (`POST /usernames/check`), served by the ClusterIP Service `<release>-internal`; feeds `AUTHN_INTERNAL_PORT`. Never route it publicly. |
 | `internal.networkPolicy.enabled` | `true` | A NetworkPolicy on authn's pods: the public port (`http`) stays open, the internal port admits only `internal.networkPolicy.from`. Enforced only where the cluster's network enforces NetworkPolicies. |
 | `internal.networkPolicy.from` | identity-lifecycle's controller pods (`app.kubernetes.io/name` and `app.kubernetes.io/instance`: `identity-lifecycle`) in authn's namespace | NetworkPolicy ingress peers (`namespaceSelector` and/or `podSelector`) allowed to reach the internal port. Never empty: the chart refuses an empty list, which would admit everyone. |
+| `exactUsernames.enabled` | `false` | Exact session-Secret names ([#140](https://github.com/krateo-platformops/authn/issues/140)) and the identity keys ([#144](https://github.com/krateo-platformops/authn/issues/144)); feeds `AUTHN_EXACT_USERNAMES` (`"true"`/`"false"`). On, a session Secret is `<username>-clientconfig` exactly (an identity source's name that can't be is refused, `name_not_issued`), is read exact-then-legacy with an ownership check, and every Secret authn writes carries `authn.krateo.io/username` and the labels `authn.krateo.io/principal` and `authn.krateo.io/username-label`, which a startup backfill stamps where absent. **Turn it on for a cluster only once** snowplow's exact-then-legacy reader (snowplow#1382) is rolled out there **and** the Kyverno tenant handover is done (`tenant-namespace-on-login` deleted, acmp's tenant-policy design §3.2 step 3). installer sets it per cluster. With it on, authn refuses to start unless `AUTHN_USERNAME` is already lowercase `[-a-z0-9]` of at most 63 characters (the default `authn` is). Don't also set `env.AUTHN_EXACT_USERNAMES`: the chart fails to render, naming the value to set. Adding this chart version renders the new ConfigMap key even with the flag off, which changes `checksum/configmap` and rolls the pod once. See [behavior](./behavior.md#exact-session-secret-names-exactusernames). |
 | `replicaCount` | `1` | With `autoscaling.enabled: false` (default). |
 | `livenessProbe` / `readinessProbe` | `GET /health` | `/health` flips 200 once the listener goroutine starts, 503 on shutdown — process lifecycle only ([gotchas](./gotchas.md)). |
 | `ingress` | `enabled: false` | Standard chart ingress if you need it. |

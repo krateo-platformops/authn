@@ -77,7 +77,7 @@ func (r *Recorder) UsernameCheck(req *http.Request, caller *sav1alpha1.ServiceAc
 	// The check is a read whatever the name: unlike a nameless login, which
 	// can't know whether it would have created or updated, its verb is known.
 	ev.Verb, ev.HTTPMethod = "get", methodOf("get")
-	ev.ObjectName = checkedSecret(username)
+	ev.ObjectName = r.checkedSecret(username)
 	if c, ok := audit.ParseClaim(string(principal)); ok {
 		ev.ActorClass = c
 	}
@@ -109,6 +109,20 @@ func (r *Recorder) UsernameCheck(req *http.Request, caller *sav1alpha1.ServiceAc
 // is the derivation's own transform, so the two can't drift (snowplow,
 // 2026-11-12). A reserved but well-formed name, such as admin, is named, so its
 // checks join its sign-in refusals.
+//
+// With exact naming (authn#140) the Secret is the name's exact one, and a name
+// with none (endpoints.ExactSecretName) names the resource without a name.
+func (r *Recorder) checkedSecret(username string) string {
+	if r.naming.Exact {
+		if username == "" || !r.naming.Issuable(username) {
+			return ""
+		}
+		return r.naming.SessionName(username)
+	}
+	return checkedSecret(username)
+}
+
+// checkedSecret is the legacy naming's checked Secret, as above.
 func checkedSecret(username string) string {
 	if username == "" || kubeutil.MakeDNS1123Compatible(username) != username {
 		return ""

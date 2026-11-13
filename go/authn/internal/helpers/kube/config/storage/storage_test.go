@@ -5,6 +5,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"os"
 	"testing"
 	"time"
@@ -15,6 +16,10 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 
 	"github.com/krateo-platformops/plumbing/e2e"
+	"github.com/krateo-platformops/plumbing/endpoints"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/envfuncs"
@@ -119,6 +124,93 @@ func TestStorage(t *testing.T) {
 				t.Fatalf("strategy annotation %q, want %q", s, StrategyBasic)
 			}
 
+			return ctx
+		}).
+		Assess("Exact Store (authn#140, authn#144)", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			rc := cfg.Client().RESTConfig()
+			get := func(name string) *corev1.Secret {
+				t.Helper()
+				sec, err := secrets.Get(ctx, rc, &core.SecretKeySelector{Name: name, Namespace: namespace})
+				if err != nil {
+					t.Fatalf("reading %s: %v", name, err)
+				}
+				return sec
+			}
+			legacyOf := func(name, cn, claim string) *corev1.Secret {
+				t.Helper()
+				sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace,
+					Annotations: map[string]string{StrategyAnnotation: "oidc", ClaimAnnotation: claim}},
+					StringData: map[string]string{ClientCertLabel: identityCert(t, cn, []string{"devs"})}}
+				if _, err := secrets.Create(ctx, rc, sec); err != nil {
+					t.Fatalf("creating %s: %v", name, err)
+				}
+				return get(name)
+			}
+			store := NewStore(rc, Naming{Exact: true})
+			nfo := func(cn, claim string) *AuthInfo {
+				return &AuthInfo{Strategy: StrategyOIDC, Claim: claim, CertData: identityCert(t, cn, []string{"devs"}),
+					KeyData: "k", CAData: "ca", Server: "s"}
+			}
+
+			// X/Y: johndoe's Secret exists; john.doe writes its own exact one,
+			// twice (create, then update), and johndoe's is untouched.
+			y := legacyOf("johndoe-clientconfig", "johndoe", `["oidc","kc","y"]`)
+			for _, verb := range []string{"create", "update"} {
+				w, err := store.Put("john.doe", nfo("john.doe", `["oidc","kc","x"]`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if w.Name != "john.doe-clientconfig" || w.Verb != verb || w.UID == "" {
+					t.Fatalf("Put reported %+v, want john.doe-clientconfig, %s, with a uid", w, verb)
+				}
+			}
+			x := get("john.doe-clientconfig")
+			if x.Annotations[UsernameAnnotation] != "john.doe" || x.Labels[PrincipalLabel] != "human" ||
+				x.Labels[UsernameLabelLabel] != "john-doe--30f69670bba2" {
+				t.Fatalf("identity keys: annotations %v, labels %v", x.Annotations, x.Labels)
+			}
+			if got := get("johndoe-clientconfig"); got.ResourceVersion != y.ResourceVersion {
+				t.Fatalf("johndoe's Secret was written: resourceVersion %s -> %s", y.ResourceVersion, got.ResourceVersion)
+			}
+
+			// jane.roe's legacy Secret (janeroe-clientconfig, CN jane.roe):
+			// janeroe's exact name. janeroe is refused, and it is untouched.
+			jane := legacyOf("janeroe-clientconfig", "jane.roe", `["oidc","kc","jane"]`)
+			if _, err := store.Put("janeroe", nfo("janeroe", `["oidc","kc","jane"]`)); !errors.Is(err, ErrClaimedByAnother) {
+				t.Fatalf("Put over another username's Secret: %v, want ErrClaimedByAnother", err)
+			}
+			if got := get("janeroe-clientconfig"); got.ResourceVersion != jane.ResourceVersion {
+				t.Fatal("jane.roe's legacy Secret was written")
+			}
+
+			// A reader, against the apiserver: exact first, then legacy, the
+			// first Secret the username owns. jane.roe has no exact Secret, so
+			// its legacy one is found; janeroe owns neither name.
+			read := func(username string) string {
+				for _, name := range (Naming{Exact: true}).SessionNames(username) {
+					sec, err := secrets.Get(ctx, rc, &core.SecretKeySelector{Name: name, Namespace: namespace})
+					if apierrors.IsNotFound(err) {
+						continue
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					if endpoints.OwnsSecret(sec, username) {
+						return sec.Name
+					}
+				}
+				return ""
+			}
+			for username, want := range map[string]string{
+				"john.doe": "john.doe-clientconfig",
+				"johndoe":  "johndoe-clientconfig",
+				"jane.roe": "janeroe-clientconfig",
+				"janeroe":  "",
+			} {
+				if got := read(username); got != want {
+					t.Errorf("reader for %s found %q, want %q", username, got, want)
+				}
+			}
 			return ctx
 		}).Feature()
 

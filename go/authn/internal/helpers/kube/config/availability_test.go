@@ -129,7 +129,7 @@ func TestCheckUsernameForComparesTheClaim(t *testing.T) {
 		{"bound", &stepLookup{bound: true}, mine, UnavailableBound, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			why, by, err := CheckUsernameFor(context.Background(), tc.l, "alice", tc.expected)
+			why, by, err := CheckUsernameFor(context.Background(), tc.l, storage.Naming{}, "alice", tc.expected)
 			require.NoError(t, err)
 			assert.Equal(t, tc.why, why)
 			assert.Equal(t, tc.by, by)

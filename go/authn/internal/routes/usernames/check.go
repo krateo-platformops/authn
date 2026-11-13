@@ -104,6 +104,9 @@ type Options struct {
 	Audience string
 	// Lookup answers the name guard's questions; nil uses the cluster's.
 	Lookup kubeconfig.NameLookup
+	// Naming is how session Secrets are named (storage.Naming), as the
+	// sign-in's name guard reads them; the zero value is the legacy naming.
+	Naming storage.Naming
 	// Audit records every decision about a caller the TokenReview verified
 	// (AUDIT-4, authn.username.check). Nil records nothing.
 	Audit *auditlog.Recorder
@@ -179,7 +182,7 @@ func (r *route) Handler() http.HandlerFunc {
 				return
 			}
 		}
-		why, claimedBy, err := kubeconfig.CheckUsernameFor(req.Context(), lookup, username, expected)
+		why, claimedBy, err := kubeconfig.CheckUsernameFor(req.Context(), lookup, r.opts.Naming, username, expected)
 		if err != nil {
 			// Fail closed: the caller can't know, so it treats the name as
 			// unavailable and retries.

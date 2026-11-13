@@ -88,6 +88,35 @@ internal:
             app.kubernetes.io/name: identity-lifecycle
             app.kubernetes.io/instance: identity-lifecycle
 
+# Exact session-Secret names (authn#140). Off (the default), authn names a
+# user's session Secret as it always has: the username made DNS-1123 compatible
+# plus "-clientconfig", so john.doe and johndoe share johndoe-clientconfig.
+# On:
+#   - a session Secret is <username>-clientconfig exactly, and a step-up one
+#     <username>-clientconfig-stepup (plumbing endpoints.ExactSecretName);
+#     an LDAP, OAuth or OIDC name that can't be (not a DNS-1123 subdomain, or
+#     longer than 233) is refused, 403 UsernameUnavailable (name_not_issued);
+#   - every Secret authn writes carries the annotation authn.krateo.io/username
+#     and the labels authn.krateo.io/principal and authn.krateo.io/username-label
+#     (authn#144), which the tenant policy selects and names tenants by; a startup backfill
+#     stamps them on existing Secrets, never overwriting a value;
+#   - a Secret is read exact name first, then legacy, and used only when it is
+#     the username's own. A user's legacy Secret is never deleted or changed by
+#     sign-in: their next sign-in writes the exact one, with the same claim.
+# Turn it on for a cluster only once BOTH hold there:
+#   1. snowplow's exact-then-legacy reader (snowplow#1382) is rolled out, so it
+#      finds the exact Secrets authn starts writing;
+#   2. the Kyverno tenant handover is done (acmp tenant-policy design, §3.2,
+#      step 3: tenant-namespace-on-login deleted), since the backfill's updates
+#      would fire the legacy policy.
+# With it on, authn refuses to start unless AUTHN_USERNAME is lowercase
+# [-a-z0-9] of at most 63 characters (the default "authn" is). Set this value,
+# never env.AUTHN_EXACT_USERNAMES: the chart refuses both. The new ConfigMap key
+# renders even with it off, so upgrading rolls the pod once (checksum/configmap).
+# installer sets it per cluster. See docs/configuration.md and docs/behavior.md.
+exactUsernames:
+  enabled: false
+
 ingress:
   enabled: false
   className: ""

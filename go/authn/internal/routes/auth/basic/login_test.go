@@ -28,13 +28,19 @@ import (
 type fakeGenerator struct {
 	calls int
 	err   error
-	info  userinfo.Info // the identity of the last Generate
+	// written is the write Generate reports with err, when set; otherwise, as
+	// for a refusal, the Secret it would have written.
+	written storage.Written
+	info    userinfo.Info // the identity of the last Generate
 }
 
 func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls++
 	g.info = nfo
 	if g.err != nil {
+		if g.written != (storage.Written{}) {
+			return kubeconfig.Issued{Secret: g.written}, g.err
+		}
 		// As Generate reports a refusal: the Secret it would have written.
 		return kubeconfig.Issued{Secret: storage.Written{Namespace: "krateo-system",
 			Name: storage.ClientConfigSecretName(nfo.GetUserName()), Verb: "update"}}, g.err
@@ -305,4 +311,26 @@ func TestLoginAnswersTheNameGuardsRefusal(t *testing.T) {
 	r := auditlogtest.Only(t, records)
 	assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Equal(t, "admin-clientconfig", auditlogtest.String(r, "krateo.audit.object_ref.name"))
+}
+
+// A verified user whose Secret write fails is one failure record, conformant,
+// naming the Secret, the create sent and the apiserver's answer (AUDIT-4).
+func TestLoginIssuanceFailureIsRecorded(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "krateo-system")
+	srv := fakeAPIServer(t, reply{code: 200, body: userAdmin}, reply{code: 200, body: secretWith("password", "s3cret")})
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	gen := &fakeGenerator{err: errors.New("creating the session Secret: InternalError (500)"),
+		written: auditlogtest.WriteFailed("admin", http.StatusInternalServerError)}
+	audit, records := auditlogtest.New(t)
+	route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k"})
+
+	req := httptest.NewRequest(http.MethodGet, Path, nil)
+	req.SetBasicAuth("admin", "s3cret")
+	rec := httptest.NewRecorder()
+	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "accessToken")
+	auditlogtest.OnlyWriteFailed(t, records, "authn.login.basic", "admin", http.StatusInternalServerError)
 }

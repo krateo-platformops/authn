@@ -7,12 +7,15 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,8 +26,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	certv1 "k8s.io/api/certificates/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 )
 
@@ -162,6 +169,212 @@ func TestSyncAnnotationsRecordsOnlyAuthorizationChanges(t *testing.T) {
 				want = "failure" // authn#127, N17: a refused write is never a success
 			}
 			assert.Equal(t, want, auditlogtest.String(rec, "krateo.audit.outcome"))
+		})
+	}
+}
+
+// fakeSigner is an apiserver that does what a renewal needs, end to end: it
+// stores the CSR plumbing's signup creates, signs it with a test CA once it is
+// approved, serves the certificate, accepts the cleanup delete, and stores the
+// clientconfig Secret. secretExists makes the Secret's create answer 409, so
+// signup updates it instead.
+type fakeSigner struct {
+	t            *testing.T
+	ca           *x509.Certificate
+	caKey        *rsa.PrivateKey
+	secretExists bool
+
+	mu  sync.Mutex
+	csr *certv1.CertificateSigningRequest
+}
+
+func newFakeSigner(t *testing.T, secretExists bool) *fakeSigner {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-ca"},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	ca, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return &fakeSigner{t: t, ca: ca, caKey: key, secretExists: secretExists}
+}
+
+// sign issues the certificate the CSR asks for: its subject and key, for 30m.
+// It runs on the server's goroutine, so it returns an error rather than
+// failing the test itself.
+func (f *fakeSigner) sign(req []byte) ([]byte, error) {
+	block, _ := pem.Decode(req)
+	if block == nil {
+		return nil, fmt.Errorf("spec.request is not a PEM CSR")
+	}
+	cr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: big.NewInt(2), Subject: cr.Subject,
+		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(30 * time.Minute),
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, f.ca, cr.PublicKey, f.caKey)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
+}
+
+// status is an apiserver Status body.
+func status(code int32, reason metav1.StatusReason) metav1.Status {
+	st := metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Status: metav1.StatusFailure, Reason: reason, Code: code}
+	if code < 300 {
+		st.Status = metav1.StatusSuccess
+	}
+	return st
+}
+
+func (f *fakeSigner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	const csrs = "/apis/certificates.k8s.io/v1/certificatesigningrequests"
+	const secrets = "/api/v1/namespaces/krateo-system/secrets"
+	w.Header().Set("Content-Type", "application/json")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	writeJSON := func(code int, v any) {
+		w.WriteHeader(code)
+		_ = json.NewEncoder(w).Encode(v)
+	}
+	// fail reports a fake's own error. It runs on the server's goroutine, so
+	// it marks the test failed (Errorf) and answers 500, never FailNow.
+	fail := func(err error) {
+		f.t.Errorf("fake apiserver: %s %s: %v", r.Method, r.URL.Path, err)
+		writeJSON(http.StatusInternalServerError, status(http.StatusInternalServerError, metav1.StatusReasonInternalError))
+	}
+	// decode reads a request body as client-go sent it: protobuf for the typed
+	// clientset (the CSR), JSON for plumbing's REST client (the Secret).
+	decode := func(into runtime.Object) bool {
+		body, err := io.ReadAll(r.Body)
+		if err == nil {
+			_, _, err = scheme.Codecs.UniversalDeserializer().Decode(body, nil, into)
+		}
+		if err != nil {
+			fail(err)
+			return false
+		}
+		return true
+	}
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == csrs:
+		var csr certv1.CertificateSigningRequest
+		if !decode(&csr) {
+			return
+		}
+		csr.UID = "uid-csr"
+		f.csr = &csr
+		writeJSON(http.StatusCreated, f.csr)
+	case r.Method == http.MethodPut && r.URL.Path == csrs+"/authn/approval":
+		if f.csr == nil {
+			fail(fmt.Errorf("approval before create"))
+			return
+		}
+		crt, err := f.sign(f.csr.Spec.Request)
+		if err != nil {
+			fail(err)
+			return
+		}
+		f.csr.Status.Conditions = append(f.csr.Status.Conditions, certv1.CertificateSigningRequestCondition{
+			Type: certv1.CertificateApproved, Status: corev1.ConditionTrue})
+		f.csr.Status.Certificate = crt
+		writeJSON(http.StatusOK, f.csr)
+	case r.Method == http.MethodGet && r.URL.Path == csrs+"/authn":
+		if f.csr == nil {
+			writeJSON(http.StatusNotFound, status(http.StatusNotFound, metav1.StatusReasonNotFound))
+			return
+		}
+		writeJSON(http.StatusOK, f.csr)
+	case r.Method == http.MethodDelete && r.URL.Path == csrs+"/authn":
+		f.csr = nil
+		writeJSON(http.StatusOK, status(http.StatusOK, ""))
+	case r.Method == http.MethodPost && r.URL.Path == secrets:
+		if f.secretExists {
+			writeJSON(http.StatusConflict, status(http.StatusConflict, metav1.StatusReasonAlreadyExists))
+			return
+		}
+		var sec corev1.Secret
+		if !decode(&sec) {
+			return
+		}
+		sec.UID, sec.ResourceVersion = "uid-sec", "1"
+		writeJSON(http.StatusCreated, sec)
+	case r.Method == http.MethodPut && r.URL.Path == secrets+"/authn-clientconfig":
+		var sec corev1.Secret
+		if !decode(&sec) {
+			return
+		}
+		sec.UID, sec.ResourceVersion = "uid-sec", "2"
+		writeJSON(http.StatusOK, sec)
+	case r.Method == http.MethodGet && r.URL.Path == secrets+"/authn-clientconfig":
+		// annotate's read-back, after the issue record is written.
+		writeJSON(http.StatusOK, corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "authn-clientconfig",
+			Namespace: "krateo-system", UID: "uid-sec", ResourceVersion: "2"}})
+	default:
+		f.t.Errorf("unexpected call: %s %s", r.Method, r.URL.Path)
+		http.NotFound(w, r)
+	}
+}
+
+// A renewal that succeeds is one success record for authn's clientconfig
+// Secret, conformant for the controller writer, carrying the verb plumbing's
+// signup sent and the apiserver's answer to it, and the stored uid. Driven
+// through the renewer and plumbing's real signup against an apiserver that
+// signs the CSR, so dropping the call, or recording a write signup didn't
+// make, fails here. Both writes signup can send: a create, and the update
+// after a create answered 409.
+func TestARenewalThatStoresTheCertificateIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		secretExists bool
+		verb         string
+		code         int64
+		rv           string
+	}{
+		{"no Secret yet: created", false, "create", http.StatusCreated, "1"},
+		{"Secret exists: updated", true, "update", http.StatusOK, "2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(newFakeSigner(t, tc.secretExists))
+			t.Cleanup(srv.Close)
+
+			ctl, records := auditlogtest.NewController(t, "system:serviceaccount:krateo-system:authn")
+			r, err := New(Options{RestConfig: &rest.Config{Host: srv.URL}, Namespace: "krateo-system",
+				CAData: "Y2E=", ServerURL: "https://k8s.example", Username: "authn", Groups: []string{"authn"},
+				Log: zerolog.Nop(), Audit: ctl})
+			require.NoError(t, err)
+			_, err = r.issue(context.Background(), "test")
+			require.NoError(t, err, "the signed CSR stores the certificate")
+
+			var issued []sdklog.Record
+			for _, rec := range records.Records() {
+				if auditlogtest.String(rec, "krateo.action") == "authn.servicecert.issued" {
+					issued = append(issued, rec)
+				}
+			}
+			require.Len(t, issued, 1, "one record for the issue")
+			rec := issued[0]
+			audittest.AssertConformant(t, audit.WriterController, rec)
+			audittest.AssertRequiredKeysDetected(t, audit.WriterController, rec)
+			assert.Equal(t, "success", auditlogtest.String(rec, "krateo.audit.outcome"))
+			assert.Equal(t, "authn-clientconfig", auditlogtest.String(rec, "krateo.audit.object_ref.name"))
+			assert.Equal(t, "uid-sec", auditlogtest.String(rec, audit.KeyObjectUID))
+			assert.Equal(t, tc.rv, auditlogtest.String(rec, audit.KeyObjectResourceVersion))
+			assert.Equal(t, tc.verb, auditlogtest.String(rec, audit.KeyVerb))
+			code := int64(0)
+			for _, kv := range audittest.Attributes(rec) {
+				if string(kv.Key) == "http.response.status_code" {
+					code = kv.Value.AsInt64()
+				}
+			}
+			assert.Equal(t, tc.code, code, "the apiserver's answer to the Secret's %s", tc.verb)
 		})
 	}
 }
