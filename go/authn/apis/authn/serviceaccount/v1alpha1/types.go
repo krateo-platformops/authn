@@ -87,7 +87,7 @@ type Delegation struct {
 	// +optional
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=16
-	// +kubebuilder:validation:items:XValidation:rule="self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$') && size(self) <= 253 || self.matches('^https://[^/?#@]+(/[^?#]*)?$') && self.matches('^[!-~]+$')",message="an audience is a DNS-1123 subdomain or an absolute https URI, all printable ASCII, with no userinfo, query or fragment"
+	// +kubebuilder:validation:items:XValidation:rule="self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$') && size(self) <= 253 || size(self) <= 2048 && self.matches('^https://[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(/[A-Za-z0-9._~-]+)*/?$') && !self.matches('/\\\\.\\\\.?(/|$)') && self.substring(8).split('/')[0].split(':')[0].size() <= 253",message="an audience is audit's token_audience: a DNS-1123 subdomain, or an https URI with a DNS-1123 host, an optional port and a path of unreserved characters"
 	// +kubebuilder:validation:items:MaxLength=2048
 	Audiences []string `json:"audiences,omitempty"`
 }

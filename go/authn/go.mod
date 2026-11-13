@@ -23,7 +23,7 @@ require (
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
-	github.com/krateo-platformops/audit v0.14.0
+	github.com/krateo-platformops/audit v0.15.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.23.0

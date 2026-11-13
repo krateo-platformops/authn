@@ -8,10 +8,12 @@ package crdvalidation
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/plumbing/e2e"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -83,33 +85,42 @@ func TestServiceAccountDelegationValidation(t *testing.T) {
 			dyn, err := dynamic.NewForConfig(cfg.Client().RESTConfig())
 			require.NoError(t, err)
 			client := dyn.Resource(mappings).Namespace(namespace)
-			for i, tc := range []struct {
-				audience string
-				ok       bool
-			}{
-				{"agentiko", true},
-				{"agents.krateo.io", true},
-				{"https://cmp.krateo.dev/mcp", true},
-				{"https://cmp.krateo.dev", true},
-				{"Agentiko", false},
-				{"agent_iko", false},
-				{"-agentiko", false},
-				{"http://cmp.krateo.dev/mcp", false},
-				{"https://user@cmp.krateo.dev/mcp", false},
-				{"https://cmp.krateo.dev/mcp?x=1", false},
-				{"https://cmp.krateo.dev/mcp#frag", false},
-				{"https://", false},
-				{"https://cmp.krateo.dev/m\tcp", false},     // a control character: audit's format refuses it
-				{"https://cmp.krateo.dev/mcp\u00e9", false}, // non-ASCII: audit's format refuses it
-				{strings.Repeat("a", 254), false},
-			} {
-				obj := mapping("aud-"+string(rune('a'+i)), map[string]any{"allowed": true, "audiences": strs(tc.audience)})
+			label63 := strings.Repeat("a", 63)
+			// The CRD must accept exactly what audit records (audit's
+			// ValidTokenAudience), so each case's expectation is audit's own
+			// answer; anchors pin a few, so a validator change can't make the
+			// test vacuous.
+			anchors := map[string]bool{"agentiko": true, "https://cmp.krateo.dev/mcp": true,
+				"Agentiko": false, "https://cmp.krateo.dev/%41": false, "https://user@cmp.krateo.dev": false}
+			cases := []string{
+				"agentiko", "agents.krateo.io", "a.b-c.d", "Agentiko", "agent_iko", "-agentiko", "agentiko-",
+				strings.Repeat("a", 253), strings.Repeat("a", 254),
+				"https://cmp.krateo.dev", "https://cmp.krateo.dev/", "https://cmp.krateo.dev/mcp", "https://cmp.krateo.dev/mcp/",
+				"https://cmp.krateo.dev/a.b/c_d/~e-f", "https://cmp.krateo.dev:443/mcp", "https://cmp.krateo.dev:65535",
+				"https://cmp.krateo.dev:65536", "https://cmp.krateo.dev:0", "https://cmp.krateo.dev:0443", "https://cmp.krateo.dev:",
+				"https://CMP.krateo.dev/mcp", "https://cmp.krateo.dev//mcp", "https://cmp.krateo.dev/./mcp", "https://cmp.krateo.dev/mcp/..",
+				"https://cmp.krateo.dev/.hidden", "https://cmp.krateo.dev/%41", "https://cmp.krateo.dev/a;b", "https://user@cmp.krateo.dev",
+				"https://cmp.krateo.dev/mcp?x=1", "https://cmp.krateo.dev/mcp#frag", "http://cmp.krateo.dev/mcp", "https://",
+				"https://cmp.krateo.dev/m\tcp", "https://cmp.krateo.dev/mcp\u00e9", "https://[::1]/mcp", "https://1.2.3.4/mcp",
+				"https://" + label63 + ".dev", "https://" + label63 + "a.dev",
+				"https://" + strings.Repeat(label63+".", 4) + "dev",
+				"https://cmp.krateo.dev/" + strings.Repeat("a", 2048-len("https://cmp.krateo.dev/")),
+				"https://cmp.krateo.dev/" + strings.Repeat("a", 2049-len("https://cmp.krateo.dev/")),
+			}
+			for v, want := range anchors {
+				require.Equal(t, want, audit.ValidTokenAudience(v), "anchor %q", v)
+			}
+			for i, v := range cases {
+				want := audit.ValidTokenAudience(v)
+				obj := mapping(fmt.Sprintf("aud-%d", i), map[string]any{"allowed": true, "audiences": strs(v)})
 				_, err := client.Create(ctx, obj, metav1.CreateOptions{})
-				if tc.ok {
-					require.NoError(t, err, "%q must be accepted", tc.audience)
-				} else {
-					require.Error(t, err, "%q must be refused", tc.audience)
-					require.Contains(t, err.Error(), "DNS-1123 subdomain or an absolute https URI", "%q: refused by the format rule", tc.audience)
+				if want {
+					require.NoError(t, err, "%q: audit records it, so the CRD must accept it", v)
+					continue
+				}
+				require.Error(t, err, "%q: audit refuses it, so the CRD must too", v)
+				if len(v) <= 2048 {
+					require.Contains(t, err.Error(), "token_audience", "%q: refused by the format rule", v)
 				}
 			}
 			return ctx
