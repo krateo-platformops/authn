@@ -246,7 +246,7 @@ const stepUpGold = `{"acrValues":["gold"],"ttl":"20m"}`
 // the granted krateo:loa:2. It never touches the session credential, and the
 // token is bounded by the step-up certificate. Its audit record, as the route
 // writes it, conforms: a success naming the step-up Secret it stored, with the
-// apiserver's status.
+// status the generator reported for that write (the apiserver's, in production).
 func TestStepUpGrantsAShortLivedCredential(t *testing.T) {
 	rc := stepUpEnv(t, stepUpGold, map[string]any{"acr": "gold", "auth_time": float64(time.Now().Add(-time.Minute).Unix())})
 	gen := &stepUpGenerator{notAfter: time.Now().Add(12 * time.Minute)} // the signer granted less than asked
@@ -287,7 +287,7 @@ func TestStepUpGrantsAShortLivedCredential(t *testing.T) {
 			code = kv.Value.AsInt64()
 		}
 	}
-	assert.Equal(t, int64(201), code, "the apiserver's answer to the step-up Secret's create")
+	assert.Equal(t, int64(201), code, "the status the generator reported for the step-up Secret's create, passed through")
 }
 
 func TestStepUpRefusals(t *testing.T) {
