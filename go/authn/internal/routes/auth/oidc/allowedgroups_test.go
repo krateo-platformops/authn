@@ -5,11 +5,13 @@ import (
 	"errors"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
+	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
 	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/stretchr/testify/assert"
@@ -43,8 +45,16 @@ func TestCheckAllowedGroups(t *testing.T) {
 
 func loginRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptest.ResponseRecorder {
 	t.Helper()
-	audit, records := auditlogtest.New(t)
+	rec, records := loginRequestWith(t, rc, gen)
 	gen.records = records
+	return rec
+}
+
+// loginRequestWith runs one OIDC login through gen and returns what the
+// route's audit Recorder wrote.
+func loginRequestWith(t *testing.T, rc *rest.Config, gen kubeconfig.Generator) (*httptest.ResponseRecorder, *audittest.Recorder) {
+	t.Helper()
+	audit, records := auditlogtest.New(t)
 	route := Login(t.Context(), rc, LoginOptions{KubeconfigGenerator: gen, Audit: audit, JwtDuration: time.Hour, JwtPrivateKey: failureKey(t), JwtKeyID: "k"})
 
 	req := httptest.NewRequest(http.MethodGet, Path+"?name=kc", nil)
@@ -52,7 +62,7 @@ func loginRequest(t *testing.T, rc *rest.Config, gen *stepUpGenerator) *httptest
 	req.Header.Set("X-Code-Verifier", testCodeVerifier)
 	rec := httptest.NewRecorder()
 	auditlog.Middleware(route.Handler()).ServeHTTP(rec, req)
-	return rec
+	return rec, records
 }
 
 func causeOf(t *testing.T, rec *httptest.ResponseRecorder) string {
@@ -117,4 +127,15 @@ func TestLoginHonoursAllowedGroups(t *testing.T) {
 		assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
 		assert.Equal(t, "alice-clientconfig-stepup", auditlogtest.String(r, "krateo.audit.object_ref.name"))
 	})
+}
+
+// A verified identity whose Secret write fails is one failure record,
+// conformant, naming the Secret, the create sent and the apiserver's answer
+// (AUDIT-4).
+func TestLoginIssuanceFailureIsRecorded(t *testing.T) {
+	gen := &failingGenerator{stepUpGenerator: stepUpGenerator{notAfter: time.Now().Add(time.Hour)},
+		err: errIssuanceFails, written: auditlogtest.WriteFailed("alice", http.StatusInternalServerError)}
+	rec, records := loginRequestWith(t, oidcEnv(t, "", nil), gen)
+	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+	auditlogtest.OnlyWriteFailed(t, records, "authn.login.oidc", "alice", http.StatusInternalServerError)
 }

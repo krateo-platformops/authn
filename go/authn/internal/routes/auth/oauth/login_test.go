@@ -31,13 +31,15 @@ type fakeGenerator struct {
 	calls   int
 	info    userinfo.Info // the identity of the last Generate
 	err     error         // what Generate answers, when set
+	// written is the write Generate reports with err.
+	written storage.Written
 }
 
 func (g *fakeGenerator) Generate(_ storage.Strategy, nfo userinfo.Info, _ ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
 	g.calls++
 	g.info = nfo
 	if g.err != nil {
-		return kubeconfig.Issued{}, g.err
+		return kubeconfig.Issued{Secret: g.written}, g.err
 	}
 	return kubeconfig.Issued{Kubeconfig: []byte(`{}`), NotAfter: time.Now().Add(time.Hour), Secret: auditlogtest.Created(nfo.GetUserName())}, nil
 }

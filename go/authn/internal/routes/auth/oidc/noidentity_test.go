@@ -40,6 +40,8 @@ func sentinelClaims(extra map[string]any) map[string]any {
 type failingGenerator struct {
 	stepUpGenerator
 	err error
+	// written is the write Generate reports with err.
+	written storage.Written
 }
 
 func (g *failingGenerator) Generate(s storage.Strategy, u userinfo.Info, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
@@ -49,7 +51,7 @@ func (g *failingGenerator) Generate(s storage.Strategy, u userinfo.Info, opts ..
 	if err := kubeconfig.NewIssueOptions(opts...).CheckAdmit(u); err != nil {
 		return kubeconfig.Issued{}, err
 	}
-	return kubeconfig.Issued{}, g.err
+	return kubeconfig.Issued{Secret: g.written}, g.err
 }
 
 func (g *failingGenerator) GenerateStepUp(s storage.Strategy, u userinfo.Info, ttl time.Duration, opts ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
