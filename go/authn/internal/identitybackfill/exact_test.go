@@ -137,6 +137,31 @@ func TestRunWithExactNaming(t *testing.T) {
 	assert.ElementsMatch(t, []string{"annotation:" + storage.UsernameAnnotation, "label:" + storage.PrincipalLabel}, kept)
 }
 
+// Flag off, the backfill compares no identity key: a Secret holding a
+// username annotation and labels that differ from its certificate is left as
+// it is, logged nowhere and recorded nowhere as inconsistent. The only record
+// is the ordinary backfill of what it always stamps.
+func TestRunWithLegacyNamingRecordsNoKeptKey(t *testing.T) {
+	ann := map[string]string{storage.UsernameAnnotation: "not-carol"}
+	sec := withLabels(clientConfig(t, "carol-clientconfig", cert(t, "carol", nil), ann),
+		map[string]string{storage.PrincipalLabel: "service", storage.UsernameLabelLabel: "not-carol"})
+	api := newFakeAPIServer(t, []corev1.Secret{sec})
+	ctl, records := auditlogtest.NewController(t, "system:serviceaccount:"+ns+":authn")
+	logs, l := logtest.Capture()
+	res, err := Run(context.Background(), Options{
+		RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns}, SelfUsername: "authn",
+		Lookup: principalLookup{basic: map[string]bool{"carol": true}}, Log: l, Audit: ctl,
+	})
+	require.NoError(t, err)
+	assert.Zero(t, res.Inconsistent)
+	assert.NotContains(t, logs.String(), "identity key differs from the certificate")
+	for _, r := range records.Records() {
+		assert.NotEqual(t, "authn.identity.inconsistent", auditlogtest.String(r, "krateo.action"), "no key is compared with the flag off")
+	}
+	assert.Equal(t, "not-carol", api.updates["carol-clientconfig"][storage.UsernameAnnotation], "left as it is")
+	assert.Equal(t, "not-carol", api.labels["carol-clientconfig"][storage.UsernameLabelLabel], "left as it is")
+}
+
 // Flag off, the backfill stamps what it always has: no username annotation,
 // no labels.
 func TestRunWithLegacyNamingStampsNoIdentityKeys(t *testing.T) {
