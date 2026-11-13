@@ -156,7 +156,8 @@ func TestAsPrincipalReachesTheStore(t *testing.T) {
 // A refusal's record names the Secret the issuance would have written: the
 // exact one with exact naming, and none for a name that can't be exact (its
 // legacy name may be another user's: audit's name_not_issued rule). With
-// legacy naming it is main's.
+// legacy naming it is the derived Secret only when that is the username's own
+// (authn#138): john.doe's and Alice.Smith's are rewrites, so neither is named.
 func TestExactRefusalNamesTheExactSecretOrNone(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
 	for _, tc := range []struct {
@@ -168,8 +169,9 @@ func TestExactRefusalNamesTheExactSecretOrNone(t *testing.T) {
 		{exact, storage.StrategyOIDC, userX, exactX},
 		{exact, storage.StrategyOIDC, "Alice.Smith", ""},
 		{exact, storage.StrategyBasic, "Alice.Smith", ""},
-		{storage.Naming{}, storage.StrategyOIDC, userX, sharedY},
-		{storage.Naming{}, storage.StrategyBasic, "Alice.Smith", "alicesmith-clientconfig"},
+		{storage.Naming{}, storage.StrategyOIDC, userX, ""},
+		{storage.Naming{}, storage.StrategyBasic, "Alice.Smith", ""},
+		{storage.Naming{}, storage.StrategyBasic, "alice", "alice-clientconfig"},
 	} {
 		gen := &kubeconfigGenerator{lookup: &namesLookup{}, log: zerolog.Nop(), naming: tc.naming}
 		// A system: group is refused before the guard, whatever the strategy.

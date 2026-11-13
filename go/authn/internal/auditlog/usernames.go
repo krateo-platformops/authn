@@ -8,7 +8,6 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/plumbing/jwtutil"
-	"github.com/krateo-platformops/plumbing/kubeutil"
 )
 
 // ActionUsernameCheck is POST /usernames/check's krateo.action: whether a
@@ -122,9 +121,10 @@ func (r *Recorder) checkedSecret(username string) string {
 	return checkedSecret(username)
 }
 
-// checkedSecret is the legacy naming's checked Secret, as above.
+// checkedSecret is the legacy naming's checked Secret, as above
+// (storage.OwnsDerivedName).
 func checkedSecret(username string) string {
-	if username == "" || kubeutil.MakeDNS1123Compatible(username) != username {
+	if !storage.OwnsDerivedName(username) {
 		return ""
 	}
 	return storage.ClientConfigSecretName(username)

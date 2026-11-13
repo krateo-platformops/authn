@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"github.com/krateo-platformops/authn/internal/status"
+	"strings"
 	"testing"
 	"time"
 
@@ -107,5 +108,47 @@ func TestGroupRefusalsComeBeforeAdmissionChecks(t *testing.T) {
 				assert.Equal(t, id.want, RefusalOf(err))
 			})
 		}
+	}
+}
+
+// A refused issuance's record names the Secret it would have written only
+// when that name is the username's own (authn#138, legacy naming): the
+// derivation lowercases, strips what an object name can't hold and truncates,
+// so Alice@Example and alice:example would land on aliceexample-clientconfig,
+// which can be a real user's Secret. Those, a dotted name, and a name the
+// truncation cuts name the Secret resource without a name or a verb, as
+// name_missing does; a well-formed name is named, a reserved one included.
+func TestARefusalNamesOnlyTheUsernamesOwnSecret(t *testing.T) {
+	t.Setenv(util.NamespaceEnvVar, "krateo-system")
+	refuse := Admit(func(userinfo.Info) error {
+		return Refused(RefusalClaimed, status.Refused(status.CauseUsernameUnavailable, errors.New("claimed")))
+	})
+	long := strings.Repeat("a", 70) // past MakeDNS1123Compatible's 63
+	for _, tc := range []struct {
+		username string
+		named    bool
+	}{
+		{"Alice@Example", false},
+		{"alice:example", false},
+		{"john.doe", false},
+		{long, false},
+		{"alice", true},
+		{"admin", true}, // reserved, but well-formed: its refusals stay findable by its Secret
+	} {
+		t.Run(tc.username, func(t *testing.T) {
+			gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"}, Lookup(&fakeLookup{})).(*kubeconfigGenerator)
+			user := &userinfo.DefaultUser{Name: tc.username, ID: "1", Groups: []string{"devs"}}
+			issued, err := gen.Generate(storage.StrategyLDAP, user, refuse)
+			require.Error(t, err)
+			require.Equal(t, RefusalClaimed, RefusalOf(err))
+			if !tc.named {
+				assert.Equal(t, storage.Written{Namespace: "krateo-system"}, issued.Secret,
+					"the Secret resource only: no name, no verb")
+				assert.Empty(t, gen.secretFor(user, true), "nor a step-up Secret")
+				return
+			}
+			assert.Equal(t, storage.Written{Namespace: "krateo-system", Name: tc.username + "-clientconfig", Verb: "create"}, issued.Secret)
+			assert.Equal(t, tc.username+"-clientconfig-stepup", gen.secretFor(user, true))
+		})
 	}
 }

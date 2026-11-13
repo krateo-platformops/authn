@@ -279,7 +279,7 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 
 	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o, claim, log)
 	if err != nil {
-		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
 	}
 
 	c := KubeConfig{
@@ -338,7 +338,7 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	// A step-up credential has no owner: it expires, and the sweep deletes it.
 	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, IssueOptions{Principal: o.Principal}, claim, log)
 	if err != nil {
-		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
 	}
 	return Issued{NotAfter: notAfter, Secret: written}, nil
 }
@@ -390,15 +390,24 @@ func secretFor(user userinfo.Info, name func(string) string) string {
 	return name(user.GetUserName())
 }
 
-// secretFor is the Secret an issuance for user writes, as g's naming names it
-// (storage.Naming): the step-up one when stepUp. With legacy naming it is
-// secretFor's. With exact naming it is "" for a username its Secrets can't be
-// named after exactly: its legacy name is a rewrite, which may be another
-// username's Secret, so a refused or failed issuance's record names the Secret
-// resource without a name (audit's name_not_issued rule). An issuance that
-// stores one under its legacy name still reports the Secret it wrote.
+// secretFor is the Secret a refused or failed issuance's record names, as g's
+// naming names it (storage.Naming): the step-up one when stepUp. It names a
+// Secret only when that name is the username's own; otherwise the record
+// names the Secret resource without a name, as name_missing does, so a query
+// for another user's Secret never shows refusals of names that were never
+// theirs:
+//   - legacy naming: "" unless the derivation leaves the username unchanged
+//     (storage.OwnsDerivedName, authn#138);
+//   - exact naming: "" for a username its Secrets can't be named after exactly
+//     (audit's name_not_issued rule).
+//
+// It names only the would-be Secret of a record: an issuance that stores one
+// reports the Secret it actually wrote.
 func (g *kubeconfigGenerator) secretFor(user userinfo.Info, stepUp bool) string {
 	if !g.naming.Exact {
+		if !storage.OwnsDerivedName(user.GetUserName()) {
+			return ""
+		}
 		if stepUp {
 			return secretFor(user, storage.StepUpSecretName)
 		}
@@ -413,8 +422,18 @@ func (g *kubeconfigGenerator) secretFor(user userinfo.Info, stepUp bool) string 
 	return secretFor(user, g.naming.SessionName)
 }
 
-// orWouldWrite is written when Put sent a request, else wouldWrite(name).
-func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string) storage.Written {
+// orWouldWrite is what a failed or refused issuance's record names: written
+// when Put sent a request, else wouldWrite(name). A refusal at the write
+// (another identity's claim, or an unclaimed Secret holding another name's
+// certificate) is a refusal like the guard's: when name is "", the username's
+// Secret name isn't its own (secretFor), so the record names the Secret
+// resource without a name or a verb, even though Put read the Secret under the
+// rewritten name, which may be another user's (authn#138). A failure keeps
+// naming the Secret Put actually wrote to.
+func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string, err error) storage.Written {
+	if name == "" && RefusalOf(err) != "" {
+		return g.wouldWrite("")
+	}
 	if written.Verb != "" {
 		return written
 	}

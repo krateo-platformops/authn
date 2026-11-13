@@ -704,9 +704,16 @@ or a log line.
     token doesn't prove (not enabled, too low an `acr`, a stale or missing `auth_time`).
     The target is the
     Secret it would have written, with the verb it would have sent, and no status code,
-    since authn refused before asking the apiserver. An identity with no username has no
-    Secret name, so its record names the Secret resource in authn's namespace, without a
-    name or a verb. `krateo.audit.denial_reason` says why, from a
+    since authn refused before asking the apiserver. The Secret is named only when that
+    name is the username's own: with legacy naming, when deriving it leaves the username
+    unchanged (`storage.OwnsDerivedName`, the same rule as `/usernames/check`; #138), so
+    `Alice@Example`, `alice:example` or `john.doe` never name `aliceexample-clientconfig`
+    or `johndoe-clientconfig`, which may be another user's; with exact naming, when the
+    name can be exact. Otherwise, and for an identity with no username, the record names
+    the Secret resource in authn's namespace, without a name or a verb, including a refusal
+    at the write itself (another identity's claim, or an unclaimed Secret holding another
+    name's certificate), though authn read the Secret there. A success, and a failure after
+    a request was sent, name the Secret actually written to. `krateo.audit.denial_reason` says why, from a
     closed set: `name_missing`, `name_reserved`, `name_not_issued` (exact names only, with
     no Secret named), `name_claimed`, `name_held_legacy`,
     `name_provisioned`, `name_bound`, `system_group`, `platform_group`,

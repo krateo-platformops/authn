@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-13 — a refusal names only the username's own Secret
+
+A sign-in refused after verification wrote a `denied` record naming the Secret it would have
+written, derived by a rewrite (lowercase, `[-a-z0-9]` only, at most 63). So a refused
+`Alice@Example` or `alice:example` named `aliceexample-clientconfig`, which may be a real
+user's Secret, and an `object_ref` query for that user showed refusals of names that were
+never theirs. A refusal (login or step-up) now names the derived Secret only when the rewrite
+leaves the username unchanged (`storage.OwnsDerivedName`, the derivation's own transform, also
+used by `/usernames/check`); otherwise it names the Secret resource without a name, as
+`name_missing` does. Well-formed names, reserved ones included, are named as before; a
+success names the Secret it wrote. Snowplow's rule as audit schema lead ([#138](https://github.com/krateo-platformops/authn/issues/138)).
+
 ## 2026-11-12 — /usernames/check says whose claim, and the internal port is fenced
 
 identity-lifecycle marked an access request onboarded when `/usernames/check` answered
