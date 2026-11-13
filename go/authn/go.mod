@@ -8,7 +8,7 @@ require (
 	github.com/golang/gddo v0.0.0-20210115222349-20d68f94ee1f
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/krateo-platformops/plumbing v1.61.0
+	github.com/krateo-platformops/plumbing v1.69.0
 	github.com/rs/zerolog v1.32.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/oauth2 v0.36.0
@@ -24,7 +24,7 @@ require (
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/krateo-platformops/audit v0.15.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.23.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.47.0

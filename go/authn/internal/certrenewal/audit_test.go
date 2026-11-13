@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -57,10 +58,11 @@ func TestARenewalThatFailsBeforeTheWriteIsRecorded(t *testing.T) {
 				case r.URL.Path == "/apis/certificates.k8s.io/v1/certificatesigningrequests":
 					w.WriteHeader(http.StatusForbidden)
 					_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403}`)
-				case r.Method == http.MethodGet && r.URL.Path == "/apis/certificates.k8s.io/v1/certificatesigningrequests/authn":
+				case r.Method == http.MethodGet && signupCSR.MatchString(r.URL.Path):
 					// After a failed create, signup (plumbing) reads the CSR to
 					// clean up one the apiserver stored anyway; a refused create stored
-					// nothing.
+					// nothing. Signup names its CSR <username>-<10 hex> (plumbing
+					// v1.66.0, plumbing#137).
 					w.WriteHeader(http.StatusNotFound)
 					_, _ = io.WriteString(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}`)
 				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/namespaces/krateo-system/secrets/authn-clientconfig":
@@ -186,6 +188,9 @@ type fakeSigner struct {
 
 	mu  sync.Mutex
 	csr *certv1.CertificateSigningRequest
+	// name is the name of the CSR signup created: its own, <username>-<10
+	// hex> (plumbing v1.66.0), which every later request addresses.
+	name string
 }
 
 func newFakeSigner(t *testing.T, secretExists bool) *fakeSigner {
@@ -269,9 +274,9 @@ func (f *fakeSigner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		csr.UID = "uid-csr"
-		f.csr = &csr
+		f.csr, f.name = &csr, csr.Name
 		writeJSON(http.StatusCreated, f.csr)
-	case r.Method == http.MethodPut && r.URL.Path == csrs+"/authn/approval":
+	case r.Method == http.MethodPut && f.name != "" && r.URL.Path == csrs+"/"+f.name+"/approval":
 		if f.csr == nil {
 			fail(fmt.Errorf("approval before create"))
 			return
@@ -285,13 +290,13 @@ func (f *fakeSigner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Type: certv1.CertificateApproved, Status: corev1.ConditionTrue})
 		f.csr.Status.Certificate = crt
 		writeJSON(http.StatusOK, f.csr)
-	case r.Method == http.MethodGet && r.URL.Path == csrs+"/authn":
+	case r.Method == http.MethodGet && f.name != "" && r.URL.Path == csrs+"/"+f.name:
 		if f.csr == nil {
 			writeJSON(http.StatusNotFound, status(http.StatusNotFound, metav1.StatusReasonNotFound))
 			return
 		}
 		writeJSON(http.StatusOK, f.csr)
-	case r.Method == http.MethodDelete && r.URL.Path == csrs+"/authn":
+	case r.Method == http.MethodDelete && f.name != "" && r.URL.Path == csrs+"/"+f.name:
 		f.csr = nil
 		writeJSON(http.StatusOK, status(http.StatusOK, ""))
 	case r.Method == http.MethodPost && r.URL.Path == secrets:
@@ -378,3 +383,7 @@ func TestARenewalThatStoresTheCertificateIsRecorded(t *testing.T) {
 		})
 	}
 }
+
+// signupCSR is the path of a CSR plumbing's signup creates for authn: named
+// <username>-<10 hex>, its own (plumbing v1.66.0, plumbing#137).
+var signupCSR = regexp.MustCompile(`^/apis/certificates\.k8s\.io/v1/certificatesigningrequests/authn-[0-9a-f]{10}$`)
