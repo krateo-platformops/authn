@@ -37,9 +37,22 @@ type DiscoveryEndpointResponse struct {
 	Authorization_endpoint string `json:"authorization_endpoint"`
 	Token_endpoint         string `json:"token_endpoint"`
 	Userinfo_endpoint      string `json:"userinfo_endpoint"`
+	// JWKSURI is where the provider publishes the keys its tokens are
+	// signed with (OpenID Connect Discovery 1.0 §3, jwks_uri).
+	JWKSURI string `json:"jwks_uri"`
 }
 
 func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
+	res, err := getOIDCConfig(rc, name)
+	if err != nil {
+		return nil, err
+	}
+	return res, resolveOIDCConfig(ctx, res)
+}
+
+// getOIDCConfig reads the OIDCConfig name in the operator namespace, as
+// stored.
+func getOIDCConfig(rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
@@ -61,8 +74,59 @@ func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1al
 	if err != nil {
 		return nil, err
 	}
+	return res, nil
+}
 
-	return res, resolveOIDCConfig(ctx, res)
+// ErrNoJWKS reports an OIDCConfig whose provider's signing keys can't be
+// found: it has no discoveryURL, or its discovery document has no jwks_uri.
+// An access token can't be verified without them (authn#155).
+var ErrNoJWKS = errors.New("the identity provider's signing keys are unknown")
+
+// OIDCTokenKeys is what verifying an access token an OIDCConfig's provider
+// issued takes (authn#155): the issuer the token must carry, where the
+// provider's signing keys are published, and the config's allowedGroups.
+type OIDCTokenKeys struct {
+	Issuer        string
+	JWKSURI       string
+	AllowedGroups []string
+}
+
+// OIDCConfigTokenKeys reads the OIDCConfig name and its provider's discovery
+// document for OIDCTokenKeys.
+func OIDCConfigTokenKeys(ctx context.Context, rc *rest.Config, name string) (OIDCTokenKeys, error) {
+	cfg, err := getOIDCConfig(rc, name)
+	if err != nil {
+		return OIDCTokenKeys{}, err
+	}
+	return tokenKeys(ctx, cfg)
+}
+
+// tokenKeys is cfg's OIDCTokenKeys. The issuer follows the login's rule
+// (resolveOIDCConfig): spec.issuer when set, which must then equal the
+// discovered issuer, else the discovered one. The keys come only from
+// discovery, which every access token's verification needs.
+func tokenKeys(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) (OIDCTokenKeys, error) {
+	if cfg.Spec.DiscoveryURL == "" {
+		return OIDCTokenKeys{}, fmt.Errorf("%w: the OIDCConfig has no discoveryURL", ErrNoJWKS)
+	}
+	doc, err := fetchDiscovery(ctx, cfg.Spec.DiscoveryURL)
+	if err != nil {
+		return OIDCTokenKeys{}, err
+	}
+	issuer := cfg.Spec.Issuer
+	switch {
+	case issuer == "":
+		issuer = doc.Issuer
+	case doc.Issuer != "" && doc.Issuer != issuer:
+		return OIDCTokenKeys{}, fmt.Errorf("%w: spec.issuer %q, discovery %q", ErrIssuerConflict, issuer, doc.Issuer)
+	}
+	if issuer == "" {
+		return OIDCTokenKeys{}, fmt.Errorf("%w: neither spec.issuer nor discovery names the issuer", ErrDiscoveryFailed)
+	}
+	if doc.JWKSURI == "" {
+		return OIDCTokenKeys{}, fmt.Errorf("%w: the discovery document has no jwks_uri", ErrNoJWKS)
+	}
+	return OIDCTokenKeys{Issuer: issuer, JWKSURI: doc.JWKSURI, AllowedGroups: cfg.Spec.AllowedGroups}, nil
 }
 
 // resolveOIDCConfig completes cfg for a login: the endpoints, and the issuer

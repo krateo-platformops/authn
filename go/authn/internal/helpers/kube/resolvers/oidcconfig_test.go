@@ -115,3 +115,41 @@ func TestAuthCodeURLScope(t *testing.T) {
 		assert.Equal(t, want, u.Query().Get("scope"), "additionalScopes %q", additional)
 	}
 }
+
+// What verifying an access token takes (authn#155): the issuer by the
+// login's rule, the discovered jwks_uri, and the config's allowedGroups. No
+// discoveryURL, or no jwks_uri, means the keys are unknown; a spec.issuer
+// the discovery contradicts is a conflict.
+func TestTokenKeys(t *testing.T) {
+	serve := func(t *testing.T, doc map[string]string) string {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(doc)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	full := map[string]string{"issuer": discoveredIssuer, "jwks_uri": "https://idp.example/certs"}
+	cfg := func(discoveryURL, issuer string) *oidcv1alpha1.OIDCConfig {
+		c := &oidcv1alpha1.OIDCConfig{}
+		c.Spec.DiscoveryURL, c.Spec.Issuer, c.Spec.AllowedGroups = discoveryURL, issuer, []string{"tenants"}
+		return c
+	}
+
+	got, err := tokenKeys(context.Background(), cfg(serve(t, full), ""))
+	require.NoError(t, err)
+	assert.Equal(t, OIDCTokenKeys{Issuer: discoveredIssuer, JWKSURI: "https://idp.example/certs", AllowedGroups: []string{"tenants"}}, got)
+
+	got, err = tokenKeys(context.Background(), cfg(serve(t, full), discoveredIssuer))
+	require.NoError(t, err, "a matching spec.issuer")
+	assert.Equal(t, discoveredIssuer, got.Issuer)
+
+	_, err = tokenKeys(context.Background(), cfg(serve(t, full), "https://other.example"))
+	assert.ErrorIs(t, err, ErrIssuerConflict)
+
+	_, err = tokenKeys(context.Background(), cfg("", discoveredIssuer))
+	assert.ErrorIs(t, err, ErrNoJWKS, "no discoveryURL")
+
+	_, err = tokenKeys(context.Background(), cfg(serve(t, map[string]string{"issuer": discoveredIssuer}), ""))
+	assert.ErrorIs(t, err, ErrNoJWKS, "no jwks_uri")
+}
