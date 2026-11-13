@@ -208,12 +208,21 @@ func TestEveryAnswerHasACheckResult(t *testing.T) {
 	answers := append([]kubeconfig.Unavailable{""}, kubeconfig.Unavailables...)
 	seen := map[string]bool{}
 	for _, why := range answers {
-		got := checkResult(why)
+		got := checkResult(why, "")
 		assert.NotEmpty(t, got, "answer %q", why)
 		assert.False(t, seen[got], "answers %q share a check_result", why)
 		seen[got] = true
 	}
 	assert.Len(t, checkResults, len(answers), "checkResults maps an answer CheckUsername never gives")
+	// A claimed name compared with a claimant: one result per ClaimedBy, each
+	// distinct from every other answer's.
+	for _, by := range []kubeconfig.ClaimedBy{kubeconfig.ClaimedByYou, kubeconfig.ClaimedByAnother} {
+		got := checkResult(kubeconfig.UnavailableClaimed, by)
+		assert.NotEmpty(t, got, "claimed by %q", by)
+		assert.False(t, seen[got], "claimed by %q shares a check_result", by)
+		seen[got] = true
+	}
+	assert.Len(t, claimedResults, 2, "claimedResults maps a ClaimedBy CheckUsernameFor never gives")
 }
 
 // Two names the Secret derivation rewrites to the same Secret, which a

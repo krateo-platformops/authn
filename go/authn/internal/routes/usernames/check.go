@@ -189,7 +189,7 @@ func (r *route) Handler() http.HandlerFunc {
 			fail(checkFailed(kerr.Wrap("checking the username", err)), "username check failed")
 			return
 		}
-		record(username, audit.OutcomeSuccess, checkResult(why), auditlog.NoCheckDenial, 0)
+		record(username, audit.OutcomeSuccess, checkResult(why, claimedBy), auditlog.NoCheckDenial, 0)
 
 		// No identity in the log line, the caller's or the name's: the audit
 		// record carries both (Diego, 2026-11-12).
@@ -219,10 +219,24 @@ var checkResults = map[kubeconfig.Unavailable]string{
 	kubeconfig.UnavailableBound:       audit.CheckResultNameBound,
 }
 
-// checkResult is why's check_result, "" for an answer audit doesn't declare
-// (which TestEveryAnswerHasACheckResult keeps from existing): a record then
-// carries none rather than one Check would refuse.
-func checkResult(why kubeconfig.Unavailable) string { return checkResults[why] }
+// claimedResults is a claimed name's check_result when the request named the
+// identity it expects (audit v0.14.0): whether the claim is that identity's.
+// A request with no claimant gets name_claimed, as before.
+var claimedResults = map[kubeconfig.ClaimedBy]string{
+	kubeconfig.ClaimedByYou:     audit.CheckResultNameClaimedByClaimant,
+	kubeconfig.ClaimedByAnother: audit.CheckResultNameClaimedByAnother,
+}
+
+// checkResult is the answer's check_result: why's, or, for a claimed name
+// compared with a claimant, whose claim it is. It is "" for an answer audit
+// doesn't declare (which TestEveryAnswerHasACheckResult keeps from existing):
+// a record then carries none rather than one Check would refuse.
+func checkResult(why kubeconfig.Unavailable, claimedBy kubeconfig.ClaimedBy) string {
+	if why == kubeconfig.UnavailableClaimed && claimedBy != "" {
+		return claimedResults[claimedBy]
+	}
+	return checkResults[why]
+}
 
 // answeredCode is the apiserver's status code when it answered the failed
 // lookup, 0 when nothing answered (a timeout, a refused connection): only an

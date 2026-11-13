@@ -5,6 +5,9 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/krateo-platformops/audit"
+	"github.com/krateo-platformops/audit/audittest"
+	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,6 +97,40 @@ func TestCheckRefusesABadClaimant(t *testing.T) {
 			assert.Equal(t, "InvalidRequestBody", cause(t, rec))
 			assert.Zero(t, l.reads, "a bad request reads nothing")
 			assert.NotContains(t, rec.Body.String(), `"available"`)
+		})
+	}
+}
+
+// The record of a check says whose claim holds a claimed name only when the
+// request named a claimant: name_claimed_by_claimant or
+// name_claimed_by_another, and bare name_claimed without one. Every other
+// answer's result ignores the claimant. No record names the other identity.
+func TestCheckWithAClaimantRecords(t *testing.T) {
+	rc := apiserver(t, review(caller), mappings(optedIn))
+	kcUser := map[string]string{"strategy": "oidc", "issuer": kcIssuer, "subject": "user-1"}
+	mine := storage.EncodeClaim(storage.StrategyOIDC, kcIssuer, "user-1")
+	theirs := storage.EncodeClaim(storage.StrategyOIDC, otherIssuer, otherSubject)
+	for _, tc := range []struct {
+		name     string
+		l        lookup
+		claimant any
+		want     string
+	}{
+		{"claimed by the expected user", lookup{secret: claimedSecret(mine)}, kcUser, audit.CheckResultNameClaimedByClaimant},
+		{"claimed by another", lookup{secret: claimedSecret(theirs)}, kcUser, audit.CheckResultNameClaimedByAnother},
+		{"no claimant", lookup{secret: claimedSecret(mine)}, nil, audit.CheckResultNameClaimed},
+		{"available, with a claimant", lookup{}, kcUser, audit.CheckResultAvailable},
+		{"held without a claim, with a claimant", lookup{secret: &corev1.Secret{}}, kcUser, audit.CheckResultNameHeldLegacy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, rec := checkAudited(t, rc, &tc.l, "projected-sa-token", body(t, "alice", tc.claimant))
+			require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+			r := only(t, rec)
+			assert.Equal(t, tc.want, auditlogtest.String(r, audit.KeyCheckResult))
+			for _, kv := range audittest.Attributes(r) {
+				assert.NotContains(t, kv.Value.Emit(), otherIssuer, "%s names the other identity", kv.Key)
+				assert.NotContains(t, kv.Value.Emit(), otherSubject, "%s names the other identity", kv.Key)
+			}
 		})
 	}
 }
