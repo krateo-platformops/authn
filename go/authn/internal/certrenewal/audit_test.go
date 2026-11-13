@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -202,17 +203,34 @@ func newFakeSigner(t *testing.T, secretExists bool) *fakeSigner {
 }
 
 // sign issues the certificate the CSR asks for: its subject and key, for 30m.
-func (f *fakeSigner) sign(req []byte) []byte {
+// It runs on the server's goroutine, so it returns an error rather than
+// failing the test itself.
+func (f *fakeSigner) sign(req []byte) ([]byte, error) {
 	block, _ := pem.Decode(req)
-	require.NotNil(f.t, block, "spec.request is a PEM CSR")
+	if block == nil {
+		return nil, fmt.Errorf("spec.request is not a PEM CSR")
+	}
 	cr, err := x509.ParseCertificateRequest(block.Bytes)
-	require.NoError(f.t, err)
+	if err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: big.NewInt(2), Subject: cr.Subject,
 		NotBefore: now.Add(-time.Minute), NotAfter: now.Add(30 * time.Minute),
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}, f.ca, cr.PublicKey, f.caKey)
-	require.NoError(f.t, err)
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), nil
+}
+
+// status is an apiserver Status body.
+func status(code int32, reason metav1.StatusReason) metav1.Status {
+	st := metav1.Status{TypeMeta: metav1.TypeMeta{Kind: "Status", APIVersion: "v1"}, Status: metav1.StatusFailure, Reason: reason, Code: code}
+	if code < 300 {
+		st.Status = metav1.StatusSuccess
+	}
+	return st
 }
 
 func (f *fakeSigner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -225,48 +243,73 @@ func (f *fakeSigner) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(code)
 		_ = json.NewEncoder(w).Encode(v)
 	}
+	// fail reports a fake's own error. It runs on the server's goroutine, so
+	// it marks the test failed (Errorf) and answers 500, never FailNow.
+	fail := func(err error) {
+		f.t.Errorf("fake apiserver: %s %s: %v", r.Method, r.URL.Path, err)
+		writeJSON(http.StatusInternalServerError, status(http.StatusInternalServerError, metav1.StatusReasonInternalError))
+	}
 	// decode reads a request body as client-go sent it: protobuf for the typed
 	// clientset (the CSR), JSON for plumbing's REST client (the Secret).
-	decode := func(into runtime.Object) {
+	decode := func(into runtime.Object) bool {
 		body, err := io.ReadAll(r.Body)
-		require.NoError(f.t, err)
-		_, _, err = scheme.Codecs.UniversalDeserializer().Decode(body, nil, into)
-		require.NoError(f.t, err)
+		if err == nil {
+			_, _, err = scheme.Codecs.UniversalDeserializer().Decode(body, nil, into)
+		}
+		if err != nil {
+			fail(err)
+			return false
+		}
+		return true
 	}
 	switch {
 	case r.Method == http.MethodPost && r.URL.Path == csrs:
 		var csr certv1.CertificateSigningRequest
-		decode(&csr)
+		if !decode(&csr) {
+			return
+		}
 		csr.UID = "uid-csr"
 		f.csr = &csr
 		writeJSON(http.StatusCreated, f.csr)
 	case r.Method == http.MethodPut && r.URL.Path == csrs+"/authn/approval":
-		require.NotNil(f.t, f.csr, "approval before create")
+		if f.csr == nil {
+			fail(fmt.Errorf("approval before create"))
+			return
+		}
+		crt, err := f.sign(f.csr.Spec.Request)
+		if err != nil {
+			fail(err)
+			return
+		}
 		f.csr.Status.Conditions = append(f.csr.Status.Conditions, certv1.CertificateSigningRequestCondition{
 			Type: certv1.CertificateApproved, Status: corev1.ConditionTrue})
-		f.csr.Status.Certificate = f.sign(f.csr.Spec.Request)
+		f.csr.Status.Certificate = crt
 		writeJSON(http.StatusOK, f.csr)
 	case r.Method == http.MethodGet && r.URL.Path == csrs+"/authn":
 		if f.csr == nil {
-			writeJSON(http.StatusNotFound, metav1.Status{Status: "Failure", Reason: "NotFound", Code: 404})
+			writeJSON(http.StatusNotFound, status(http.StatusNotFound, metav1.StatusReasonNotFound))
 			return
 		}
 		writeJSON(http.StatusOK, f.csr)
 	case r.Method == http.MethodDelete && r.URL.Path == csrs+"/authn":
 		f.csr = nil
-		writeJSON(http.StatusOK, metav1.Status{Status: "Success"})
+		writeJSON(http.StatusOK, status(http.StatusOK, ""))
 	case r.Method == http.MethodPost && r.URL.Path == secrets:
 		if f.secretExists {
-			writeJSON(http.StatusConflict, metav1.Status{Status: "Failure", Reason: "AlreadyExists", Code: 409})
+			writeJSON(http.StatusConflict, status(http.StatusConflict, metav1.StatusReasonAlreadyExists))
 			return
 		}
 		var sec corev1.Secret
-		decode(&sec)
+		if !decode(&sec) {
+			return
+		}
 		sec.UID, sec.ResourceVersion = "uid-sec", "1"
 		writeJSON(http.StatusCreated, sec)
 	case r.Method == http.MethodPut && r.URL.Path == secrets+"/authn-clientconfig":
 		var sec corev1.Secret
-		decode(&sec)
+		if !decode(&sec) {
+			return
+		}
 		sec.UID, sec.ResourceVersion = "uid-sec", "2"
 		writeJSON(http.StatusOK, sec)
 	case r.Method == http.MethodGet && r.URL.Path == secrets+"/authn-clientconfig":
