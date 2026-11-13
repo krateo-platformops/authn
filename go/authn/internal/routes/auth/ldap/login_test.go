@@ -19,12 +19,15 @@ import (
 	"time"
 
 	"github.com/go-ldap/ldap/v3"
+	"github.com/krateo-platformops/audit"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
 	"github.com/krateo-platformops/authn/internal/helpers/userinfo"
+	"github.com/krateo-platformops/authn/internal/status"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"k8s.io/client-go/rest"
 )
 
@@ -189,6 +192,9 @@ type result struct {
 	minted  int
 	tokened bool
 	body    string
+	// record is the issuance's audit record, already checked conformant by
+	// loginAs; nil when nothing was issued.
+	record *sdklog.Record
 }
 
 func login(t *testing.T, name string, configCode, secretCode int, srvLDAP *fakeLDAP, gen *fakeGenerator, realDial bool) result {
@@ -232,13 +238,15 @@ func loginAs(t *testing.T, name string, configCode, secretCode int, srvLDAP *fak
 	// AUDIT-4: every issuance writes one conformant record, and a login refused
 	// before verification writes none.
 	require.Len(t, records.Records(), gen.calls, "one record per issuance")
+	var record *sdklog.Record
 	if gen.calls == 1 {
 		r := auditlogtest.Only(t, records)
 		assert.Equal(t, "authn.login.ldap", auditlogtest.String(r, "krateo.action"))
 		assert.Equal(t, storage.ClientConfigSecretName(gen.info.GetUserName()), auditlogtest.String(r, "krateo.audit.object_ref.name"))
+		record = &r
 	}
 
-	res := result{code: rec.Code, minted: gen.calls, tokened: strings.Contains(rec.Body.String(), "accessToken"), body: rec.Body.String()}
+	res := result{code: rec.Code, minted: gen.calls, tokened: strings.Contains(rec.Body.String(), "accessToken"), body: rec.Body.String(), record: record}
 	if rec.Code == http.StatusOK {
 		return res
 	}
@@ -399,4 +407,24 @@ func TestLoginSucceeds(t *testing.T) {
 	assert.Equal(t, 1, got.minted)
 	assert.True(t, got.tokened)
 	assert.Contains(t, got.body, `"strategy":{"kind":"ldap","name":"corp"}`)
+}
+
+// A user the directory verified (the bind succeeded) whose name the name guard
+// refuses is one denied record, conformant (loginAs runs it through
+// auditlogtest.Only), naming the Secret it would have written, with the
+// guard's reason and no status code: authn refused before asking the
+// apiserver (AUDIT-4).
+func TestLoginRefusalAfterTheBindIsRecorded(t *testing.T) {
+	gen := &fakeGenerator{err: kubeconfig.Refused(kubeconfig.RefusalClaimed,
+		status.Refused(status.CauseUsernameUnavailable, errors.New("the username isn't available to this identity")))}
+	res := login(t, "corp", 200, 200, &fakeLDAP{entries: 1}, gen, false)
+	require.Equal(t, http.StatusForbidden, res.code, res.body)
+	assert.Equal(t, "UsernameUnavailable", res.cause)
+	assert.False(t, res.tokened)
+	require.NotNil(t, res.record, "the verified identity's issuance is recorded")
+	r := *res.record
+	assert.Equal(t, audit.OutcomeDenied, auditlogtest.String(r, "krateo.audit.outcome"))
+	assert.Equal(t, audit.DenialReasonNameClaimed, auditlogtest.String(r, "krateo.audit.denial_reason"))
+	_, ok := auditlogtest.Int(r, "http.response.status_code")
+	assert.False(t, ok, "authn refused before asking the apiserver")
 }
