@@ -279,7 +279,7 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 
 	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o, claim, log)
 	if err != nil {
-		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
 	}
 
 	c := KubeConfig{
@@ -338,7 +338,7 @@ func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo
 	// A step-up credential has no owner: it expires, and the sweep deletes it.
 	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, IssueOptions{Principal: o.Principal}, claim, log)
 	if err != nil {
-		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target)}, err
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
 	}
 	return Issued{NotAfter: notAfter, Secret: written}, nil
 }
@@ -422,8 +422,18 @@ func (g *kubeconfigGenerator) secretFor(user userinfo.Info, stepUp bool) string 
 	return secretFor(user, g.naming.SessionName)
 }
 
-// orWouldWrite is written when Put sent a request, else wouldWrite(name).
-func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string) storage.Written {
+// orWouldWrite is what a failed or refused issuance's record names: written
+// when Put sent a request, else wouldWrite(name). A refusal at the write
+// (another identity's claim, or an unclaimed Secret holding another name's
+// certificate) is a refusal like the guard's: when name is "", the username's
+// Secret name isn't its own (secretFor), so the record names the Secret
+// resource without a name or a verb, even though Put read the Secret under the
+// rewritten name, which may be another user's (authn#138). A failure keeps
+// naming the Secret Put actually wrote to.
+func (g *kubeconfigGenerator) orWouldWrite(written storage.Written, name string, err error) storage.Written {
+	if name == "" && RefusalOf(err) != "" {
+		return g.wouldWrite("")
+	}
 	if written.Verb != "" {
 		return written
 	}
