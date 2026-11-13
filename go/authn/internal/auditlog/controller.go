@@ -24,16 +24,22 @@ const (
 	// ActionServiceIdentityAnnotated: authn brought the authorization-bearing
 	// identity annotations of its own credential in line with its certificate.
 	ActionServiceIdentityAnnotated = "authn.servicecert.annotated"
+	// ActionIdentityInconsistent: at startup, with exact naming on (authn#140,
+	// authn#144), the backfill found an identity key (the username annotation,
+	// the principal or username-label label) on a credential Secret with a
+	// value other than its certificate proves, and left it as found.
+	ActionIdentityInconsistent = "authn.identity.inconsistent"
 )
 
 // The controller record bodies.
 const (
-	msgSwept       = "expired credential deleted"
-	msgSweepError  = "expired credential not deleted"
-	msgCertStored  = "service credential stored"
-	msgCertFailure = "service credential not stored"
-	msgIdentity    = "credential identity recorded"
-	msgIdentityErr = "credential identity not recorded"
+	msgSwept        = "expired credential deleted"
+	msgSweepError   = "expired credential not deleted"
+	msgCertStored   = "service credential stored"
+	msgCertFailure  = "service credential not stored"
+	msgIdentity     = "credential identity recorded"
+	msgIdentityErr  = "credential identity not recorded"
+	msgIdentityKept = "credential identity key left as found"
 )
 
 // Controller writes the records of authn's own background credential writes
@@ -153,6 +159,39 @@ func (c *Controller) IdentityWritten(ctx context.Context, action string, ref Sec
 	}
 	if err != nil {
 		ev.Outcome, ev.Message = audit.OutcomeFailure, msgIdentityErr
+	}
+	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
+	c.e.Emit(ctx, ev)
+}
+
+// IdentityKept records that the backfill declined to overwrite one identity
+// key a credential Secret already holds with another value than its
+// certificate proves (authn#144): rewriting a label a tenant policy already
+// generated from would point it at a second tenant. kind is
+// audit.MetadataKindAnnotation or audit.MetadataKindLabel, key the key's name.
+//
+// One record per key (audit v0.14.0's kept_existing_value): a denied update
+// naming the Secret it read and, in krateo.audit.authorization_key, the key
+// it kept, never a value. Nothing was sent, so there is no HTTP method and no
+// status code. A key audit doesn't declare (authn's identity keys are pinned
+// to audit's lists, so only a mismatched bump) is still recorded, without
+// the key: audit.Check then reports it missing, rather than the refusal going
+// unrecorded.
+func (c *Controller) IdentityKept(ctx context.Context, ref SecretRef, kind, key string) {
+	if c == nil || c.e == nil {
+		return
+	}
+	authzKey, _ := audit.AuthorizationKeyValue(kind, key)
+	ev := audit.Event{
+		Action:           ActionIdentityInconsistent,
+		Verb:             "update",
+		Outcome:          audit.OutcomeDenied,
+		DenialReason:     audit.DenialReasonKeptExistingValue,
+		AuthorizationKey: authzKey,
+		Message:          msgIdentityKept,
+
+		Namespace: ref.Namespace, Version: "v1", Resource: "secrets", Kind: "Secret",
+		ObjectName: ref.Name, ObjectUID: ref.UID, ObjectResourceVersion: ref.ResourceVersion,
 	}
 	ev.Preview = previewOf(c.preview, ctx, ref.Namespace)
 	c.e.Emit(ctx, ev)

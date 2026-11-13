@@ -32,7 +32,9 @@
 // Secret's name: a legacy name is shared by usernames (john.doe and johndoe
 // are both johndoe-clientconfig). A key already present is never overwritten,
 // even with another value: the tenant policy may already have generated from
-// it. Each such key is logged instead, by key name and the Secret's uid. A Secret
+// it. Each such key is logged instead, by its kind, its name and the Secret's
+// uid, and recorded as a declined update (auditlog.Controller.IdentityKept,
+// audit's kept_existing_value), never with its value. A Secret
 // whose certificate can't be read (one authn didn't write) is skipped, and
 // legacy-named Secrets are stamped like any other.
 package identitybackfill
@@ -43,6 +45,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
@@ -81,7 +84,8 @@ type Options struct {
 	Lookup Lookup
 	Log    zerolog.Logger
 	// Audit records each write: every one stamps an authorization-bearing
-	// annotation or an owner (AUDIT-4). Nil records nothing.
+	// annotation or an owner (AUDIT-4). With exact naming it also records each
+	// identity key left as found, one record per key. Nil records nothing.
 	Audit *auditlog.Controller
 	// Naming, with Exact set, stamps the identity keys of authn#144 too
 	// (storage.ExactIdentity). The zero value stamps what authn always has.
@@ -158,10 +162,14 @@ func Run(ctx context.Context, o Options) (Result, error) {
 						Msg("identity keys not backfilled")
 					continue
 				}
+				ref := auditlog.SecretRef{Namespace: sec.Namespace, Name: sec.Name,
+					UID: string(sec.UID), ResourceVersion: sec.ResourceVersion}
 				for _, k := range exact.conflicts {
 					// The key, never its values: they are identities.
-					o.Log.Warn().Str("secret.uid", string(sec.UID)).Str("namespace", ns).Str("key", k).
+					o.Log.Warn().Str("secret.uid", string(sec.UID)).Str("namespace", ns).
+						Str("kind", k.Kind).Str("key", k.Key).
 						Msg("identity key differs from the certificate; left as found")
+					o.Audit.IdentityKept(ctx, ref, k.Kind, k.Key)
 				}
 				if len(exact.conflicts) > 0 {
 					res.Inconsistent++
@@ -288,7 +296,15 @@ func missingAnnotations(ctx context.Context, sec *corev1.Secret, self string, lo
 // found holding another value.
 type exactKeys struct {
 	annotations, labels map[string]string
-	conflicts           []string
+	conflicts           []identityKey
+}
+
+// identityKey is an identity key a Secret holds with another value than its
+// certificate proves: its kind (audit.MetadataKindAnnotation or
+// audit.MetadataKindLabel) and its name. The kind is carried, never inferred
+// from the name, since a name alone doesn't say where it was found.
+type identityKey struct {
+	Kind, Key string
 }
 
 func (e exactKeys) empty() bool { return len(e.annotations) == 0 && len(e.labels) == 0 }
@@ -330,20 +346,23 @@ func missingExact(ctx context.Context, sec *corev1.Secret, annotations map[strin
 	}
 
 	out := exactKeys{annotations: map[string]string{}, labels: map[string]string{}}
-	compare := func(have, want, stamp map[string]string) {
+	compare := func(kind string, have, want, stamp map[string]string) {
 		for k, v := range want {
 			got, ok := have[k]
 			switch {
 			case !ok:
 				stamp[k] = v
 			case got != v:
-				out.conflicts = append(out.conflicts, k)
+				out.conflicts = append(out.conflicts, identityKey{Kind: kind, Key: k})
 			}
 		}
 	}
-	compare(sec.GetAnnotations(), wantAnn, out.annotations)
-	compare(sec.GetLabels(), wantLabels, out.labels)
-	sort.Strings(out.conflicts)
+	compare(audit.MetadataKindAnnotation, sec.GetAnnotations(), wantAnn, out.annotations)
+	compare(audit.MetadataKindLabel, sec.GetLabels(), wantLabels, out.labels)
+	sort.Slice(out.conflicts, func(i, j int) bool {
+		a, b := out.conflicts[i], out.conflicts[j]
+		return a.Kind < b.Kind || a.Kind == b.Kind && a.Key < b.Key
+	})
 	return out, nil
 }
 

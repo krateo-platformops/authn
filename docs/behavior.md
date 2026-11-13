@@ -571,9 +571,12 @@ With it on (`storage.Naming`, `config/storage/naming.go`; the naming helpers are
   - only **absent** keys are stamped. A key present with another value is never
     overwritten (rewriting a label a tenant was generated from would point the policy at a
     second namespace): it is logged as `identity key differs from the certificate; left as
-    found`, one line per key, with the key and the Secret's uid, never a value. Its audit
-    record is the one step left: it comes with audit v0.14.0's `kept_existing_value` and
-    `krateo.audit.authorization_key`, and until then there is none;
+    found`, one line per key, with its kind (`annotation` or `label`), the key and the
+    Secret's uid, never a value. Each such key is also one audit record,
+    `authn.identity.inconsistent`: verb `update`, outcome `denied`,
+    `krateo.audit.denial_reason` `kept_existing_value`, and the key in
+    `krateo.audit.authorization_key` as `<kind>:<key>` (audit v0.14.0), naming the Secret
+    and never the value. Nothing was sent, so it carries no HTTP method and no status code;
   - the principal follows the strategy annotation; a `serviceaccount` Secret takes its
     mapping's `spec.principal`, and gets no principal when the mapping is gone, nor does
     one whose strategy is `unknown`;
@@ -689,6 +692,7 @@ or a log line.
 | step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 | identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
+| identity backfill at startup, exact naming on (background) | `authn.identity.inconsistent` | a `-clientconfig` Secret holding an identity key with another value, left as found | `update` (denied, `kept_existing_value`, one per key; no method, no status code) |
 | authn's own identity annotations (background) | `authn.servicecert.annotated` | authn's `-clientconfig` Secret | `update` |
 
 - **Login, step-up.** A record is written right after the credential is issued, whatever

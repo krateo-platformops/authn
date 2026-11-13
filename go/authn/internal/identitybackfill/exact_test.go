@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -114,16 +115,26 @@ func TestRunWithExactNaming(t *testing.T) {
 		assert.NotContains(t, api.updates, name, "%s must not be written", name)
 	}
 
-	// One backfilled record per write, each conformant. A key left as found
-	// is logged only: its record waits for audit's kept_existing_value.
+	// One backfilled record per write, and one kept_existing_value record per
+	// key left as found (carol's username annotation and principal label),
+	// each conformant.
 	backfilled := 0
+	var kept []string
 	for _, r := range records.Records() {
 		audittest.AssertConformant(t, audit.WriterController, r)
-		assert.Equal(t, "authn.identity.backfilled", auditlogtest.String(r, "krateo.action"))
-		assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
-		backfilled++
+		switch auditlogtest.String(r, "krateo.action") {
+		case "authn.identity.backfilled":
+			assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
+			backfilled++
+		case "authn.identity.inconsistent":
+			assert.Equal(t, "carol-clientconfig", auditlogtest.String(r, audit.KeyObjectName))
+			kept = append(kept, auditlogtest.String(r, audit.KeyAuthorizationKey))
+		default:
+			t.Errorf("unexpected record %q", auditlogtest.String(r, "krateo.action"))
+		}
 	}
 	assert.Equal(t, 8, backfilled)
+	assert.ElementsMatch(t, []string{"annotation:" + storage.UsernameAnnotation, "label:" + storage.PrincipalLabel}, kept)
 }
 
 // Flag off, the backfill stamps what it always has: no username annotation,
@@ -204,19 +215,20 @@ func TestExactBackfillLogsNoIdentity(t *testing.T) {
 }
 
 // Each key held with another value than the certificate proves is logged on
-// its own line, by key name and the Secret's uid, never a value, left as
-// found, and recorded nowhere yet (its record waits for audit v0.14.0's
-// kept_existing_value). One test per key.
+// its own line, by its kind, its name and the Secret's uid, never a value,
+// left as found, and recorded once as a denied update with
+// kept_existing_value and the key as <kind>:<key>. One test per key.
 func TestRunLogsEachConflictingKey(t *testing.T) {
 	stamped := map[string]string{storage.StrategyAnnotation: "oidc", storage.GroupsAnnotation: ""}
 	for _, tc := range []struct {
+		kind   string
 		key    string
 		ann    map[string]string
 		labels map[string]string
 	}{
-		{storage.UsernameAnnotation, map[string]string{storage.UsernameAnnotation: logtest.Marker + "-other"}, nil},
-		{storage.PrincipalLabel, nil, map[string]string{storage.PrincipalLabel: "agent"}},
-		{storage.UsernameLabelLabel, nil, map[string]string{storage.UsernameLabelLabel: "zz-other"}},
+		{audit.MetadataKindAnnotation, storage.UsernameAnnotation, map[string]string{storage.UsernameAnnotation: logtest.Marker + "-other"}, nil},
+		{audit.MetadataKindLabel, storage.PrincipalLabel, nil, map[string]string{storage.PrincipalLabel: "agent"}},
+		{audit.MetadataKindLabel, storage.UsernameLabelLabel, nil, map[string]string{storage.UsernameLabelLabel: "zz-other"}},
 	} {
 		t.Run(tc.key, func(t *testing.T) {
 			ann := map[string]string{}
@@ -241,6 +253,7 @@ func TestRunLogsEachConflictingKey(t *testing.T) {
 			for _, line := range strings.Split(logs.String(), "\n") {
 				if strings.Contains(line, "identity key differs from the certificate") {
 					lines++
+					assert.Contains(t, line, `"kind":"`+tc.kind+`"`)
 					assert.Contains(t, line, `"key":"`+tc.key+`"`)
 					assert.Contains(t, line, `"secret.uid":"8d1c2b7a"`)
 				}
@@ -254,8 +267,26 @@ func TestRunLogsEachConflictingKey(t *testing.T) {
 			} else {
 				assert.Equal(t, tc.labels[tc.key], api.labels[name][tc.key], "left as found")
 			}
+			var kept []sdklog.Record
 			for _, r := range records.Records() {
-				assert.Equal(t, "authn.identity.backfilled", auditlogtest.String(r, "krateo.action"), "no inconsistency record yet")
+				if auditlogtest.String(r, "krateo.action") == "authn.identity.inconsistent" {
+					kept = append(kept, r)
+				}
+			}
+			require.Len(t, kept, 1, "one record for the key")
+			r := kept[0]
+			audittest.AssertConformant(t, audit.WriterController, r)
+			audittest.AssertRequiredKeysDetected(t, audit.WriterController, r)
+			assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
+			assert.Equal(t, audit.DenialReasonKeptExistingValue, auditlogtest.String(r, "krateo.audit.denial_reason"))
+			assert.Equal(t, tc.kind+":"+tc.key, auditlogtest.String(r, audit.KeyAuthorizationKey))
+			assert.Equal(t, "8d1c2b7a", auditlogtest.String(r, audit.KeyObjectUID))
+			// The record names the Secret (an audit record may), never the
+			// value it kept.
+			value := tc.ann[tc.key] + tc.labels[tc.key]
+			for _, kv := range audittest.Attributes(r) {
+				assert.NotEqual(t, value, kv.Value.Emit(), "%s: never the kept value", kv.Key)
+				assert.NotContains(t, kv.Value.Emit(), "-other", "%s: never the kept value", kv.Key)
 			}
 		})
 	}
@@ -275,19 +306,29 @@ func TestRunSkipsACertificateWithNoCN(t *testing.T) {
 	assert.NotContains(t, api.updates, "nobody-clientconfig")
 }
 
-// Three keys in conflict on one Secret are three lines, one per key.
+// Three keys in conflict on one Secret are three lines and three records, one
+// per key.
 func TestRunLogsEveryConflictingKeyOfASecret(t *testing.T) {
 	ann := map[string]string{storage.StrategyAnnotation: "oidc", storage.GroupsAnnotation: "", storage.UsernameAnnotation: "other"}
 	sec := withLabels(clientConfig(t, "alice-clientconfig", cert(t, "alice", nil), ann),
 		map[string]string{storage.PrincipalLabel: "agent", storage.UsernameLabelLabel: "other"})
 	api := newFakeAPIServer(t, []corev1.Secret{sec})
 	logs, l := logtest.Capture()
+	ctl, records := auditlogtest.NewController(t, "system:serviceaccount:"+ns+":authn")
 	res, err := Run(context.Background(), Options{
 		RestConfig: &rest.Config{Host: api.URL}, Namespaces: []string{ns}, SelfUsername: "authn",
-		Lookup: principalLookup{}, Log: l, Naming: exactNaming,
+		Lookup: principalLookup{}, Log: l, Audit: ctl, Naming: exactNaming,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Inconsistent, "one Secret")
+	var kept []string
+	for _, r := range records.Records() {
+		audittest.AssertConformant(t, audit.WriterController, r)
+		assert.Equal(t, "authn.identity.inconsistent", auditlogtest.String(r, "krateo.action"), "nothing absent, nothing written")
+		kept = append(kept, auditlogtest.String(r, audit.KeyAuthorizationKey))
+	}
+	assert.ElementsMatch(t, []string{"annotation:" + storage.UsernameAnnotation,
+		"label:" + storage.PrincipalLabel, "label:" + storage.UsernameLabelLabel}, kept)
 	var keys []string
 	for _, line := range strings.Split(logs.String(), "\n") {
 		if strings.Contains(line, "identity key differs from the certificate") {
@@ -300,4 +341,18 @@ func TestRunLogsEveryConflictingKeyOfASecret(t *testing.T) {
 	}
 	assert.ElementsMatch(t, []string{storage.UsernameAnnotation, storage.PrincipalLabel, storage.UsernameLabelLabel}, keys)
 	assert.NotContains(t, api.updates, "alice-clientconfig", "nothing absent, nothing written")
+}
+
+// Every identity key the backfill compares is declared by audit under the
+// kind it is compared as, so each kept key's record names it.
+func TestEveryExactIdentityKeyIsDeclaredUnderItsKind(t *testing.T) {
+	for _, strategy := range []storage.Strategy{storage.StrategyOIDC, storage.StrategyServiceAccount, storage.StrategyUnknown} {
+		ann, labels := storage.ExactIdentity(strategy, "agent", "alice")
+		for kind, keys := range map[string]map[string]string{audit.MetadataKindAnnotation: ann, audit.MetadataKindLabel: labels} {
+			for k := range keys {
+				_, ok := audit.AuthorizationKeyValue(kind, k)
+				assert.True(t, ok, "%s %s is declared by audit", kind, k)
+			}
+		}
+	}
 }
