@@ -41,9 +41,10 @@ var idpAlgorithms = []string{"RS256"}
 //     (spec.delegation.subjectTokens): matched by the issuer of each listed
 //     OIDCConfig, before the token is trusted, only to pick the keys. A
 //     source that can't be resolved is skipped; only if no other source
-//     issued the token is it authn's failure, since it may have. Two sources
-//     whose OIDCConfigs share an issuer are a misconfiguration: which one's
-//     audiences and allowedGroups apply would depend on their order.
+//     issued the token is it authn's failure, since it may have. The first
+//     listed source whose issuer matches is used, and the rest aren't
+//     resolved, so a stalled provider listed later never delays it: list one
+//     OIDCConfig per issuer.
 //   - The OIDCConfig may not map identities through a RESTAction: an
 //     exchange doesn't run one, so it would map the person differently from
 //     their sign-in (Diego, 2026-11-13).
@@ -97,8 +98,7 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 		return invalid("the subject token has no issuer", nil)
 	}
 
-	// Pick the source whose provider issued the token. Every source is
-	// resolved, so two that share the issuer are found.
+	// Pick the first listed source whose provider issued the token.
 	var source *sav1alpha1.SubjectTokenSource
 	var keys resolvers.OIDCTokenKeys
 	var unresolved []error
@@ -108,14 +108,10 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 			unresolved = append(unresolved, fmt.Errorf("OIDCConfig %q: %w", sources[i].OIDCConfig, err))
 			continue
 		}
-		if k.Issuer != iss {
-			continue
+		if k.Issuer == iss {
+			source, keys = &sources[i], k
+			break
 		}
-		if source != nil {
-			return failed("two identity providers the actor's mapping lists share this token's issuer",
-				fmt.Errorf("OIDCConfigs %q and %q both resolve to the issuer %q", source.OIDCConfig, sources[i].OIDCConfig, iss))
-		}
-		source, keys = &sources[i], k
 	}
 	if source != nil && len(unresolved) > 0 {
 		// Another source issued the token, so the exchange goes on; the

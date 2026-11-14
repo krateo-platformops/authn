@@ -38,9 +38,12 @@ rest: a `kid` missing from a key set read after the request arrived is `401` wha
 token's unsigned `iat` claims (plumbing v1.71.0's `jwtutil.NotPublishedSince`), so only a
 truly undecidable key, or a provider whose keys can't be fetched, is `503
 SubjectKeyUnavailable` (Diego's decision); a token needs a `kid` and RS256, the only keys
-plumbing loads; two OIDCConfigs sharing an issuer are refused; and discovery has its own
-10-second timeout and one shared fetch. The 503 carries `Retry-After`, the key source's
-`NextRefresh`, which the bridge follows.
+plumbing loads; and discovery has its own 10-second timeout and one shared fetch. The 503
+carries `Retry-After`, the key source's `NextRefresh`, which the bridge follows. A third
+review found plumbing stamping a key set when its fetch completed, which could refuse a
+genuine token received mid-fetch; v1.72.0 stamps the fetch's start. The first listed
+OIDCConfig whose issuer matches is used and later ones aren't resolved, so a stalled
+provider listed after it never delays an exchange.
 
 ## 2026-11-13 — a refusal names only the username's own Secret
 

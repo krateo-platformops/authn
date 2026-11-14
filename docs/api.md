@@ -212,7 +212,7 @@ form is checked before authn calls the apiserver. On top of those:
 | `UsernameUnavailable` | 403 | (an access token) The username is another identity's, or its credential predates claims. Opaque on purpose | Contact an administrator |
 | `GroupNotAllowed` / `PlatformGroupNotAllowed` / `SystemGroupNotAllowed` | 403 | (an access token) The person is in none of the OIDCConfig's `allowedGroups`, or carries a `krateo:` or `system:` group | Contact an administrator |
 | `DelegationTooDeep` | 403 | The actor chain, this service included, would be deeper than the mapping's `spec.delegation.maxDepth` (default 3) | Fix the client |
-| `IssuanceFailed` | 500 | authn could not sign the delegated token, or (an access token) no listed OIDCConfig issued it and one couldn't be resolved, two listed OIDCConfigs share its issuer, or its OIDCConfig sets `restActionRef`. The answer never names the provider's addresses or the OIDCConfig; authn's log does | Retry later; an admin fixes the OIDCConfig |
+| `IssuanceFailed` | 500 | authn could not sign the delegated token, or (an access token) no listed OIDCConfig issued it and one couldn't be resolved, or its OIDCConfig sets `restActionRef`. The answer never names the provider's addresses or the OIDCConfig; authn's log does | Retry later; an admin fixes the OIDCConfig |
 
 ### `/oidc/login` failures
 

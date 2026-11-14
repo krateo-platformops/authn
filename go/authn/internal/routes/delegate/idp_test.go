@@ -442,7 +442,7 @@ func TestExchangeSkipsAnUnresolvableSource(t *testing.T) {
 
 // authn's failures to verify an identity provider's token (500
 // IssuanceFailed, a failure record that names no subject): its sources can't
-// be resolved, two share its issuer, or its OIDCConfig maps identities
+// be resolved, or its OIDCConfig maps identities
 // through a RESTAction. The answer names neither the provider's addresses nor
 // the OIDCConfig; the log does.
 func TestExchangeFailures(t *testing.T) {
@@ -450,8 +450,6 @@ func TestExchangeFailures(t *testing.T) {
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
 	discovery := `"discoveryURL":"` + kc.issuer + `/.well-known/openid-configuration"`
-	twoSources := `{"allowed":true,"subjectTokens":[{"oidcConfig":"keycloak","audiences":["` + mcpAudience + `"]},` +
-		`{"oidcConfig":"keycloak-copy","audiences":["` + mcpAudience + `"]}]}`
 	for _, tc := range []struct {
 		name       string
 		delegation string
@@ -465,9 +463,6 @@ func TestExchangeFailures(t *testing.T) {
 		{name: "the OIDCConfig maps identities through a RESTAction",
 			specs:  map[string]string{"keycloak": `{` + discovery + `,"restActionRef":{"name":"userinfo","namespace":"krateo-system"}}`},
 			answer: "RESTAction"},
-		{name: "two sources share the issuer", delegation: twoSources,
-			specs:  map[string]string{"keycloak": `{` + discovery + `}`, "keycloak-copy": `{` + discovery + `}`},
-			answer: "share this token's issuer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			delegation := tc.delegation
@@ -552,4 +547,26 @@ func TestRetryAfter(t *testing.T) {
 	got := retryAfter(time.Now().Add(20 * time.Second))
 	assert.Greater(t, got, 19*time.Second)
 	assert.LessOrEqual(t, got, 20*time.Second)
+}
+
+// The first listed source whose issuer matches is used, and a source listed
+// after it is never resolved: a provider that stalls there can't delay the
+// exchange. A second source for the same issuer is never reached.
+func TestExchangeUsesTheFirstMatchingSource(t *testing.T) {
+	k, kc := newKeys(t), newRealm(t)
+	var laterResolved atomic.Bool
+	stalled := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { laterResolved.Store(true) }))
+	t.Cleanup(stalled.Close)
+	delegation := `{"allowed":true,"subjectTokens":[{"oidcConfig":"keycloak","audiences":["` + mcpAudience + `"]},` +
+		`{"oidcConfig":"later","audiences":["` + mcpAudience + `"]},` +
+		`{"oidcConfig":"keycloak-copy","audiences":["https://elsewhere.example"]}]}`
+	discovery := `{"discoveryURL":"` + kc.issuer + `/.well-known/openid-configuration"}`
+	rc := idpAPIServerWith(t, delegation, map[string]string{
+		"keycloak": discovery, "keycloak-copy": discovery,
+		"later": `{"discoveryURL":"` + stalled.URL + `/.well-known/openid-configuration"}`,
+	})
+	h, _ := k.idpRoute(t, rc, secrets{"alice": claimed(kc.claimOf("uid-alice"))})
+	_, nfo := issued(t, k, exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil))))
+	assert.Equal(t, "alice", nfo.Username, "the first source's audience admits the token; the copy's wouldn't")
+	assert.False(t, laterResolved.Load(), "a source after the match is never resolved")
 }

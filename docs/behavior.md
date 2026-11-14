@@ -305,9 +305,10 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   source's 30-second refresh floor kept from refetching, can't decide it, and neither can
   a provider whose keys can't be fetched: `503 SubjectKeyUnavailable`, retry (Diego,
   2026-11-14), with `Retry-After` set to when the key source may fetch again
-  (plumbing's `JWKSKeySource.NextRefresh`). A listed OIDCConfig that can't be resolved is skipped (and logged); only
-  when no other one issued the token is it `500 IssuanceFailed`, as is a token whose
-  issuer two listed OIDCConfigs share. An OIDCConfig with `restActionRef` is refused (`500`): an
+  (plumbing's `JWKSKeySource.NextRefresh`). The first listed OIDCConfig whose issuer
+  matches is used, and those after it aren't resolved, so list one OIDCConfig per issuer.
+  One that can't be resolved before the match is skipped (and logged); only when none
+  issued the token is it `500 IssuanceFailed`. An OIDCConfig with `restActionRef` is refused (`500`): an
   exchange doesn't run that RESTAction, so it would map the person differently from their
   sign-in. The OIDCConfig is read on every exchange; its provider's discovery document is
   cached 5 minutes (30 seconds after a failure), fetched once for concurrent exchanges,
@@ -780,7 +781,7 @@ or a log line.
   `audience_not_allowed`, carrying the requested audience in `krateo.audit.token.audience`,
   or `invalid_request` for a malformed one or several, without the value; a success that
   issued an audience carries it too. It's `failure` when signing fails, or when no listed
-  OIDCConfig issued the token and one can't be resolved, two share its issuer, its
+  OIDCConfig issued the token and one can't be resolved, its
   OIDCConfig sets `restActionRef`, or its key can't be decided (`SubjectKeyUnavailable`). An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
