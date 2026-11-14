@@ -161,10 +161,8 @@ func (r *loginRoute) validate(ctx context.Context, token string) (userinfo.Info,
 
 	uid, _ := shortid.Generate()
 	nfo := userinfo.NewDefaultUser(mapping.Name, uid, mapping.Spec.Groups, exts)
-	// The ServiceAccount, not the mapping: a mapping re-created for the same
-	// ServiceAccount is the same identity, under a new UID.
 	if ref := mapping.Spec.ServiceAccountRef; ref != nil {
-		nfo.Subject = userinfo.Subject{Issuer: ref.Namespace, ID: ref.Name}
+		nfo.Subject = subjectOf(ref.Namespace, ref.Name)
 	}
 	return nfo, Principal(mapping), mapping.OwnerReference(), v, nil
 }
@@ -185,11 +183,26 @@ func Principal(mapping *sav1alpha1.ServiceAccount) jwtutil.Principal {
 // audience, and "" before that: a token addressed elsewhere isn't verified for
 // authn. Denial says why a verified caller was refused at the mapping lookup,
 // and LookupStatus is the apiserver's answer when that lookup failed with one
-// (0 when nothing answered).
+// (0 when nothing answered). Claim is the verified ServiceAccount's claim,
+// the one its successful login records (subjectOf), so a sign-in refused or
+// failed at the mapping lookup still says whose it was (audit v0.15.0's
+// krateo.audit.identity.claim); "" for a verified token that isn't a
+// ServiceAccount's, which has no claim (snowplow's ruling, audit#45).
 type Verified struct {
 	User         string
 	Denial       auditlog.MappingDenial
 	LookupStatus int
+	Claim        string
+}
+
+// subjectOf is the identity a ServiceAccount signs in as: its own namespace
+// and name, never its mapping's. A mapping, in authn's namespace under any
+// name, is found by its spec.serviceAccountRef, and one re-created for the
+// same ServiceAccount is the same identity under a new UID. The successful
+// login's subject and Verified.Claim both come from here, so they can't
+// disagree.
+func subjectOf(namespace, name string) userinfo.Subject {
+	return userinfo.Subject{Issuer: namespace, ID: name}
 }
 
 // Authenticate verifies a projected ServiceAccount token through the
@@ -235,6 +248,8 @@ func Authenticate(ctx context.Context, rc *rest.Config, audience, token string) 
 		v.Denial = auditlog.NotAServiceAccount
 		return nil, v, status.Refused(CauseNotAServiceAccount, err)
 	}
+	subject := subjectOf(saNamespace, saName)
+	v.Claim = storage.EncodeClaim(storage.StrategyServiceAccount, subject.Issuer, subject.ID)
 
 	mapping, err := resolvers.ServiceAccountForSA(rc, saNamespace, saName)
 	switch {
@@ -268,7 +283,7 @@ func RecordUnmapped(rec *auditlog.Recorder, req *http.Request, action string, v 
 	if v.Denial != auditlog.NoMappingDenial {
 		outcome = audit.OutcomeDenied
 	}
-	rec.Unmapped(req, action, v.User, outcome, v.Denial, v.LookupStatus)
+	rec.Unmapped(req, action, v.User, v.Claim, outcome, v.Denial, v.LookupStatus)
 }
 
 // BearerToken returns the request's Authorization: Bearer token.

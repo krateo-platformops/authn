@@ -37,8 +37,11 @@ const (
 // without a name, and no verb, as a name_missing record names the Secret
 // resource. why is the reason on a denied record. statusCode is the
 // apiserver's answer to the failed lookup, 0 when none came; a denied record
-// carries none, since authn refused without asking.
-func (r *Recorder) Unmapped(req *http.Request, action, user, outcome string, why MappingDenial, statusCode int) {
+// carries none, since authn refused without asking. claim, the verified
+// identity's, is written only on a sign-in (signIn): the ServiceAccount
+// login's record says whose sign-in it was, while /delegate and
+// /usernames/check records never carry the key (snowplow's ruling).
+func (r *Recorder) Unmapped(req *http.Request, action, user, claim, outcome string, why MappingDenial, statusCode int) {
 	if r == nil || r.req == nil || user == "" {
 		return
 	}
@@ -51,6 +54,9 @@ func (r *Recorder) Unmapped(req *http.Request, action, user, outcome string, why
 		Version:  sav1alpha1.Version,
 		Resource: "serviceaccounts",
 		Kind:     sav1alpha1.ServiceAccountKind,
+	}
+	if signIn(action) {
+		ev.IdentityClaim = claim
 	}
 	if ns, err := util.GetOperatorNamespace(); err == nil {
 		ev.Namespace = ns

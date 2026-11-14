@@ -764,7 +764,14 @@ or a log line.
   identity verified on that record and nothing else (snowplow's ruling as audit schema
   lead): no other record carries it, not `/usernames/check` (the claim held on a checked
   name is another identity's) and not `/delegate` (its person is `on_behalf_of`, its actor
-  `user.name`). An identity without a subject has no claim, and none is issued.
+  `user.name`). An identity without a subject has no claim, and none is issued. A
+  ServiceAccount login the TokenReview verified but authn refused or failed at the mapping
+  lookup (`no_mapping`, `ambiguous_mapping`, a failed lookup) carries the claim too:
+  `["serviceaccount", "<SA namespace>", "<SA name>"]`, from the token's verified
+  `system:serviceaccount:<ns>:<name>`, exactly what the same ServiceAccount's successful login
+  records (the subject is the ServiceAccount's own namespace and name, never its mapping's).
+  A verified token that isn't a ServiceAccount's (`not_a_service_account`) has no claim
+  (snowplow's ruling, audit#45).
 
   **ServiceAccount login** is verified once the TokenReview authenticates the token for
   authn's audience. From then on, a refusal at the mapping lookup is `denied`: `no_mapping`
