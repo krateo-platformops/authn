@@ -120,8 +120,15 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	}
 	switch {
 	case source == nil && len(unresolved) > 0:
-		// The token's provider may be one that couldn't be resolved: authn's
-		// misconfiguration or the provider's outage, never a refusal.
+		// The token's provider may be one that couldn't be resolved, never a
+		// refusal. If every such provider is only unreachable, it is an outage
+		// the client may outlast, answered as an unreadable key is; otherwise
+		// an admin must fix an OIDCConfig.
+		if at, ok := providersUnavailable(unresolved); ok {
+			return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.NoDelegationDenial,
+				subjectKeyUnavailable("an identity provider the actor's mapping lists is unavailable: retry",
+					fmt.Errorf("resolving the actor's subject-token sources: %w", errors.Join(unresolved...)), retryAfter(at))
+		}
 		return failed("an identity provider the actor's mapping lists couldn't be resolved",
 			fmt.Errorf("resolving the actor's subject-token sources: %w", errors.Join(unresolved...)))
 	case source == nil:
@@ -225,9 +232,26 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	return person, expAt.Time, &person, auditlog.NoDelegationDenial, nil
 }
 
-// retryAfter is how long until the key source may fetch again (its refresh
-// floor), at least a second: from then on, a key the provider has published
-// is found by the next exchange.
+// providersUnavailable says whether every error is a provider's outage
+// (resolvers.ErrProviderUnavailable), and the soonest time one of them will
+// be fetched again.
+func providersUnavailable(errs []error) (time.Time, bool) {
+	var soonest time.Time
+	for _, err := range errs {
+		if !errors.Is(err, resolvers.ErrProviderUnavailable) {
+			return time.Time{}, false
+		}
+		if at, ok := resolvers.RetryAt(err); ok && (soonest.IsZero() || at.Before(soonest)) {
+			soonest = at
+		}
+	}
+	return soonest, len(errs) > 0
+}
+
+// retryAfter is how long until next, when the key source may fetch the
+// provider's keys again (its refresh floor) or the discovery document's
+// failure lapses, and at least a second: from then on, the next exchange
+// reads them afresh.
 func retryAfter(next time.Time) time.Duration {
 	return max(time.Until(next), time.Second)
 }

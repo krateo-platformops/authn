@@ -194,7 +194,8 @@ unreachable" is the remaining case: no response at all.
 ### `/delegate` failures
 
 The calling service authenticates exactly as on `/serviceaccount/login`, so every
-`/serviceaccount/login` cause above applies to it, with the same code. The request's
+`/serviceaccount/login` cause above applies to it, with the same code: a projected token
+without the `authn` audience, for one, is `403 TokenNotAuthenticated`. The request's
 form is checked before authn calls the apiserver. On top of those:
 
 | `details.causes[0].reason` | Code | Meaning | Caller should |
@@ -206,13 +207,13 @@ form is checked before authn calls the apiserver. On top of those:
 | `DelegationNotAllowed` | 403 | The service's `ServiceAccount` mapping doesn't set `spec.delegation.allowed: true`, or (an access token) lists no identity provider in `spec.delegation.subjectTokens` that issued it | Ask for access |
 | `InvalidRequestBody` | 400 | (after the service is verified) more than one `audience`, or one that isn't a DNS-1123 subdomain or an https URI with a DNS-1123 host, an optional port and a path of unreserved characters | Fix the client |
 | `InvalidTarget` | 400 | The requested `audience` isn't in the mapping's `spec.delegation.audiences` (RFC 8693's `invalid_target`) | Fix the client, or ask for access |
-| `SubjectTokenInvalid` | 401 | The subject token isn't a JWT authn signed with its current or a previous key, or, for an access token, it doesn't verify against its provider's JWKS (signature, `alg` other than RS256, no `kid`, `iss`, `aud`, `iat`, `sub`, or a `kid` the provider's keys, read after the request arrived or after the token's `iat`, don't hold) or isn't an access token (`typ`); or it has expired |
-| `SubjectKeyUnavailable` | 503 | (an access token) authn can't read the key it names yet: the provider's keys couldn't be fetched, or its key set, read shortly before, may predate a key the provider just rotated to. The answer carries `Retry-After` (seconds until authn may read the provider's keys again, at most 30) | Retry after `Retry-After` | Refresh the token, retry once |
+| `SubjectTokenInvalid` | 401 | The subject token isn't a JWT authn signed with its current or a previous key, or, for an access token, it doesn't verify against its provider's JWKS (signature, `alg` other than RS256, no `kid`, `iss`, `aud`, `iat`, `sub`, or a `kid` the provider's keys, read after the request arrived or after the token's `iat`, don't hold) or isn't an access token (`typ`); or it has expired | Refresh the token, retry once |
+| `SubjectKeyUnavailable` | 503 | (an access token) authn can't read the key it names yet: the provider is unreachable (its discovery document or keys didn't answer: connection failure, timeout, 5xx or 429), or its key set, read shortly before, may predate a key the provider just rotated to. The answer carries `Retry-After` (seconds until authn reads the provider again, at most 30) | Retry after `Retry-After` |
 | `SubjectNotSignedIn` | 403 | (an access token) The person's username has no credential Secret yet, so no claim says the name is theirs | Tell the person to sign in to the portal once, then retry |
 | `UsernameUnavailable` | 403 | (an access token) The username is another identity's, or its credential predates claims. Opaque on purpose | Contact an administrator |
 | `GroupNotAllowed` / `PlatformGroupNotAllowed` / `SystemGroupNotAllowed` | 403 | (an access token) The person is in none of the OIDCConfig's `allowedGroups`, or carries a `krateo:` or `system:` group | Contact an administrator |
 | `DelegationTooDeep` | 403 | The actor chain, this service included, would be deeper than the mapping's `spec.delegation.maxDepth` (default 3) | Fix the client |
-| `IssuanceFailed` | 500 | authn could not sign the delegated token, or (an access token) no listed OIDCConfig issued it and one couldn't be resolved, or its OIDCConfig sets `restActionRef`. The answer never names the provider's addresses or the OIDCConfig; authn's log does | Retry later; an admin fixes the OIDCConfig |
+| `IssuanceFailed` | 500 | authn could not sign the delegated token, or (an access token) no listed OIDCConfig issued it and one is misconfigured (missing, a discovery URL answering 404 or a redirect, a document without `jwks_uri`, an issuer conflict), or its OIDCConfig sets `restActionRef`. The answer never names the provider's addresses or the OIDCConfig; authn's log does | Retry later; an admin fixes the OIDCConfig |
 
 ### `/oidc/login` failures
 

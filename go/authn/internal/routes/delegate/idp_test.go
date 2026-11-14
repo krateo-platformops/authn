@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
 	kubeconfig "github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/config/storage"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/resolvers"
 	"github.com/krateo-platformops/authn/internal/routes/jwks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -458,7 +460,7 @@ func TestExchangeFailures(t *testing.T) {
 	}{
 		{name: "the only source's OIDCConfig is missing", specs: map[string]string{},
 			answer: "couldn't be resolved"},
-		{name: "the only source's provider is down", specs: map[string]string{"keycloak": `{"discoveryURL":"` + gone.URL + `/.well-known/openid-configuration"}`},
+		{name: "the only source's discovery URL is wrong (404)", specs: map[string]string{"keycloak": `{"discoveryURL":"` + kc.issuer + `/no-such-document"}`},
 			answer: "couldn't be resolved"},
 		{name: "the OIDCConfig maps identities through a RESTAction",
 			specs:  map[string]string{"keycloak": `{` + discovery + `,"restActionRef":{"name":"userinfo","namespace":"krateo-system"}}`},
@@ -515,6 +517,22 @@ func TestExchangeOfAKeyNotYetKnown(t *testing.T) {
 		assert.Empty(t, auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
 	})
 
+	t.Run("the only source's provider is unreachable, discovery not yet cached", func(t *testing.T) {
+		gone := httptest.NewServer(http.NotFoundHandler())
+		gone.Close()
+		down := idpAPIServerWith(t, idpDelegation, map[string]string{"keycloak": `{"discoveryURL":"` + gone.URL + `/.well-known/openid-configuration"}`})
+		h, records := k.idpRoute(t, down, signedIn)
+		rec := exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil)))
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+		assert.Equal(t, "SubjectKeyUnavailable", cause(t, rec))
+		assertRetryAfter(t, rec)
+		secs, _ := strconv.Atoi(rec.Header().Get("Retry-After"))
+		assert.GreaterOrEqual(t, secs, 25, "when the discovery failure lapses (30 s)")
+		assert.NotContains(t, rec.Body.String(), gone.URL)
+		assert.NotContains(t, rec.Body.String(), "keycloak")
+		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(auditlogtest.Only(t, records), "krateo.audit.outcome"))
+	})
+
 	t.Run("the provider's keys can't be read", func(t *testing.T) {
 		kc.keysDown.Store(true)
 		t.Cleanup(func() { kc.keysDown.Store(false) })
@@ -569,4 +587,19 @@ func TestExchangeUsesTheFirstMatchingSource(t *testing.T) {
 	_, nfo := issued(t, k, exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil))))
 	assert.Equal(t, "alice", nfo.Username, "the first source's audience admits the token; the copy's wouldn't")
 	assert.False(t, laterResolved.Load(), "a source after the match is never resolved")
+}
+
+// Only sources that are all merely unreachable make an outage; one
+// misconfigured source makes it authn's failure.
+func TestProvidersUnavailable(t *testing.T) {
+	outage := func(at time.Time) error {
+		return fmt.Errorf("OIDCConfig %q: %w", "a", fmt.Errorf("%w: %w: x", resolvers.ErrDiscoveryFailed, resolvers.ErrProviderUnavailable))
+	}
+	_, ok := providersUnavailable(nil)
+	assert.False(t, ok)
+	_, ok = providersUnavailable([]error{outage(time.Time{}), fmt.Errorf("%w: 404", resolvers.ErrDiscoveryFailed)})
+	assert.False(t, ok, "a misconfigured source needs an admin")
+	at, ok := providersUnavailable([]error{outage(time.Time{})})
+	assert.True(t, ok)
+	assert.True(t, at.IsZero(), "no retry time known")
 }

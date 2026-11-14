@@ -189,9 +189,10 @@ func (r *route) Handler() http.HandlerFunc {
 				// A refusal of a subject the provider verified names them.
 				if why == auditlog.NoDelegationDenial {
 					r.opts.Audit.Delegation(req, actor, actorPrincipal, verified, nil, audit.OutcomeFailure, why, "")
-				} else {
-					r.opts.Audit.Delegation(req, actor, actorPrincipal, verified, nil, audit.OutcomeDenied, why, "")
+					fail(err, "delegation failed verifying the subject token")
+					return
 				}
+				r.opts.Audit.Delegation(req, actor, actorPrincipal, verified, nil, audit.OutcomeDenied, why, "")
 				fail(err, "delegation subject token refused")
 				return
 			}

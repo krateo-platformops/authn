@@ -31,6 +31,33 @@ var ErrIssuerConflict = errors.New("spec.issuer differs from the discovered issu
 // ErrDiscoveryFailed reports a discovery document that could not be read.
 var ErrDiscoveryFailed = errors.New("OIDC discovery failed")
 
+// ErrProviderUnavailable reports a discovery fetch the provider didn't
+// answer: the connection failed or timed out, or it answered 5xx or 429. That
+// is an outage, which a retry may outlast, not a misconfiguration (a 404, a
+// redirect, a document that isn't one), which needs an admin. It always comes
+// with ErrDiscoveryFailed.
+var ErrProviderUnavailable = errors.New("the identity provider is unavailable")
+
+// retryAtError is a cached discovery failure with when TokenKeysResolver will
+// fetch the document again.
+type retryAtError struct {
+	err error
+	at  time.Time
+}
+
+func (e retryAtError) Error() string { return e.err.Error() }
+func (e retryAtError) Unwrap() error { return e.err }
+
+// RetryAt is when the TokenKeysResolver that returned err will next fetch the
+// discovery document it failed on, and whether err carries that time.
+func RetryAt(err error) (time.Time, bool) {
+	var r retryAtError
+	if !errors.As(err, &r) {
+		return time.Time{}, false
+	}
+	return r.at, true
+}
+
 // ErrEndpointsMissing reports an OIDCConfig whose authorize or token endpoint
 // is known neither from its spec nor from discovery.
 var ErrEndpointsMissing = errors.New("authorize or token endpoint unknown")
@@ -156,12 +183,13 @@ func (r *TokenKeysResolver) discovery(ctx context.Context, url string) (Discover
 	}
 	fetched := r.flight.DoChan(url, func() (any, error) {
 		doc, err := fetchDiscovery(context.WithoutCancel(ctx), url)
-		ttl := DiscoveryTTL
+		until := r.now().Add(DiscoveryTTL)
 		if err != nil {
-			ttl = DiscoveryFailureTTL
+			until = r.now().Add(DiscoveryFailureTTL)
+			err = retryAtError{err: err, at: until}
 		}
 		r.mu.Lock()
-		r.docs[url] = cachedDiscovery{doc: doc, err: err, until: r.now().Add(ttl)}
+		r.docs[url] = cachedDiscovery{doc: doc, err: err, until: until}
 		r.mu.Unlock()
 		return doc, err
 	})
@@ -334,15 +362,21 @@ func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpoint
 	}
 	resp, err := outbound.Client().Do(request)
 	if err != nil {
-		return doc, fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+		if errors.Is(err, outbound.ErrRedirectRefused) {
+			return doc, fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+		}
+		return doc, fmt.Errorf("%w: %w: %v", ErrDiscoveryFailed, ErrProviderUnavailable, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusTooManyRequests {
+		return doc, fmt.Errorf("%w: %w: %s answered %d", ErrDiscoveryFailed, ErrProviderUnavailable, discoveryURL, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return doc, fmt.Errorf("%w: %s answered %d", ErrDiscoveryFailed, discoveryURL, resp.StatusCode)
 	}
 	endpointsDataJson, err := io.ReadAll(io.LimitReader(resp.Body, maxDiscoveryBody+1))
 	if err != nil {
-		return doc, fmt.Errorf("%w: reading the response: %v", ErrDiscoveryFailed, err)
+		return doc, fmt.Errorf("%w: %w: reading the response: %v", ErrDiscoveryFailed, ErrProviderUnavailable, err)
 	}
 	if len(endpointsDataJson) > maxDiscoveryBody {
 		return doc, fmt.Errorf("%w: %s answered more than %d bytes", ErrDiscoveryFailed, discoveryURL, maxDiscoveryBody)

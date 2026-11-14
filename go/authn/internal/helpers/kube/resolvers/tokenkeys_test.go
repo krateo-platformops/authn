@@ -3,6 +3,7 @@ package resolvers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,6 +157,56 @@ func TestDiscoveryTimesOut(t *testing.T) {
 	_, err = r.discovery(context.Background(), srv.URL)
 	assert.ErrorIs(t, err, ErrDiscoveryFailed)
 	assert.EqualValues(t, 1, fetches.Load(), "the timeout is cached as the provider's failure")
+}
+
+// An unanswered discovery fetch is the provider's outage; an answer that
+// isn't a document is a misconfiguration. A resolver's cached failure says
+// when it will fetch again.
+func TestDiscoveryFailuresAreClassified(t *testing.T) {
+	answering := func(code int) string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(code) }))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://elsewhere.example/doc", http.StatusFound)
+	}))
+	t.Cleanup(redirecting.Close)
+
+	for _, tc := range []struct {
+		name   string
+		url    string
+		outage bool
+	}{
+		{name: "connection refused", url: gone.URL, outage: true},
+		{name: "503", url: answering(http.StatusServiceUnavailable), outage: true},
+		{name: "429", url: answering(http.StatusTooManyRequests), outage: true},
+		{name: "404", url: answering(http.StatusNotFound)},
+		{name: "a redirect", url: redirecting.URL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := fetchDiscovery(context.Background(), tc.url)
+			require.ErrorIs(t, err, ErrDiscoveryFailed)
+			assert.Equal(t, tc.outage, errors.Is(err, ErrProviderUnavailable))
+		})
+	}
+
+	clock := time.Now()
+	r := NewTokenKeysResolver(nil)
+	r.now = func() time.Time { return clock }
+	_, err := r.discovery(context.Background(), gone.URL)
+	at, ok := RetryAt(err)
+	require.True(t, ok)
+	assert.Equal(t, clock.Add(DiscoveryFailureTTL), at)
+	assert.ErrorIs(t, err, ErrProviderUnavailable)
+	clock = clock.Add(10 * time.Second)
+	_, err = r.discovery(context.Background(), gone.URL)
+	at, _ = RetryAt(err)
+	assert.Equal(t, clock.Add(DiscoveryFailureTTL-10*time.Second), at, "the cached failure keeps its time")
+	_, ok = RetryAt(errors.New("plain"))
+	assert.False(t, ok)
 }
 
 // A discovery document past the cap isn't read into memory.

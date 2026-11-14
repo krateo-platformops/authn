@@ -43,7 +43,11 @@ carries `Retry-After`, the key source's `NextRefresh`, which the bridge follows.
 review found plumbing stamping a key set when its fetch completed, which could refuse a
 genuine token received mid-fetch; v1.72.0 stamps the fetch's start. The first listed
 OIDCConfig whose issuer matches is used and later ones aren't resolved, so a stalled
-provider listed after it never delays an exchange.
+provider listed after it never delays an exchange. The bridge's contract run (19 of 19 cases)
+found one inconsistency, now fixed: with Keycloak down and discovery not yet cached,
+`/delegate` answered `500`, but with discovery cached it answered `503`. An unreachable
+provider is now `503 SubjectKeyUnavailable` with `Retry-After` either way; only a
+misconfigured OIDCConfig is `500`.
 
 ## 2026-11-13 — a refusal names only the username's own Secret
 
