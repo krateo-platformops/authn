@@ -1,6 +1,7 @@
 package serviceaccount
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
@@ -29,6 +30,9 @@ import (
 // before verification, the wrong audience included, is no record.
 func TestRefusalsAfterVerificationAreRecorded(t *testing.T) {
 	const cdc = "system:serviceaccount:krateo-system:cdc"
+	// The claim cdc's successful login records: the ServiceAccount's, whatever
+	// mapping names it (TestUnmappedClaimIsTheLoginsClaim).
+	cdcClaim := storage.EncodeClaim(storage.StrategyServiceAccount, "krateo-system", "cdc")
 	review := func(body string) apiReplies {
 		r := defaultReplies()
 		r.tokenReview = body
@@ -46,6 +50,7 @@ func TestRefusalsAfterVerificationAreRecorded(t *testing.T) {
 		outcome string
 		reason  string
 		status  string // the record's http.response.status_code, "" for none
+		claim   bool   // the record carries cdc's identity.claim
 	}{
 		{name: "not authenticated", replies: review(`{"kind":"TokenReview","status":{"authenticated":false}}`)},
 		{name: "wrong audience: not verified for authn", replies: review(`{"kind":"TokenReview","status":{"authenticated":true,
@@ -54,15 +59,15 @@ func TestRefusalsAfterVerificationAreRecorded(t *testing.T) {
 
 		{name: "not a service account", user: "alice", outcome: audit.OutcomeDenied, reason: "not_a_service_account",
 			replies: review(`{"kind":"TokenReview","status":{"authenticated":true,"audiences":["authn"],"user":{"username":"alice"}}}`)},
-		{name: "no mapping", user: cdc, outcome: audit.OutcomeDenied, reason: "no_mapping",
+		{name: "no mapping", user: cdc, outcome: audit.OutcomeDenied, reason: "no_mapping", claim: true,
 			replies: lookup(http.StatusOK, mappingList())},
-		{name: "ambiguous mapping", user: cdc, outcome: audit.OutcomeDenied, reason: "ambiguous_mapping",
+		{name: "ambiguous mapping", user: cdc, outcome: audit.OutcomeDenied, reason: "ambiguous_mapping", claim: true,
 			replies: lookup(http.StatusOK, mappingList(mappingCdc, strings.Replace(mappingCdc, "cdc-identity", "cdc-other", 1)))},
-		{name: "the lookup is refused by the apiserver", user: cdc, outcome: audit.OutcomeFailure, status: "403",
+		{name: "the lookup is refused by the apiserver", user: cdc, outcome: audit.OutcomeFailure, status: "403", claim: true,
 			replies: lookup(http.StatusForbidden, "")},
-		{name: "the lookup fails at the apiserver", user: cdc, outcome: audit.OutcomeFailure, status: "500",
+		{name: "the lookup fails at the apiserver", user: cdc, outcome: audit.OutcomeFailure, status: "500", claim: true,
 			replies: lookup(http.StatusInternalServerError, "")},
-		{name: "nothing answers the lookup", user: cdc, outcome: audit.OutcomeFailure,
+		{name: "nothing answers the lookup", user: cdc, outcome: audit.OutcomeFailure, claim: true,
 			replies: lookup(noAnswer, "")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -102,8 +107,45 @@ func TestRefusalsAfterVerificationAreRecorded(t *testing.T) {
 			assert.Equal(t, "serviceaccount.authn.krateo.io", auditlogtest.String(r, "krateo.audit.object_ref.api_group"))
 			assert.Equal(t, "krateo-system", auditlogtest.String(r, "k8s.namespace.name"))
 			assert.Empty(t, auditlogtest.String(r, "krateo.audit.object_ref.name"), "no mapping can be named")
+			if tc.claim {
+				assert.Equal(t, cdcClaim, auditlogtest.String(r, audit.KeyIdentityClaim), "a verified ServiceAccount's sign-in says whose it was")
+			} else {
+				assert.Empty(t, auditlogtest.String(r, audit.KeyIdentityClaim), "a token that isn't a ServiceAccount's has no claim")
+			}
 		})
 	}
+}
+
+// The claim on a refused or failed ServiceAccount sign-in is exactly the one
+// the same ServiceAccount's successful login records: the generator derives
+// the claim from the subject the login hands it, and both come from
+// subjectOf. A mapping under another name is the same identity.
+func TestUnmappedClaimIsTheLoginsClaim(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "krateo-system")
+	renamed := strings.Replace(mappingCdc, `"name":"cdc-identity"`, `"name":"any-other-name"`, 1)
+	require.NotEqual(t, mappingCdc, renamed, "the fixture's mapping name changed")
+	srv := fakeAPIServer(t, apiReplies{tokenReviewCode: 200, tokenReview: reviewOK, mappingsCode: 200, mappings: mappingList(renamed)})
+	defer srv.Close()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	rec, _ := auditlogtest.New(t)
+	gen := &fakeGenerator{}
+	route := Login(&rest.Config{Host: srv.URL, Timeout: 5 * time.Second}, LoginOptions{
+		KubeconfigGenerator: gen, Audit: rec, JwtDuration: time.Hour, JwtPrivateKey: key, JwtKeyID: "k",
+	})
+	req := httptest.NewRequest(http.MethodPost, Path, nil)
+	req.Header.Set("Authorization", "Bearer projected-sa-token")
+	w := httptest.NewRecorder()
+	route.Handler().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Len(t, gen.subjects, 1)
+	login := storage.EncodeClaim(storage.StrategyServiceAccount, gen.subjects[0].Issuer, gen.subjects[0].ID)
+
+	_, v, err := Authenticate(context.Background(), &rest.Config{Host: srv.URL, Timeout: 5 * time.Second}, DefaultAudience, "projected-sa-token")
+	require.NoError(t, err)
+	assert.Equal(t, login, v.Claim)
+	assert.Equal(t, storage.EncodeClaim(storage.StrategyServiceAccount, "krateo-system", "cdc"), login,
+		"the ServiceAccount's namespace and name, not the mapping's")
 }
 
 // attrString is a record attribute as text, whatever its type, or "" when

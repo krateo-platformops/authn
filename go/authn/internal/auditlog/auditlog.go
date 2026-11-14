@@ -37,6 +37,13 @@ const (
 // LoginAction is the krateo.action of a login with strategy.
 func LoginAction(strategy storage.Strategy) string { return actionLogin + string(strategy) }
 
+// signIn says whether action is a sign-in's: a login (LoginAction) or the
+// OIDC step-up. Only a sign-in record carries krateo.audit.identity.claim
+// (audit v0.15.0).
+func signIn(action string) bool {
+	return strings.HasPrefix(action, actionLogin) || action == ActionStepUp
+}
+
 // The record bodies: a closed set, never an error's text or an upstream answer.
 const (
 	msgIssued  = "credential issued"

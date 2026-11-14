@@ -160,6 +160,31 @@ func TestIssuanceRecordsTheVerifiedClaim(t *testing.T) {
 	}
 }
 
+// A verified caller refused at the mapping lookup carries its claim only on
+// the ServiceAccount login, a sign-in; /delegate and /usernames/check records
+// never carry krateo.audit.identity.claim, whatever claim they're handed.
+func TestUnmappedCarriesTheClaimOnlyOnASignIn(t *testing.T) {
+	t.Setenv("POD_NAMESPACE", "krateo-system")
+	claim := storage.EncodeClaim(storage.StrategyServiceAccount, "krateo-system", "cdc")
+	for _, tc := range []struct {
+		action string
+		want   string
+	}{
+		{LoginAction(storage.StrategyServiceAccount), claim},
+		{ActionDelegate, ""},
+		{ActionUsernameCheck, ""},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			r, rec := newRecorder(t)
+			r.Unmapped(get("/x"), tc.action, "system:serviceaccount:krateo-system:cdc", claim, audit.OutcomeDenied, MappingMissing, 0)
+			got := rec.Only(t)
+			v, ok := attr(t, audittest.Attributes(got), audit.KeyIdentityClaim)
+			assert.Equal(t, tc.want != "", ok)
+			assert.Equal(t, tc.want, v.AsString())
+		})
+	}
+}
+
 // The scope is the one audit's schema lists as authn's request population.
 func TestRecorderScope(t *testing.T) {
 	rec := audittest.NewRecorder(t)

@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-14 — a refused ServiceAccount sign-in says whose it was too
+
+The `identity.claim` of 0.48.0 covered sign-ins that reached issuance. A ServiceAccount login
+the TokenReview verified but authn refused or failed at the mapping lookup (authn#132's
+records: no mapping, ambiguous, a failed lookup) was a verified sign-in without it, which
+audit v0.15.0's conditional level requires. Found while giving input on audit#45, which makes
+that condition machine-checkable. Those records now carry the ServiceAccount's claim, the one
+its successful login records (one `subjectOf` rule for both); `/delegate` and
+`/usernames/check` records still never carry the key, and a verified non-ServiceAccount token
+has none.
+
 ## 2026-11-14 — TLS on the internal listener
 
 `internal.tls.issuerRef` (#145, Diego's decisions: the installer's CA ClusterIssuer, and a
