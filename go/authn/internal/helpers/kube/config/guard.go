@@ -129,7 +129,7 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		// from any other identity, so nothing is issued.
 		return "", status.Failed(status.CauseIssuanceFailed, fmt.Errorf("the %s login set no subject for the identity", strategy))
 	}
-	claim := storage.EncodeClaim(strategy, subject.Issuer, subject.ID)
+	claim := verifiedClaim(strategy, user)
 	external := fromIdentitySource(strategy)
 
 	// Neither the log line nor the errors name the username or the claim: no

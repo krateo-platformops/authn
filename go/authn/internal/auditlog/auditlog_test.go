@@ -127,6 +127,39 @@ func TestIssuanceRecordsConform(t *testing.T) {
 	}
 }
 
+// A sign-in record carries the verified identity's claim
+// (krateo.audit.identity.claim, audit v0.15.0) on every outcome, and still
+// conforms; with no claim, or one not in format identity_claim, the key is
+// absent.
+func TestIssuanceRecordsTheVerifiedClaim(t *testing.T) {
+	claim := storage.EncodeClaim(storage.StrategyOIDC, "https://kc.example/realms/krateo", "uid-alice")
+	withClaim := func(i config.Issued, c string) config.Issued { i.Claim = c; return i }
+	for _, tc := range []struct {
+		name   string
+		action string
+		issued config.Issued
+		err    error
+		want   string
+	}{
+		{"a login that wrote the Secret", LoginAction(storage.StrategyOIDC), withClaim(created(), claim), nil, claim},
+		{"a login the name guard refused", LoginAction(storage.StrategyOIDC), withClaim(wouldUpdate(), claim), refusal(), claim},
+		{"a login whose write failed", LoginAction(storage.StrategyOIDC), withClaim(wouldUpdate(), claim), errors.New("internal error"), claim},
+		{"a step-up", ActionStepUp, withClaim(created(), claim), nil, claim},
+		{"no claim", LoginAction(storage.StrategyOIDC), created(), nil, ""},
+		{"not an identity claim", LoginAction(storage.StrategyOIDC), withClaim(created(), `["self","","x"]`), nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, rec := newRecorder(t)
+			r.Issuance(get("/x"), tc.action, alice(), jwtutil.PrincipalHuman, tc.issued, tc.err)
+			got := rec.Only(t)
+			audittest.AssertConformant(t, audit.WriterRequest, got)
+			v, ok := attr(t, audittest.Attributes(got), audit.KeyIdentityClaim)
+			assert.Equal(t, tc.want != "", ok)
+			assert.Equal(t, tc.want, v.AsString())
+		})
+	}
+}
+
 // The scope is the one audit's schema lists as authn's request population.
 func TestRecorderScope(t *testing.T) {
 	rec := audittest.NewRecorder(t)

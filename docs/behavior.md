@@ -757,6 +757,15 @@ or a log line.
   - `failure` when the issuance failed after verification, a misconfigured
     `spec.stepUp` included (no status code: no authority was asked).
 
+  Every login and step-up record, whatever its outcome, carries the verified identity's
+  claim as `krateo.audit.identity.claim` (audit v0.15.0): `["<strategy>", "<issuer>",
+  "<subject>"]`, the `storage.EncodeClaim` value the name guard compares and the Secret
+  carries, so a refusal says whose sign-in it was even when no Secret is named. It is the
+  identity verified on that record and nothing else (snowplow's ruling as audit schema
+  lead): no other record carries it, not `/usernames/check` (the claim held on a checked
+  name is another identity's) and not `/delegate` (its person is `on_behalf_of`, its actor
+  `user.name`). An identity without a subject has no claim, and none is issued.
+
   **ServiceAccount login** is verified once the TokenReview authenticates the token for
   authn's audience. From then on, a refusal at the mapping lookup is `denied`: `no_mapping`
   (the allowlist doesn't name the ServiceAccount), `ambiguous_mapping` (more than one

@@ -58,6 +58,24 @@ type Issued struct {
 	// names the Secret whenever the identity has a username; one without names
 	// none.
 	Secret storage.Written
+	// Claim is the verified identity's claim, storage.EncodeClaim(strategy,
+	// issuer, subject): the value the name guard compares and the Secret
+	// carries. It is set on success, on a refusal and on a failure alike,
+	// since every call follows the identity's verification, so the audit
+	// record says whose sign-in it was (krateo.audit.identity.claim, audit
+	// v0.15.0). Empty only for an identity with no subject, which nothing is
+	// issued to.
+	Claim string
+}
+
+// verifiedClaim is user's claim under strategy, or "" when user has no
+// subject.
+func verifiedClaim(strategy storage.Strategy, user userinfo.Info) string {
+	subject := user.GetSubject()
+	if subject.ID == "" {
+		return ""
+	}
+	return storage.EncodeClaim(strategy, subject.Issuer, subject.ID)
 }
 
 // IssueOption adjusts how one issued credential is stored.
@@ -260,6 +278,12 @@ func (g *kubeconfigGenerator) admit(strategy storage.Strategy, user userinfo.Inf
 }
 
 func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) (Issued, error) {
+	issued, err := g.generate(strategy, userInfo, opts...)
+	issued.Claim = verifiedClaim(strategy, userInfo)
+	return issued, err
+}
+
+func (g *kubeconfigGenerator) generate(strategy storage.Strategy, userInfo userinfo.Info, opts ...IssueOption) (Issued, error) {
 	target := g.secretFor(userInfo, false)
 	o := NewIssueOptions(opts...)
 	log := o.logger(g.log)
@@ -319,6 +343,12 @@ func (g *kubeconfigGenerator) Generate(strategy storage.Strategy, userInfo useri
 }
 
 func (g *kubeconfigGenerator) GenerateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error) {
+	issued, err := g.generateStepUp(strategy, userInfo, ttl, opts...)
+	issued.Claim = verifiedClaim(strategy, userInfo)
+	return issued, err
+}
+
+func (g *kubeconfigGenerator) generateStepUp(strategy storage.Strategy, userInfo userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error) {
 	target := g.secretFor(userInfo, true)
 	o := NewIssueOptions(opts...)
 	log := o.logger(g.log)

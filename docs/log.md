@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-14 — a sign-in record says whose sign-in it was
+
+Every login (basic, LDAP, OAuth, OIDC, ServiceAccount) and OIDC step-up record now carries
+the verified identity's claim, `krateo.audit.identity.claim` (audit v0.15.0, audit#37), on
+success, refusal and failure alike: the `storage.EncodeClaim` value the name guard compares.
+A refusal that names no Secret (a rewritten name, no username) still says whose it was, and
+one `identity.claim` query joins an identity's sign-ins across usernames. It comes from the
+generator (`config.Issued.Claim`), the same rule the guard uses, never from request input.
+No other record carries it: snowplow's ruling as audit schema lead excludes `/usernames/check`
+and `/delegate`.
+
 ## 2026-11-13 — /delegate exchanges a Keycloak access token (IDE sign-in to Agentiko)
 
 IDEs (Claude Code, Cursor) sign in to Agentiko over MCP with Keycloak as the OAuth

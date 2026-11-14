@@ -60,7 +60,7 @@ func VouchForExchange(ctx context.Context, lookup NameLookup, naming storage.Nam
 	if lookup == nil {
 		return "", status.Failed(status.CauseIssuanceFailed, errors.New("no name lookup to check the username's claim"))
 	}
-	claim := storage.EncodeClaim(strategy, subject.Issuer, subject.ID)
+	claim := verifiedClaim(strategy, user)
 	external := fromIdentitySource(strategy)
 
 	g := nameGuard{lookup: lookup, log: log, naming: naming}
