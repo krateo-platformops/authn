@@ -920,7 +920,11 @@ a `Certificate` for `<release>-internal`, `.<namespace>`, `.<namespace>.svc` and
 `.<namespace>.svc.cluster.local` (ECDSA P-256, a new key at each renewal), mounts its Secret
 `<release>-internal-tls`, and sets `AUTHN_INTERNAL_TLS_CERT_FILE`/`_KEY_FILE`. authn then serves
 the internal port over TLS 1.2 or later only: a plain-HTTP request is answered `400` by the TLS
-server and never reaches a route. When cert-manager renews the Secret and the kubelet swaps the
+server and never reaches a route. Go's TLS server writes that `400` (body `Client sent an HTTP
+request to an HTTPS server.`) and closes the connection at once, so a client can see the answer
+cut short or the read fail part-way. A caller that wants to name the misconfiguration should
+match the status line or that fixed body on whatever it read, not require a complete response
+(identity-lifecycle 0.4.2 does). When cert-manager renews the Secret and the kubelet swaps the
 files, the next handshake loads the new pair, with no restart. A pair read mid-swap keeps the
 previous certificate in service until it loads. authn refuses to start with only one of the
 two files set, or with a pair that doesn't load, so it never serves the internal port without
