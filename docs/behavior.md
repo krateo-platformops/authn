@@ -343,8 +343,15 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 ### `LDAPConfig` (`ldap.authn.krateo.io`) — `apis/authn/ldap/v1alpha1/types.go`
 - `spec.dialURL` (required), `spec.baseDN` (required).
 - `spec.bindDN` + `spec.bindSecret` (optional; omit for anonymous bind).
-- `spec.tls` (optional bool — `StartTLS` with `InsecureSkipVerify`, see
-  [gotchas.md](./gotchas.md)).
+- `spec.tls` (optional bool): `StartTLS` before any bind. The server's certificate is
+  verified (#160; Diego, 2026-11-14) for the host in `spec.dialURL`, against `spec.tlsCA`
+  when set, otherwise the system roots, TLS 1.2 or later. An `ldaps://` `dialURL` is
+  verified the same way. Before #160, StartTLS skipped verification.
+- `spec.tlsCA` (optional Secret key selector, #160): PEM certificate(s) of the CA that
+  signs the server's certificate, trusted instead of the system roots. An unreadable
+  Secret is `500 LDAPConfigLookupFailed`; a key holding no certificate is
+  `500 LDAPConfigInvalid`. Both are found before any connection. A server whose
+  certificate doesn't verify fails the handshake: `500 LDAPUnavailable`.
 - `spec.groupSearch` (optional, #72) — the search for the user's groups: `baseDN`
   (default `spec.baseDN`), `filter` (a `text/template` over the escaped `.DN` and
   `.Username`; default `(|(member={{.DN}})(uniqueMember={{.DN}}))`), `nameAttribute`

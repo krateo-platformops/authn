@@ -75,10 +75,11 @@ type fakeLDAP struct {
 	searches  int
 	requests  []*ldap.SearchRequest // every search, in order
 	binds     []string              // every bind DN, in order
+	tlsConfig *tls.Config           // what StartTLS was called with
 }
 
-func (f *fakeLDAP) Close() error               { return nil }
-func (f *fakeLDAP) StartTLS(*tls.Config) error { return f.startTLS }
+func (f *fakeLDAP) Close() error                 { return nil }
+func (f *fakeLDAP) StartTLS(c *tls.Config) error { f.tlsConfig = c; return f.startTLS }
 func (f *fakeLDAP) Bind(dn, password string) error {
 	f.binds = append(f.binds, dn)
 	switch dn {
@@ -210,7 +211,7 @@ func loginAs(t *testing.T, name string, configCode, secretCode int, srvLDAP *fak
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 	if !realDial {
 		orig := dial
-		dial = func(url string) (ldap.Client, error) {
+		dial = func(url string, _ *tls.Config) (ldap.Client, error) {
 			if url != fakeDialURL {
 				return nil, fmt.Errorf("unexpected dial to %q", url)
 			}
@@ -345,7 +346,7 @@ func TestInvalidCredentialsAreIndistinguishable(t *testing.T) {
 	attempt := func(srvLDAP *fakeLDAP) (*httptest.ResponseRecorder, string) {
 		t.Setenv("POD_NAMESPACE", "krateo-system")
 		orig := dial
-		dial = func(string) (ldap.Client, error) { return srvLDAP, nil }
+		dial = func(string, *tls.Config) (ldap.Client, error) { return srvLDAP, nil }
 		defer func() { dial = orig }()
 		srv := fakeAPIServer(t, 200, 200, fakeDialURL, "")
 		route := Login(&rest.Config{Host: srv.URL}, LoginOptions{KubeconfigGenerator: &fakeGenerator{}, JwtDuration: time.Hour, JwtPrivateKey: testKey(t), JwtKeyID: "k"})

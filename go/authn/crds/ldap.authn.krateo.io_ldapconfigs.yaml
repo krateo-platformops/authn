@@ -125,7 +125,33 @@ spec:
                     type: string
                 type: object
               tls:
+                description: |-
+                  TLS upgrades the connection with StartTLS before any bind. The server's
+                  certificate is always verified (authn#160): against TLSCA when set,
+                  otherwise the system roots, for the host in DialURL. An ldaps:// DialURL
+                  is verified the same way, with or without TLS.
                 type: boolean
+              tlsCA:
+                description: |-
+                  TLSCA names a Secret key holding the PEM certificate(s) of the CA that
+                  signs the LDAP server's certificate, trusted instead of the system roots
+                  (authn#160). Set it for a server with a private CA; omitted, the system
+                  roots verify it.
+                properties:
+                  key:
+                    description: The key to select.
+                    type: string
+                  name:
+                    description: Name of the referenced object.
+                    type: string
+                  namespace:
+                    description: Namespace of the referenced object.
+                    type: string
+                required:
+                - key
+                - name
+                - namespace
+                type: object
             required:
             - baseDN
             - dialURL

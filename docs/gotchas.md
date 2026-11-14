@@ -145,11 +145,13 @@ intra-service ones most of all because they log into shared pipelines, must neve
 or wrap the `200` body in an error. Error (non-`200`) bodies carry no secrets, so
 quoting them in an error is safe. Keep it that way when changing `encode.*`.
 
-## LDAP TLS skips verification
-With `spec.tls: true`, the LDAP `StartTLS` call uses `InsecureSkipVerify: true`
-(`internal/routes/auth/ldap/support.go:159`). TLS here gives transport encryption but
-**no certificate validation** — it does not protect against a MITM with a forged
-cert.
+## LDAP TLS verifies the server, so a private CA must be configured
+Since #160, `StartTLS` (`spec.tls: true`) and `ldaps://` verify the LDAP server's
+certificate for the host in `spec.dialURL`. Before, StartTLS used `InsecureSkipVerify`.
+A server whose certificate a private CA signed, or whose certificate names another host,
+now fails every sign-in with `500 LDAPUnavailable` until `spec.tlsCA` names a Secret key
+holding that CA, or the dialURL names a host the certificate covers. There is no option
+to skip verification: a bind sends the user's password.
 
 ## OIDC ID token claims are validated, its signature is not
 Since 0.29.0 (#50), `validateIDToken` (`oidc/idtoken.go`) checks `iss`, `aud`/`azp`

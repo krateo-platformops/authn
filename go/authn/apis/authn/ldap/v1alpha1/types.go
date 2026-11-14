@@ -26,7 +26,19 @@ type LDAPConfigSpec struct {
 	// BaseDN: specifies the base of the subtree in which the search is to be constrained.
 	BaseDN string `json:"baseDN"`
 
+	// TLS upgrades the connection with StartTLS before any bind. The server's
+	// certificate is always verified (authn#160): against TLSCA when set,
+	// otherwise the system roots, for the host in DialURL. An ldaps:// DialURL
+	// is verified the same way, with or without TLS.
+	// +optional
 	TLS *bool `json:"tls,omitempty"`
+
+	// TLSCA names a Secret key holding the PEM certificate(s) of the CA that
+	// signs the LDAP server's certificate, trusted instead of the system roots
+	// (authn#160). Set it for a server with a private CA; omitted, the system
+	// roots verify it.
+	// +optional
+	TLSCA *core.SecretKeySelector `json:"tlsCA,omitempty"`
 
 	// GroupSearch configures how a user's groups are found after their bind
 	// succeeds. A user's groups are exactly what this search finds; attributes

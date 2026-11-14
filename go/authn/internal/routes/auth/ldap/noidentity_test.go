@@ -2,6 +2,7 @@ package ldap
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -59,7 +60,7 @@ func TestLDAPLoginLogsNoIdentity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("POD_NAMESPACE", "krateo-system")
 			orig := dial
-			dial = func(string) (ldap.Client, error) {
+			dial = func(string, *tls.Config) (ldap.Client, error) {
 				if tc.dialErr != nil {
 					return nil, tc.dialErr
 				}
