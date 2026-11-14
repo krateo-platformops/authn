@@ -71,10 +71,10 @@ func TestNewServers(t *testing.T) {
 	public, internal, err := listenerHandlers(testRouteOptions(t), testLogger())
 	require.NoError(t, err)
 
-	_, _, err = newServers(public, internal, 8082, 8082)
+	_, _, err = newServers(public, internal, 8082, 8082, nil)
 	assert.Error(t, err, "both listeners on one port")
 
-	pub, in, err := newServers(public, internal, 8082, 8090)
+	pub, in, err := newServers(public, internal, 8082, 8090, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ":8082", pub.Addr)
 	assert.Equal(t, ":8090", in.Addr)
@@ -188,10 +188,10 @@ func TestNewListeners(t *testing.T) {
 	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans)))
 	t.Cleanup(func() { otel.SetTracerProvider(prev) })
 
-	_, _, err := newListeners(testRouteOptions(t), testLogger(), true, 8082, 8082)
+	_, _, err := newListeners(testRouteOptions(t), testLogger(), true, 8082, 8082, nil)
 	assert.Error(t, err, "both listeners on one port")
 
-	pub, in, err := newListeners(testRouteOptions(t), testLogger(), true, 8082, 8090)
+	pub, in, err := newListeners(testRouteOptions(t), testLogger(), true, 8082, 8090, nil)
 	require.NoError(t, err)
 	assert.Equal(t, ":8082", pub.Addr)
 	assert.Equal(t, ":8090", in.Addr)

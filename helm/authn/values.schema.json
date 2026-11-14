@@ -174,6 +174,31 @@
               }
             }
           }
+        },
+        "tls": {
+          "type": "object",
+          "title": "Internal listener TLS",
+          "additionalProperties": false,
+          "description": "TLS on the internal listener (authn#145). Set issuerRef to a cert-manager CA Issuer or ClusterIssuer: authn then serves the internal port over TLS only, with a certificate for <release>-internal.<namespace>.svc that cert-manager rotates. Unset: plain HTTP. Callers trust the issuer's CA through a trust-manager Bundle, never by reading authn's Secret, which holds the private key.",
+          "properties": {
+            "issuerRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "",
+                    "Issuer",
+                    "ClusterIssuer"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
     },

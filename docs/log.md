@@ -14,6 +14,16 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-14 — TLS on the internal listener
+
+`internal.tls.issuerRef` (#145, Diego's decisions: the installer's CA ClusterIssuer, and a
+trust-manager Bundle for callers) makes authn serve `POST /usernames/check` over TLS only, with
+a cert-manager certificate for `<release>-internal.<namespace>.svc`. In-cluster callers' projected
+ServiceAccount tokens no longer cross the pod network in the clear. Rotation needs no restart:
+the next handshake after the kubelet swaps the files loads the new pair, and a pair read mid-swap
+keeps the previous one in service. Off by default; neither demo nor 057 had a caller of the
+listener when it shipped (0 mappings with `usernameCheck.allowed`).
+
 ## 2026-11-14 — a sign-in record says whose sign-in it was
 
 Every login (basic, LDAP, OAuth, OIDC, ServiceAccount) and OIDC step-up record now carries

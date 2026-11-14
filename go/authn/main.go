@@ -51,6 +51,10 @@ func main() {
 	servicePort := flag.Int("port", env.Int("AUTHN_PORT", 8082), "port to listen on")
 	internalPort := flag.Int("internal-port", env.Int("AUTHN_INTERNAL_PORT", 8090),
 		"port of the internal listener, for in-cluster callers only (POST /usernames/check); never route it publicly")
+	internalTLSCert := flag.String("internal-tls-cert-file", os.Getenv("AUTHN_INTERNAL_TLS_CERT_FILE"),
+		"certificate the internal listener serves TLS with (authn#145); with internal-tls-key-file, or neither for plain HTTP")
+	internalTLSKey := flag.String("internal-tls-key-file", os.Getenv("AUTHN_INTERNAL_TLS_KEY_FILE"),
+		"private key of internal-tls-cert-file")
 	certExpiresIn := flag.Duration("cert-expires",
 		env.Duration("AUTHN_KUBECONFIG_CRT_EXPIRES_IN", time.Hour*24), "requested duration of a login certificate (default: 24h)")
 	serviceCertExpiresIn := flag.Duration("service-cert-expires",
@@ -273,7 +277,11 @@ func main() {
 		}
 	}
 
-	server, internalServer, err := newListeners(ro, log, *corsOn, *servicePort, *internalPort)
+	internalTLS, err := internalTLSConfig(*internalTLSCert, *internalTLSKey, log)
+	if err != nil {
+		log.Fatal().Err(err).Msg("configuring the internal listener's TLS")
+	}
+	server, internalServer, err := newListeners(ro, log, *corsOn, *servicePort, *internalPort, internalTLS)
 	if err != nil {
 		log.Fatal().Err(err).Msg("building the listeners")
 	}
@@ -390,7 +398,7 @@ func main() {
 	}
 
 	go func() {
-		if err := internalServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := listenAndServe(internalServer); err != nil && err != http.ErrServerClosed {
 			log.Fatal().Err(err).Msgf("could not listen on %s (internal)", internalServer.Addr)
 		}
 	}()
