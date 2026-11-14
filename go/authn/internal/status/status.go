@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Values of Status.Status
@@ -145,6 +146,12 @@ const (
 	// asserted a `krateo:` group. Those carry platform rights and come only
 	// from identities an administrator provisions.
 	CausePlatformGroupNotAllowed CauseType = "PlatformGroupNotAllowed"
+	// CauseSubjectNotSignedIn: a token exchange's subject verified, but
+	// their username has no credential Secret yet (authn#155): the person
+	// must sign in to the portal once, which gives the username its claim,
+	// then retry. Unlike UsernameUnavailable it says what to do, and names
+	// no one else.
+	CauseSubjectNotSignedIn CauseType = "SubjectNotSignedIn"
 )
 
 // Causes of a 400 shared by the logins that take a config name and an
@@ -249,13 +256,16 @@ func New(code int, err error) Status {
 // Answered, when set, is the opposite: text answered after Err and never
 // logged. It is for text authn doesn't write and that may name an identity,
 // such as the apiserver's verdict on the caller's own token: the caller may
-// read it, a log line may not carry it.
+// read it, a log line may not carry it. RetryAfter, when set on a 503, is
+// how long the caller should wait before retrying, answered as Retry-After
+// (RFC 9110 §10.2.3) by a route that sends it.
 type CauseError struct {
-	Code     int
-	Cause    CauseType
-	Err      error
-	Private  error
-	Answered string
+	Code       int
+	Cause      CauseType
+	Err        error
+	Private    error
+	Answered   string
+	RetryAfter time.Duration
 }
 
 func (e CauseError) Error() string { return e.Err.Error() }
@@ -278,6 +288,14 @@ func Failed(cause CauseType, err error) CauseError {
 	return CauseError{Code: http.StatusInternalServerError, Cause: cause, Err: err}
 }
 
+// FailedPrivately is a failure on authn's side (500) that answers public and
+// keeps the real reason, private, for the server log. Use it where the reason
+// names authn's configuration or a dependency's address, such as an identity
+// provider's key URL, which the caller has no use for.
+func FailedPrivately(cause CauseType, public, private error) CauseError {
+	return CauseError{Code: http.StatusInternalServerError, Cause: cause, Err: public, Private: private}
+}
+
 // IssueFailure renders an error from issuing a credential, what naming it. An
 // error that already carries a cause, such as the name guard's refusal, is
 // answered as it is: wrapping it would turn a refusal into a 500. Any other
@@ -288,6 +306,16 @@ func IssueFailure(what string, err error) error {
 		return err
 	}
 	return Failed(CauseIssuanceFailed, fmt.Errorf("issuing %s: %w", what, err))
+}
+
+// RetryAfter is err's Retry-After in whole seconds, rounded up and at least
+// 1, and whether err carries one.
+func RetryAfter(err error) (int, bool) {
+	var ce CauseError
+	if !errors.As(err, &ce) || ce.RetryAfter <= 0 {
+		return 0, false
+	}
+	return int((ce.RetryAfter + time.Second - 1) / time.Second), true
 }
 
 // FromError renders err as a Status with its code and cause. An error that

@@ -12,11 +12,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
 	oidcv1alpha1 "github.com/krateo-platformops/authn/apis/authn/oidc/v1alpha1"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/outbound"
+	"golang.org/x/sync/singleflight"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )
@@ -28,6 +31,33 @@ var ErrIssuerConflict = errors.New("spec.issuer differs from the discovered issu
 // ErrDiscoveryFailed reports a discovery document that could not be read.
 var ErrDiscoveryFailed = errors.New("OIDC discovery failed")
 
+// ErrProviderUnavailable reports a discovery fetch the provider didn't
+// answer: the connection failed or timed out, or it answered 5xx or 429. That
+// is an outage, which a retry may outlast, not a misconfiguration (a 404, a
+// redirect, a document that isn't one), which needs an admin. It always comes
+// with ErrDiscoveryFailed.
+var ErrProviderUnavailable = errors.New("the identity provider is unavailable")
+
+// retryAtError is a cached discovery failure with when TokenKeysResolver will
+// fetch the document again.
+type retryAtError struct {
+	err error
+	at  time.Time
+}
+
+func (e retryAtError) Error() string { return e.err.Error() }
+func (e retryAtError) Unwrap() error { return e.err }
+
+// RetryAt is when the TokenKeysResolver that returned err will next fetch the
+// discovery document it failed on, and whether err carries that time.
+func RetryAt(err error) (time.Time, bool) {
+	var r retryAtError
+	if !errors.As(err, &r) {
+		return time.Time{}, false
+	}
+	return r.at, true
+}
+
 // ErrEndpointsMissing reports an OIDCConfig whose authorize or token endpoint
 // is known neither from its spec nor from discovery.
 var ErrEndpointsMissing = errors.New("authorize or token endpoint unknown")
@@ -37,9 +67,22 @@ type DiscoveryEndpointResponse struct {
 	Authorization_endpoint string `json:"authorization_endpoint"`
 	Token_endpoint         string `json:"token_endpoint"`
 	Userinfo_endpoint      string `json:"userinfo_endpoint"`
+	// JWKSURI is where the provider publishes the keys its tokens are
+	// signed with (OpenID Connect Discovery 1.0 §3, jwks_uri).
+	JWKSURI string `json:"jwks_uri"`
 }
 
 func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
+	res, err := getOIDCConfig(ctx, rc, name)
+	if err != nil {
+		return nil, err
+	}
+	return res, resolveOIDCConfig(ctx, res)
+}
+
+// getOIDCConfig reads the OIDCConfig name in the operator namespace, as
+// stored.
+func getOIDCConfig(ctx context.Context, rc *rest.Config, name string) (*oidcv1alpha1.OIDCConfig, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
 		return nil, fmt.Errorf("unable to resolve service namespace: %w", err)
@@ -56,13 +99,138 @@ func OIDCConfigGet(ctx context.Context, rc *rest.Config, name string) (*oidcv1al
 	res := &oidcv1alpha1.OIDCConfig{}
 	err = cli.Get().Resource("oidcconfigs").
 		Namespace(ns).Name(name).
-		Do(context.Background()).
+		Do(ctx).
 		Into(res)
 	if err != nil {
 		return nil, err
 	}
+	return res, nil
+}
 
-	return res, resolveOIDCConfig(ctx, res)
+// ErrNoJWKS reports an OIDCConfig whose provider's signing keys can't be
+// found: it has no discoveryURL, or its discovery document has no jwks_uri.
+// An access token can't be verified without them (authn#155).
+var ErrNoJWKS = errors.New("the identity provider's signing keys are unknown")
+
+// OIDCTokenKeys is what verifying an access token an OIDCConfig's provider
+// issued takes (authn#155): the issuer the token must carry, where the
+// provider's signing keys are published, and the config's allowedGroups.
+// MapsThroughRESTAction says the config sets restActionRef: its sign-in maps
+// the person through a RESTAction, which a token exchange doesn't run, so an
+// exchange refuses the config (Diego, 2026-11-13) rather than map the person
+// differently from their sign-in.
+type OIDCTokenKeys struct {
+	Issuer                string
+	JWKSURI               string
+	AllowedGroups         []string
+	MapsThroughRESTAction bool
+}
+
+// Discovery documents are cached for DiscoveryTTL after a successful fetch,
+// and for DiscoveryFailureTTL after a failed one, so a provider that is down
+// isn't fetched on every exchange either.
+const (
+	DiscoveryTTL        = 5 * time.Minute
+	DiscoveryFailureTTL = 30 * time.Second
+)
+
+// TokenKeysResolver resolves OIDCConfigs' OIDCTokenKeys for token exchanges
+// (authn#155). It reads the OIDCConfig on every call, as a sign-in does, so a
+// change to its allowedGroups, issuer or restActionRef applies at once. The
+// provider's discovery document, which only the provider changes, is cached
+// by URL, and concurrent exchanges share one fetch of it. It is safe for
+// concurrent use.
+type TokenKeysResolver struct {
+	rc  *rest.Config
+	now func() time.Time
+
+	mu     sync.Mutex
+	docs   map[string]cachedDiscovery
+	flight singleflight.Group
+}
+
+type cachedDiscovery struct {
+	doc   DiscoveryEndpointResponse
+	err   error
+	until time.Time
+}
+
+func NewTokenKeysResolver(rc *rest.Config) *TokenKeysResolver {
+	return &TokenKeysResolver{rc: rc, now: time.Now, docs: map[string]cachedDiscovery{}}
+}
+
+// TokenKeys reads the OIDCConfig name and its provider's discovery document
+// for OIDCTokenKeys.
+func (r *TokenKeysResolver) TokenKeys(ctx context.Context, name string) (OIDCTokenKeys, error) {
+	cfg, err := getOIDCConfig(ctx, r.rc, name)
+	if err != nil {
+		return OIDCTokenKeys{}, err
+	}
+	return tokenKeys(ctx, cfg, r.discovery)
+}
+
+// discovery is the discovery document at url, from the cache while it is
+// fresh. Otherwise one fetch serves every caller waiting on url. The fetch is
+// bounded by discoveryTimeout, not by a caller's context, so its outcome,
+// a timeout included, is always the provider's and is cached. A caller that
+// gives up stops waiting without abandoning the fetch for the others.
+func (r *TokenKeysResolver) discovery(ctx context.Context, url string) (DiscoveryEndpointResponse, error) {
+	r.mu.Lock()
+	c, ok := r.docs[url]
+	r.mu.Unlock()
+	if ok && r.now().Before(c.until) {
+		return c.doc, c.err
+	}
+	fetched := r.flight.DoChan(url, func() (any, error) {
+		doc, err := fetchDiscovery(context.WithoutCancel(ctx), url)
+		until := r.now().Add(DiscoveryTTL)
+		if err != nil {
+			until = r.now().Add(DiscoveryFailureTTL)
+			err = retryAtError{err: err, at: until}
+		}
+		r.mu.Lock()
+		r.docs[url] = cachedDiscovery{doc: doc, err: err, until: until}
+		r.mu.Unlock()
+		return doc, err
+	})
+	select {
+	case res := <-fetched:
+		doc, _ := res.Val.(DiscoveryEndpointResponse)
+		return doc, res.Err
+	case <-ctx.Done():
+		return DiscoveryEndpointResponse{}, fmt.Errorf("%w: %v", ErrDiscoveryFailed, ctx.Err())
+	}
+}
+
+// tokenKeys is cfg's OIDCTokenKeys, its discovery document read by discover.
+// The issuer follows the login's rule (resolveOIDCConfig): spec.issuer when
+// set, which must then equal the discovered issuer, else the discovered one.
+// The keys come only from discovery, which every access token's verification
+// needs.
+func tokenKeys(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig,
+	discover func(context.Context, string) (DiscoveryEndpointResponse, error)) (OIDCTokenKeys, error) {
+	if cfg.Spec.DiscoveryURL == "" {
+		return OIDCTokenKeys{}, fmt.Errorf("%w: the OIDCConfig has no discoveryURL", ErrNoJWKS)
+	}
+	doc, err := discover(ctx, cfg.Spec.DiscoveryURL)
+	if err != nil {
+		return OIDCTokenKeys{}, err
+	}
+	issuer := cfg.Spec.Issuer
+	switch {
+	case issuer == "":
+		issuer = doc.Issuer
+	case doc.Issuer != "" && doc.Issuer != issuer:
+		return OIDCTokenKeys{}, fmt.Errorf("%w: spec.issuer %q, discovery %q", ErrIssuerConflict, issuer, doc.Issuer)
+	}
+	if issuer == "" {
+		return OIDCTokenKeys{}, fmt.Errorf("%w: neither spec.issuer nor discovery names the issuer", ErrDiscoveryFailed)
+	}
+	if doc.JWKSURI == "" {
+		return OIDCTokenKeys{}, fmt.Errorf("%w: the discovery document has no jwks_uri", ErrNoJWKS)
+	}
+	return OIDCTokenKeys{Issuer: issuer, JWKSURI: doc.JWKSURI, AllowedGroups: cfg.Spec.AllowedGroups,
+		MapsThroughRESTAction: cfg.Spec.RESTActionRef != nil}, nil
 }
 
 // resolveOIDCConfig completes cfg for a login: the endpoints, and the issuer
@@ -173,23 +341,45 @@ func doDiscovery(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) error {
 	return applyDiscovery(cfg, DiscoveryEndpointResponse{})
 }
 
+// maxDiscoveryBody caps how much of a discovery document authn reads. A real
+// one is a few KiB; the cap keeps a misbehaving or hostile endpoint from
+// filling authn's memory.
+const maxDiscoveryBody = 1 << 20
+
+// discoveryTimeout bounds one discovery fetch, whatever the caller's context
+// allows: a provider that accepts the connection and then stalls can't hold a
+// sign-in or an exchange, or a connection, for longer. outbound.Client has
+// no timeout of its own.
+var discoveryTimeout = 10 * time.Second
+
 func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpointResponse, error) {
 	var doc DiscoveryEndpointResponse
+	ctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return doc, fmt.Errorf("%w: creating the request: %v", ErrDiscoveryFailed, err)
 	}
 	resp, err := outbound.Client().Do(request)
 	if err != nil {
-		return doc, fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+		if errors.Is(err, outbound.ErrRedirectRefused) {
+			return doc, fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+		}
+		return doc, fmt.Errorf("%w: %w: %v", ErrDiscoveryFailed, ErrProviderUnavailable, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= http.StatusInternalServerError || resp.StatusCode == http.StatusTooManyRequests {
+		return doc, fmt.Errorf("%w: %w: %s answered %d", ErrDiscoveryFailed, ErrProviderUnavailable, discoveryURL, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return doc, fmt.Errorf("%w: %s answered %d", ErrDiscoveryFailed, discoveryURL, resp.StatusCode)
 	}
-	endpointsDataJson, err := io.ReadAll(resp.Body)
+	endpointsDataJson, err := io.ReadAll(io.LimitReader(resp.Body, maxDiscoveryBody+1))
 	if err != nil {
-		return doc, fmt.Errorf("%w: reading the response: %v", ErrDiscoveryFailed, err)
+		return doc, fmt.Errorf("%w: %w: reading the response: %v", ErrDiscoveryFailed, ErrProviderUnavailable, err)
+	}
+	if len(endpointsDataJson) > maxDiscoveryBody {
+		return doc, fmt.Errorf("%w: %s answered more than %d bytes", ErrDiscoveryFailed, discoveryURL, maxDiscoveryBody)
 	}
 	if err := json.Unmarshal(endpointsDataJson, &doc); err != nil {
 		return doc, fmt.Errorf("%w: the response is not a discovery document: %v", ErrDiscoveryFailed, err)

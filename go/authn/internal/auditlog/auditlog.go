@@ -280,4 +280,7 @@ var denialReasons = map[config.Refusal]string{
 	config.RefusalStepUpNotEnabled:      audit.DenialReasonStepupNotEnabled,
 	config.RefusalInsufficientAssurance: audit.DenialReasonInsufficientAssurance,
 	config.RefusalStaleAuthentication:   audit.DenialReasonStaleAuthentication,
+	// A token exchange whose subject never signed in (authn#155, audit
+	// v0.15.0). No login refuses with it; /delegate's records map it too.
+	config.RefusalNotSignedIn: audit.DenialReasonSubjectNotSignedIn,
 }

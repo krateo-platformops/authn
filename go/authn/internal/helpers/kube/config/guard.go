@@ -148,32 +148,7 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		return "", refuse(RefusalReserved, "is reserved")
 	}
 
-	// The Secrets under every name the username's session Secret may have,
-	// in the order they are tried (storage.Naming.SessionNames): one with
-	// legacy naming, exact then legacy with exact naming; nil where none is.
-	var found []*corev1.Secret
-	if g.naming.Exact {
-		// An identity source chooses its name, so one its Secret can't be named
-		// after exactly is refused, before any read (authn#140). An
-		// administrator chose a provisioned name: it keeps its legacy name.
-		if external && !g.naming.Issuable(username) {
-			return "", refuse(RefusalNotIssued, "can't name its Secret exactly")
-		}
-		for _, name := range g.naming.SessionNames(username) {
-			sec, err := g.lookup.Secret(ctx, name)
-			if err != nil {
-				return "", failed(err)
-			}
-			found = append(found, sec)
-		}
-	} else {
-		sec, err := g.lookup.SessionSecret(ctx, username)
-		if err != nil {
-			return "", failed(err)
-		}
-		found = []*corev1.Secret{sec}
-	}
-	held, err := g.heldBy(found, username, refuse)
+	held, err := g.held(ctx, username, external, refuse, failed)
 	if err != nil {
 		return "", err
 	}
@@ -199,6 +174,36 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		return "", refuse(RefusalBound, "is already granted rights by a RoleBinding or ClusterRoleBinding")
 	}
 	return claim, nil
+}
+
+// held returns the username's session Secrets the guard decides from: it
+// reads every name the username's session Secret may have, in the order they
+// are tried (storage.Naming.SessionNames: one with legacy naming, exact then
+// legacy with exact naming), and keeps what heldBy counts. With exact naming,
+// an identity source's name its Secret can't be named after exactly is
+// refused before any read (authn#140); an administrator chose a provisioned
+// name, which keeps its legacy name.
+func (g *nameGuard) held(ctx context.Context, username string, external bool, refuse func(Refusal, string, ...any) error, failed func(error) error) ([]*corev1.Secret, error) {
+	var found []*corev1.Secret
+	if g.naming.Exact {
+		if external && !g.naming.Issuable(username) {
+			return nil, refuse(RefusalNotIssued, "can't name its Secret exactly")
+		}
+		for _, name := range g.naming.SessionNames(username) {
+			sec, err := g.lookup.Secret(ctx, name)
+			if err != nil {
+				return nil, failed(err)
+			}
+			found = append(found, sec)
+		}
+	} else {
+		sec, err := g.lookup.SessionSecret(ctx, username)
+		if err != nil {
+			return nil, failed(err)
+		}
+		found = []*corev1.Secret{sec}
+	}
+	return g.heldBy(found, username, refuse)
 }
 
 // heldBy returns, of the Secrets found under the username's names (nil

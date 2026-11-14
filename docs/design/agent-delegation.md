@@ -143,3 +143,28 @@ Diego decided all four on 2026-11-08:
 4. **Unverified hops: flag it, with the hint.** snowplow records the agent as `user`,
    no `on_behalf_of`, `delegation_verified: false`, and the baggage value as a labelled,
    unverified hint.
+
+### 4.1 An identity provider's access token as the subject (authn#155)
+
+For IDE sign-in to Agentiko over MCP, Diego decided on 2026-11-13:
+
+1. **Keycloak is the OAuth authorization server.** The IDE signs the person in to the
+   same realm as the portal and refreshes its own tokens; authn grows no
+   `/authorize`, `/token` or refresh tokens.
+2. **authn exchanges the access token** at `/delegate` (`subject_token_type`
+   `urn:ietf:params:oauth:token-type:access_token`), so every internal hop keeps one
+   issuer and each exchange is an audit record. The actor is the bridge's mapping.
+3. **Claim-first:** the person's username must already carry exactly their claim from a
+   portal sign-in. An exchange writes no Secret, so it never claims a name; otherwise two
+   identities could each be exchanged as the same unclaimed name.
+4. **Configuration on the actor's mapping:** `spec.delegation.subjectTokens` (the
+   OIDCConfigs and the access token's accepted audiences) and `spec.delegation.audiences`
+   (what the issued token's `aud` may be).
+
+The access token is verified against the provider's JWKS (RS256 with a `kid`, `iss` exactly,
+`iat`, `exp`, `aud`) and must be an access token (`typ: at+jwt` in its header, or
+Keycloak's `typ: Bearer` claim), so an ID token the same realm signed can't be
+exchanged. An OIDCConfig with `restActionRef` is refused: the exchange would map the
+person differently from the sign-in that ran the RESTAction (Diego, 2026-11-13). `/oidc/login`'s ID token, by contrast,
+comes back-channel from the token endpoint and needs no signature check. The issued token never outlives the access token,
+so with Keycloak's short access tokens the bridge re-exchanges every few minutes.

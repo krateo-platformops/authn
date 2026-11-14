@@ -322,13 +322,20 @@ func TestDelegationRefusals(t *testing.T) {
 				return f
 			},
 			code: http.StatusBadRequest, cause: "UnsupportedGrantType"},
-		{name: "wrong subject token type", mappings: mapping(`{"allowed":true}`), bearer: "sa",
+		{name: "unsupported subject token type", mappings: mapping(`{"allowed":true}`), bearer: "sa",
+			form: func(t *testing.T) url.Values {
+				f := form(valid(t))
+				f.Set("subject_token_type", "urn:ietf:params:oauth:token-type:id_token")
+				return f
+			},
+			code: http.StatusBadRequest, cause: "UnsupportedSubjectToken"},
+		{name: "an access token, but the mapping lists no identity provider (authn#155)", mappings: mapping(`{"allowed":true}`), bearer: "sa",
 			form: func(t *testing.T) url.Values {
 				f := form(valid(t))
 				f.Set("subject_token_type", "urn:ietf:params:oauth:token-type:access_token")
 				return f
 			},
-			code: http.StatusBadRequest, cause: "UnsupportedSubjectToken"},
+			code: http.StatusForbidden, cause: "DelegationNotAllowed", apiCalls: true, reason: "delegation_not_allowed"},
 		{name: "no subject token", mappings: mapping(`{"allowed":true}`), bearer: "sa",
 			form: func(*testing.T) url.Values { return form("") },
 			code: http.StatusBadRequest, cause: "MissingSubjectToken"},

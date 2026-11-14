@@ -1,0 +1,61 @@
+# The CRDs' validation against a real apiserver, on every PR (and push to main) that can change
+# it (authn#155).
+#
+# CEL rules (x-kubernetes-validations) and list bounds are evaluated only by an apiserver: a unit
+# test can render the schema but never prove what it refuses, nor that the apiserver accepts the
+# rule's cost. The suite applies the generated CRDs and creates objects that must be accepted or
+# refused, such as spec.delegation.audiences entries, which must match the format audit records
+# them in.
+#
+# No kind setup action: the suite creates, names and destroys its OWN cluster through
+# e2e-framework (envfuncs.CreateCluster + kind.NewProvider, cluster "authn-crd-validation-test"),
+# as storage-integration.yaml does. It is not a required check. If it fails with
+# `failed to create cluster`, it is the runner's capacity, not the code.
+name: crd-validation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - go/authn/apis/**
+      - go/authn/crds/**
+      - go/authn/internal/crdvalidation/**
+      - go/authn/go.mod
+      - go/authn/go.sum
+      - .github/workflows/crd-validation.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - go/authn/apis/**
+      - go/authn/crds/**
+      - go/authn/internal/crdvalidation/**
+      - go/authn/go.mod
+      - go/authn/go.sum
+      - .github/workflows/crd-validation.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crds:
+    name: CRD validation (real apiserver, kind)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: go/authn
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go/authn/go.mod
+          cache-dependency-path: go/authn/go.sum
+
+      - name: CRD validation suite (kind)
+        run: go test -tags integration -count=1 -v ./internal/crdvalidation/

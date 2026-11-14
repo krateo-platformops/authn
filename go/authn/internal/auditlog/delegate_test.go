@@ -41,7 +41,7 @@ func TestDelegationRecordsConform(t *testing.T) {
 			r, rec := newRecorder(t)
 			req := get("/delegate")
 			req.Method = http.MethodPost
-			r.Delegation(req, agentMapping(), jwtutil.PrincipalAgent, tc.subject, tc.chain, tc.outcome, tc.why)
+			r.Delegation(req, agentMapping(), jwtutil.PrincipalAgent, tc.subject, tc.chain, tc.outcome, tc.why, "")
 			got := rec.Only(t)
 			audittest.AssertConformant(t, audit.WriterRequest, got)
 			audittest.AssertRequiredKeysDetected(t, audit.WriterRequest, got)

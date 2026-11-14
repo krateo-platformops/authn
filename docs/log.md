@@ -14,6 +14,41 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-13 — /delegate exchanges a Keycloak access token (IDE sign-in to Agentiko)
+
+IDEs (Claude Code, Cursor) sign in to Agentiko over MCP with Keycloak as the OAuth
+authorization server; authn exchanges the IDE's access token for its own token at
+`/delegate` ([#155](https://github.com/krateo-platformops/authn/issues/155); Diego's decisions
+there). The bridge's ServiceAccount mapping lists the OIDCConfigs it may exchange from
+(`spec.delegation.subjectTokens`) and the audiences it may ask for (`spec.delegation.audiences`).
+authn verifies the token against the provider's JWKS, maps the person as `/oidc/login` does,
+and issues only if their username already carries exactly their claim from a portal sign-in
+(`403 SubjectNotSignedIn` otherwise). The token is the person's, `act` the bridge, `aud` the
+requested audience, at most 15 minutes and never past the access token. audit v0.15.0 records
+the new reasons (`subject_not_signed_in`, `audience_not_allowed`) and the audience; plumbing
+v1.69.0 gives the token its `aud`. A new kind-based suite proves the CRD's audience rule
+accepts exactly what audit records. The security review then tightened it: only an access
+token (`typ: at+jwt` or Keycloak's `typ: Bearer`, never an ID or refresh token) with an `iat`;
+a `kid` the provider no longer publishes is the token's fault (`401`, plumbing v1.70.0's
+`jwtutil.NotPublished`), not authn's; an OIDCConfig with `restActionRef` is refused, so an
+exchange never maps a person differently from their sign-in; one unresolvable source no longer
+fails exchanges another source verifies; discovery is cached and capped at 1 MiB; and no
+answer names the provider's addresses, a `kid` or the OIDCConfig. A second review closed the
+rest: a `kid` missing from a key set read after the request arrived is `401` whatever the
+token's unsigned `iat` claims (plumbing v1.71.0's `jwtutil.NotPublishedSince`), so only a
+truly undecidable key, or a provider whose keys can't be fetched, is `503
+SubjectKeyUnavailable` (Diego's decision); a token needs a `kid` and RS256, the only keys
+plumbing loads; and discovery has its own 10-second timeout and one shared fetch. The 503
+carries `Retry-After`, the key source's `NextRefresh`, which the bridge follows. A third
+review found plumbing stamping a key set when its fetch completed, which could refuse a
+genuine token received mid-fetch; v1.72.0 stamps the fetch's start. The first listed
+OIDCConfig whose issuer matches is used and later ones aren't resolved, so a stalled
+provider listed after it never delays an exchange. The bridge's contract run (19 of 19 cases)
+found one inconsistency, now fixed: with Keycloak down and discovery not yet cached,
+`/delegate` answered `500`, but with discovery cached it answered `503`. An unreachable
+provider is now `503 SubjectKeyUnavailable` with `Retry-After` either way; only a
+misconfigured OIDCConfig is `500`.
+
 ## 2026-11-13 — a refusal names only the username's own Secret
 
 A sign-in refused after verification wrote a `denied` record naming the Secret it would have

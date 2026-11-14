@@ -293,6 +293,41 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
 - `spec.delegation` (optional) — `allowed: true` lets the service exchange a person's
   authn JWT at `POST /delegate`, and `maxDepth` (default 3, 1–8) caps the actor chain,
   its own link included. Omitted or `allowed: false`: `403 DelegationNotAllowed`.
+  `subjectTokens[]` {`oidcConfig`, `audiences[]`} (#155) lets it exchange an identity
+  provider's access token (`subject_token_type` `…:access_token`) from a listed
+  OIDCConfig in authn's namespace: the token must verify against that provider's JWKS
+  (an RS256 signature naming a `kid`, `iss` exactly, an `iat` not in the future, an unexpired `exp`, an
+  `aud` the entry lists, a `sub`) and be an access token (header `typ: at+jwt` per RFC
+  9068, or claim `typ: Bearer` as Keycloak marks them; never an ID or refresh token). A
+  `kid` the provider's key set lacks is `SubjectTokenInvalid` when the set was read after
+  the request arrived (plumbing's `jwtutil.NotPublishedSince`, which trusts no claim) or
+  after the token's `iat` (`jwtutil.NotPublished`); a set read before both, which the key
+  source's 30-second refresh floor kept from refetching, can't decide it, and neither can
+  a provider whose keys can't be fetched: `503 SubjectKeyUnavailable`, retry (Diego,
+  2026-11-14), with `Retry-After` set to when the key source may fetch again
+  (plumbing's `JWKSKeySource.NextRefresh`). The first listed OIDCConfig whose issuer
+  matches is used, and those after it aren't resolved, so list one OIDCConfig per issuer.
+  One that can't be resolved before the match is skipped (and logged); only when none
+  issued the token does it fail: `503 SubjectKeyUnavailable` with `Retry-After` when every
+  such provider is merely unreachable (connection failure, timeout, 5xx or 429 on
+  discovery, `resolvers.ErrProviderUnavailable`), as for keys that can't be fetched, so an
+  outage answers the same whichever cache is warm; `500 IssuanceFailed` when one is
+  misconfigured. An OIDCConfig with `restActionRef` is refused (`500`): an
+  exchange doesn't run that RESTAction, so it would map the person differently from their
+  sign-in. The OIDCConfig is read on every exchange; its provider's discovery document is
+  cached 5 minutes (30 seconds after a failure), fetched once for concurrent exchanges,
+  cut off after 10 seconds (sign-ins too) and read up to 1 MiB. The person is mapped as `/oidc/login` maps an ID token (username from
+  `preferred_username`, groups from `groups`, claim `["oidc", iss, sub]`), and
+  `config.VouchForExchange` runs a sign-in's identity checks (no `system:` or `krateo:`
+  group, the OIDCConfig's `allowedGroups`, a name that isn't reserved and, with exact
+  naming, is issuable) and then the **claim-first rule**: the username's credential
+  Secret (the same Secrets the name guard reads) must already carry exactly this claim.
+  An exchange writes no Secret, so it never claims a name: no Secret is `403
+  SubjectNotSignedIn` (sign in to the portal once), another identity's claim or a
+  pre-claims Secret is the opaque `403 UsernameUnavailable`. `audiences[]` lists what the
+  issued token's `aud` may be, through RFC 8693's `audience` parameter (at most one; a
+  malformed one is `400 InvalidRequestBody`, an unlisted one `400 InvalidTarget`). Each
+  audience is audit's `token_audience` format, which the CRD's CEL rule mirrors.
   The subject token is verified against authn's current and previous keys
   (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
   minus reserved ones, and its `principal`, adds `act` (`plumbing/jwtutil.Actor`) with
@@ -742,7 +777,16 @@ or a log line.
   refused subject token: `subject_token_expired` when it verified but has lapsed or is
   about to, `subject_token_invalid` when it didn't verify (a bad signature, a kid authn
   has no key for, including a retired one, or malformed). Both answer `401`
-  `SubjectTokenInvalid`. It's `failure` when signing fails. An actor refused or failed at
+  `SubjectTokenInvalid`. For an identity provider's access token (#155) the same two
+  reasons apply (a wrong `iss`, `aud` or `alg` is `subject_token_invalid`); once it
+  verified, a refusal names the person (`on_behalf_of`) and records the sign-in's
+  reason: `subject_not_signed_in`, `name_claimed`, `name_held_legacy`,
+  `group_not_allowed`, `platform_group`, `system_group`. An audience refusal is
+  `audience_not_allowed`, carrying the requested audience in `krateo.audit.token.audience`,
+  or `invalid_request` for a malformed one or several, without the value; a success that
+  issued an audience carries it too. It's `failure` when signing fails, or when no listed
+  OIDCConfig issued the token and one is misconfigured or unreachable, its
+  OIDCConfig sets `restActionRef`, or its key can't be decided (`SubjectKeyUnavailable`). An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
 - **`/usernames/check`** (audit v0.10.0). The actor is the caller's mapping, of its declared

@@ -88,6 +88,9 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 		KeyID:        o.KeyID,
 		PreviousKeys: o.PreviousKeys,
 		Audit:        o.Audit,
+		// An identity provider's subject (authn#155) is checked against the
+		// Secrets a sign-in reads.
+		Naming: o.Naming,
 	}))
 
 	all = append(all, ldap.Login(o.RestConfig, ldap.LoginOptions{

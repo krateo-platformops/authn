@@ -8,7 +8,7 @@ require (
 	github.com/golang/gddo v0.0.0-20210115222349-20d68f94ee1f
 	github.com/google/go-cmp v0.7.0
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/krateo-platformops/plumbing v1.61.0
+	github.com/krateo-platformops/plumbing v1.72.0
 	github.com/rs/zerolog v1.32.0
 	github.com/stretchr/testify v1.12.1
 	golang.org/x/oauth2 v0.36.0
@@ -23,8 +23,8 @@ require (
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
-	github.com/krateo-platformops/audit v0.14.0
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.70.0
+	github.com/krateo-platformops/audit v0.15.0
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.72.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.23.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.47.0
@@ -35,6 +35,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v1.47.0
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
+	golang.org/x/sync v0.24.0
 )
 
 require (
@@ -94,7 +95,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect

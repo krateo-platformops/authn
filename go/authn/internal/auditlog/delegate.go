@@ -5,6 +5,7 @@ import (
 
 	"github.com/krateo-platformops/audit"
 	sav1alpha1 "github.com/krateo-platformops/authn/apis/authn/serviceaccount/v1alpha1"
+	"github.com/krateo-platformops/authn/internal/helpers/kube/config"
 	"github.com/krateo-platformops/plumbing/jwtutil"
 )
 
@@ -31,7 +32,19 @@ const (
 	SubjectTokenExpired DelegationDenial = audit.DenialReasonSubjectTokenExpired
 	// SubjectTokenInvalid: the subject token didn't verify.
 	SubjectTokenInvalid DelegationDenial = audit.DenialReasonSubjectTokenInvalid
+	// InvalidRequest: the requested audience is malformed, or there is more
+	// than one (authn#155).
+	InvalidRequest DelegationDenial = audit.DenialReasonInvalidRequest
+	// AudienceNotAllowed: the requested audience isn't in the actor's
+	// mapping's spec.delegation.audiences (authn#155).
+	AudienceNotAllowed DelegationDenial = audit.DenialReasonAudienceNotAllowed
 )
+
+// DelegationRefusal is the denial reason of a refusal of an identity
+// provider's subject the exchange verified (config.VouchForExchange,
+// authn#155): the same reason a sign-in refusing that identity records, from
+// one map, so the two can't drift.
+func DelegationRefusal(r config.Refusal) DelegationDenial { return DelegationDenial(denialReasons[r]) }
 
 // Delegation records one /delegate decision about an authenticated actor
 // (AUDIT-4): a delegated token issued, refused (the actor's mapping doesn't
@@ -45,9 +58,12 @@ const (
 //
 // subject is the person the token acts for, and chain the actor chain the token
 // carries (or would have), outermost first; both are nil when the refusal came
-// before the subject token was read. why is the denial reason, written on a
-// denied record only.
-func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccount, principal jwtutil.Principal, subject *jwtutil.UserInfo, chain *jwtutil.Actor, outcome string, why DelegationDenial) {
+// before the subject was verified. why is the denial reason, written on a
+// denied record only. audience is the token's requested audience (RFC 8693's
+// audience, authn#155): written on a success that issued one, and on an
+// audience_not_allowed refusal; "" for none. audit writes it only in its
+// token_audience format, so a malformed one never reaches the record.
+func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccount, principal jwtutil.Principal, subject *jwtutil.UserInfo, chain *jwtutil.Actor, outcome string, why DelegationDenial, audience string) {
 	if r == nil || r.req == nil || actor == nil {
 		return
 	}
@@ -70,6 +86,9 @@ func (r *Recorder) Delegation(req *http.Request, actor *sav1alpha1.ServiceAccoun
 		ObjectUID:             string(actor.UID),
 		ObjectResourceVersion: actor.ResourceVersion,
 		ObjectGeneration:      actor.Generation,
+	}
+	if outcome == audit.OutcomeSuccess || why == AudienceNotAllowed {
+		ev.TokenAudience = audience
 	}
 	switch outcome {
 	case audit.OutcomeSuccess:
