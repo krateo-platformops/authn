@@ -944,6 +944,19 @@ anything is minted, and a `denied` audit record. Those groups (`krateo:services`
 provisions (basic Users, ServiceAccount mappings) may carry them. authn's own
 step-up group, `krateo:loa:2`, is authn's and doesn't count.
 
+### Kubernetes system identities
+No strategy, in either naming mode, is issued a Kubernetes system identity, in a JWT or a
+client certificate. A `system:` group (`system:masters`, `system:authenticated`,
+`system:unauthenticated`, …) is `403 SystemGroupNotAllowed` for every strategy, on login,
+step-up and the `/delegate` exchange, before anything is minted. A `system:` username
+(`system:anonymous`, `system:serviceaccount:…`) is refused by the name guard for every
+strategy too (`name_reserved`). An identity source's names are already refused more broadly
+by `usernames.Reserved` (the prefix `system`, without the colon). A basic or ServiceAccount
+name is a Kubernetes object name, which can't contain a colon, so for those the guard is the
+explicit form of what the apiserver rules out. snowplow relies on this: it adds
+`system:authenticated` to a token's groups unless they hold `system:unauthenticated` or the
+username is `system:anonymous` (snowplow#1342). `TestNoStrategyIsIssuedASystemIdentity` pins it.
+
 ### Moving a name to a new identity
 An existing username can move to a new identity, for example a person's sign-in
 moving from a retired GitHub OAuthConfig to a Keycloak OIDC login with the same

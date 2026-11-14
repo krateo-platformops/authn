@@ -236,7 +236,10 @@ func TestNameGuardReadsOnlyWhatItNeeds(t *testing.T) {
 // for. No login may put one in a certificate, whatever its source; other
 // groups, such as one a Keycloak claim asserts, pass.
 func TestSystemGroupsAreRefused(t *testing.T) {
-	for _, g := range []string{"system:masters", "system:nodes", "system:bootstrappers", "system:"} {
+	for _, g := range []string{"system:masters", "system:nodes", "system:bootstrappers", "system:",
+		// The two snowplow's RBAC evaluation depends on authn never issuing
+		// (snowplow#1342).
+		"system:authenticated", "system:unauthenticated"} {
 		err := checkSystemGroups(userAs("alice", "kc", "1", "tenants", g))
 		st := status.FromError(err)
 		assert.Equal(t, http.StatusForbidden, st.Code, g)

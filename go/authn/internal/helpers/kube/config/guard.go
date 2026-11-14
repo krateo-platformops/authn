@@ -79,6 +79,20 @@ func fromIdentitySource(strategy storage.Strategy) bool {
 // never issues.
 func reservedName(username string) bool { return usernames.Reserved(username) }
 
+// systemUsernamePrefix marks Kubernetes' own users (system:anonymous,
+// system:serviceaccount:..., system:kube-scheduler).
+const systemUsernamePrefix = "system:"
+
+// systemUsername says whether username is one Kubernetes reserves for itself.
+// No strategy may be issued one (the name guard refuses it before anything
+// else): snowplow evaluates RBAC with a token's groups plus
+// system:authenticated unless its username is system:anonymous, which is
+// safe only because authn never issues a system: identity. An identity
+// source's names are refused more broadly by reservedName; a basic or
+// ServiceAccount name is a Kubernetes object name, which can't hold a colon,
+// so this is the explicit guard for what the apiserver already rules out.
+func systemUsername(username string) bool { return strings.HasPrefix(username, systemUsernamePrefix) }
+
 // errUsernameUnavailable answers every refusal of a username. It names no
 // username: the error is logged as well as answered.
 var errUsernameUnavailable = errors.New("the username isn't available to this identity")
@@ -144,7 +158,7 @@ func (g *nameGuard) admit(ctx context.Context, strategy storage.Strategy, user u
 		return status.Failed(status.CauseIssuanceFailed, fmt.Errorf("checking the username: %w", err))
 	}
 
-	if external && reservedName(username) {
+	if systemUsername(username) || external && reservedName(username) {
 		return "", refuse(RefusalReserved, "is reserved")
 	}
 

@@ -75,7 +75,7 @@ func VouchForExchange(ctx context.Context, lookup NameLookup, naming storage.Nam
 	failed := func(err error) error {
 		return status.Failed(status.CauseIssuanceFailed, fmt.Errorf("checking the username: %w", err))
 	}
-	if external && reservedName(username) {
+	if systemUsername(username) || external && reservedName(username) {
 		return "", refuse(RefusalReserved, "is reserved")
 	}
 	held, err := g.held(ctx, username, external, refuse, failed)
