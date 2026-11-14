@@ -84,7 +84,10 @@ func New(lp log.LoggerProvider, preview PreviewSource) *Recorder {
 // written (or, refused or failed before the write, the one that would have
 // been), the verb sent, and the apiserver's answer. err is what Generate
 // returned. It is called once per verified login, after Generate, whatever the
-// outcome; a caller refused before verification records nothing.
+// outcome; a caller refused before verification records nothing. The record
+// carries issued.Claim, the verified identity's claim, as
+// krateo.audit.identity.claim (audit v0.15.0; snowplow's ruling: the claim of
+// the identity verified on the record, and nothing else).
 func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info, principal jwtutil.Principal, issued config.Issued, err error) {
 	if r == nil || r.req == nil {
 		return
@@ -96,6 +99,8 @@ func (r *Recorder) Issuance(req *http.Request, action string, user userinfo.Info
 		Action:    action,
 		Outcome:   audit.OutcomeSuccess,
 		Message:   msgIssued,
+		// Emit writes it only in format identity_claim.
+		IdentityClaim: issued.Claim,
 	}
 	if c, ok := audit.ParseClaim(string(principal)); ok {
 		ev.ActorClass = c

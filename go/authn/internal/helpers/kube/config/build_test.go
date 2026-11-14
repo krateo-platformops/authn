@@ -152,3 +152,34 @@ func TestARefusalNamesOnlyTheUsernamesOwnSecret(t *testing.T) {
 		})
 	}
 }
+
+// Every issuance reports the verified identity's claim, whatever its outcome,
+// so the sign-in's audit record says whose it was (audit v0.15.0): the value
+// the name guard compares. An identity without a subject has none.
+func TestIssuedCarriesTheVerifiedClaim(t *testing.T) {
+	gen := NewGenerator(&rest.Config{Host: "https://unreachable.invalid"})
+	const iss = "https://kc.example/realms/krateo"
+	want := storage.EncodeClaim(storage.StrategyOIDC, iss, "uid-alice")
+	alice := func(groups ...string) *userinfo.DefaultUser {
+		return &userinfo.DefaultUser{Name: "alice", ID: "1", Groups: groups, Subject: userinfo.Subject{Issuer: iss, ID: "uid-alice"}}
+	}
+
+	issued, err := gen.Generate(storage.StrategyOIDC, alice("devs", "krateo:loa:2"))
+	require.Error(t, err, "refused for a reserved group")
+	assert.Equal(t, want, issued.Claim)
+
+	issued, err = gen.Generate(storage.StrategyOIDC, alice("system:masters"))
+	require.Error(t, err, "refused for a system: group")
+	assert.Equal(t, want, issued.Claim)
+
+	issued, err = gen.GenerateStepUp(storage.StrategyOIDC, alice("devs"), 15*time.Minute)
+	require.Error(t, err, "a step-up without its krateo:loa: group")
+	assert.Equal(t, want, issued.Claim)
+
+	issued, err = gen.Generate(storage.StrategyBasic, &userinfo.DefaultUser{Name: "bob", ID: "2", Subject: userinfo.Subject{ID: "bob"}})
+	require.Error(t, err, "the unreachable cluster fails the issuance")
+	assert.Equal(t, storage.EncodeClaim(storage.StrategyBasic, "", "bob"), issued.Claim, "a failure carries it too")
+
+	issued, _ = gen.Generate(storage.StrategyOIDC, &userinfo.DefaultUser{Name: "carol", ID: "3"})
+	assert.Empty(t, issued.Claim, "no subject, no claim")
+}
