@@ -7,6 +7,12 @@ metadata:
 data:
   AUTHN_PORT: "{{ .Values.service.port }}"
   AUTHN_INTERNAL_PORT: "{{ .Values.internal.port }}"
+  {{- if (((.Values.internal).tls).issuerRef).name }}
+  # The internal listener's TLS (authn#145): the files of the mounted
+  # <release>-internal-tls Secret.
+  AUTHN_INTERNAL_TLS_CERT_FILE: /etc/authn/internal-tls/tls.crt
+  AUTHN_INTERNAL_TLS_KEY_FILE: /etc/authn/internal-tls/tls.key
+  {{- end }}
   AUTHN_NAMESPACE: {{ .Release.Namespace }}
   POD_NAMESPACE: {{ .Release.Namespace }}
   # The actor of the audit records of authn's own background writes (AUDIT-4).

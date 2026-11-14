@@ -894,11 +894,25 @@ discloses no more than before (Diego, 2026-11-12). Without a claimant, or for an
 other than `name_claimed`, there's no `claimedBy`. A claimant without all three fields, or
 with a strategy that records no claim (`self`, `unknown`), is a bad request.
 
-**Who may reach it (NetworkPolicy).** The internal listener is plain HTTP inside the cluster.
-The chart's `internal.networkPolicy` (on by default) admits ingress to the internal port only
-from the configured peers (identity-lifecycle's controller by default, never its public intake)
-and leaves the public port open, as without a policy. TLS on the internal listener is a
-follow-up (#145).
+**Who may reach it (NetworkPolicy).** The chart's `internal.networkPolicy` (on by default)
+admits ingress to the internal port only from the configured peers (identity-lifecycle's
+controller by default, never its public intake) and leaves the public port open, as without a
+policy.
+
+**TLS (#145; Diego, 2026-11-14).** Off by default: the internal listener is plain HTTP inside
+the cluster, as before. With `internal.tls.issuerRef` set to a cert-manager CA `Issuer` or
+`ClusterIssuer` (the platform's CA; ACME can't issue for in-cluster names), the chart requests
+a `Certificate` for `<release>-internal`, `.<namespace>`, `.<namespace>.svc` and
+`.<namespace>.svc.cluster.local` (ECDSA P-256, a new key at each renewal), mounts its Secret
+`<release>-internal-tls`, and sets `AUTHN_INTERNAL_TLS_CERT_FILE`/`_KEY_FILE`. authn then serves
+the internal port over TLS 1.2 or later only: a plain-HTTP request is answered `400` by the TLS
+server and never reaches a route. When cert-manager renews the Secret and the kubelet swaps the
+files, the next handshake loads the new pair, with no restart. A pair read mid-swap keeps the
+previous certificate in service until it loads. authn refuses to start with only one of the
+two files set, or with a pair that doesn't load, so it never serves the internal port without
+the TLS it was configured for, and the pod waits for the Secret before it starts. Callers trust
+the issuer's CA through a trust-manager `Bundle` (a ConfigMap of the public CA certificate in
+their namespace), never by reading `<release>-internal-tls`, which holds the private key.
 
 ### Platform names and groups
 The `krateo:` prefix is the platform's. A username starting with it is reserved

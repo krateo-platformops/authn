@@ -62,7 +62,9 @@ A second port (`internal.port`, default `8090`, env `AUTHN_INTERNAL_PORT`) serve
 in-cluster services make, through the ClusterIP Service `<release>-internal`. No Ingress or
 HTTPRoute may reference it: the public routes forward every path to the public port, and the
 public port answers these paths `404`. `TestInternalSurface` pins the list and checks that none
-of it is public.
+of it is public. With `internal.tls.issuerRef` set (#145), it serves HTTPS only, with a
+certificate for `<release>-internal.<namespace>.svc` that the caller verifies against the
+platform CA (a trust-manager `Bundle`); without it, plain HTTP.
 
 | Method | Path | Purpose |
 |---|---|---|

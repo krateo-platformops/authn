@@ -81,6 +81,11 @@ spec:
               mountPath: /etc/authn/jwt-previous/{{ $i }}
               readOnly: true
             {{- end }}
+            {{- if (((.Values.internal).tls).issuerRef).name }}
+            - name: internal-tls
+              mountPath: /etc/authn/internal-tls
+              readOnly: true
+            {{- end }}
             {{- with .Values.volumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -99,6 +104,16 @@ spec:
             items:
               - key: {{ $key }}
                 path: {{ $key }}
+        {{- end }}
+        {{- if (((.Values.internal).tls).issuerRef).name }}
+        - name: internal-tls
+          secret:
+            secretName: {{ include "authn.fullname" . }}-internal-tls
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
         {{- end }}
         {{- with .Values.volumes }}
         {{- toYaml . | nindent 8 }}

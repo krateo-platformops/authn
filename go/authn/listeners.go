@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,13 +22,13 @@ import (
 // (listenerHandlers), their instrumentation and the public one's CORS
 // (wrapListeners), each on its own port (newServers). main calls only this, so
 // TestNewListeners pins the whole composition.
-func newListeners(o routeOptions, log zerolog.Logger, corsOn bool, publicPort, internalPort int) (*http.Server, *http.Server, error) {
+func newListeners(o routeOptions, log zerolog.Logger, corsOn bool, publicPort, internalPort int, internalTLS *tls.Config) (*http.Server, *http.Server, error) {
 	public, internal, err := listenerHandlers(o, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building routes: %w", err)
 	}
 	public, internal = wrapListeners(public, internal, corsOn)
-	return newServers(public, internal, publicPort, internalPort)
+	return newServers(public, internal, publicPort, internalPort, internalTLS)
 }
 
 // listenerHandlers builds the two listeners' handlers. The public one serves
@@ -47,7 +48,9 @@ func listenerHandlers(o routeOptions, log zerolog.Logger) (public, internal http
 // newServers builds the public server on publicPort and the internal one on
 // internalPort, each with its own handler. The two must not share a port: the
 // internal listener has its own Service, which no public route references.
-func newServers(public, internal http.Handler, publicPort, internalPort int) (*http.Server, *http.Server, error) {
+// internalTLS, when not nil, is the internal listener's TLS (authn#145);
+// listenAndServe then serves it over TLS only.
+func newServers(public, internal http.Handler, publicPort, internalPort int, internalTLS *tls.Config) (*http.Server, *http.Server, error) {
 	if publicPort == internalPort {
 		return nil, nil, fmt.Errorf("the internal listener must not share the public port %d", publicPort)
 	}
@@ -60,6 +63,7 @@ func newServers(public, internal http.Handler, publicPort, internalPort int) (*h
 		}, &http.Server{
 			Addr:         fmt.Sprintf(":%d", internalPort),
 			Handler:      internal,
+			TLSConfig:    internalTLS,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 20 * time.Second,
 			IdleTimeout:  30 * time.Second,
