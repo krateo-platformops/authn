@@ -26,10 +26,12 @@ import (
 const idpLeeway = time.Minute
 
 // idpAlgorithms are the signatures an identity provider's access token may
-// carry: RSA, as the provider's JWKS publishes it (plumbing's key source
-// reads RSA keys). Never none, never an HMAC, which would let a token sign
-// itself with a public key.
-var idpAlgorithms = []string{"RS256", "RS384", "RS512"}
+// carry: RS256, the only one plumbing's key source reads keys for (it skips a
+// JWKS key whose alg is another), and Keycloak's default. Never none, never
+// an HMAC, which would let a token sign itself with a public key. Accepting
+// RS384 or RS512 here would only turn a realm signing with them into refused
+// tokens, since their keys are never loaded.
+var idpAlgorithms = []string{"RS256"}
 
 // verifyIdPSubject verifies an identity provider's access token as the
 // subject of an exchange (authn#155) and returns the person to issue for and
@@ -39,15 +41,21 @@ var idpAlgorithms = []string{"RS256", "RS384", "RS512"}
 //     (spec.delegation.subjectTokens): matched by the issuer of each listed
 //     OIDCConfig, before the token is trusted, only to pick the keys. A
 //     source that can't be resolved is skipped; only if no other source
-//     issued the token is it authn's failure, since it may have.
+//     issued the token is it authn's failure, since it may have. Two sources
+//     whose OIDCConfigs share an issuer are a misconfiguration: which one's
+//     audiences and allowedGroups apply would depend on their order.
 //   - The OIDCConfig may not map identities through a RESTAction: an
 //     exchange doesn't run one, so it would map the person differently from
 //     their sign-in (Diego, 2026-11-13).
 //   - It must verify against that provider's JWKS: an RSA signature, the
 //     issuer exactly, an issue time and an expiry (RFC 9068 §2.2), and an
-//     audience the source lists. A kid the provider's freshly fetched key set
-//     doesn't hold, on a token issued before that fetch, is the token's fault
-//     (jwtutil.NotPublished), never authn's.
+//     audience the source lists, and a kid. A kid missing from the provider's
+//     key set is the token's fault (401) when the set was fetched after the
+//     request arrived (jwtutil.NotPublishedSince), or after the token's
+//     issue time (jwtutil.NotPublished). Only a kid missing from a set
+//     fetched before both, which the key source's refresh floor kept from
+//     refetching, is undecided: 503 SubjectKeyUnavailable, retry (Diego,
+//     2026-11-14). A provider whose keys can't be read is 503 too.
 //   - It must be an access token, not an ID or refresh token the same
 //     provider signed: typ at+jwt in its header (RFC 9068 §2.1), or typ
 //     Bearer in its claims (Keycloak).
@@ -64,6 +72,9 @@ var idpAlgorithms = []string{"RS256", "RS384", "RS512"}
 // verified identity names them; nil before.
 func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor *sav1alpha1.ServiceAccount, token string) (
 	subject jwtutil.UserInfo, exp time.Time, verified *jwtutil.UserInfo, why auditlog.DelegationDenial, err error) {
+	// The token was received no later than now: a key set fetched from here
+	// on that lacks its kid proves the key isn't published.
+	received := time.Now()
 	invalid := func(public string, private error) (jwtutil.UserInfo, time.Time, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
 		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectTokenInvalid, subjectInvalidPrivately(public, private)
 	}
@@ -82,8 +93,12 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 		return invalid("the subject token isn't a JWT", err)
 	}
 	iss, _ := unverified["iss"].(string)
+	if iss == "" {
+		return invalid("the subject token has no issuer", nil)
+	}
 
-	// Pick the source whose provider issued the token.
+	// Pick the source whose provider issued the token. Every source is
+	// resolved, so two that share the issuer are found.
 	var source *sav1alpha1.SubjectTokenSource
 	var keys resolvers.OIDCTokenKeys
 	var unresolved []error
@@ -93,10 +108,19 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 			unresolved = append(unresolved, fmt.Errorf("OIDCConfig %q: %w", sources[i].OIDCConfig, err))
 			continue
 		}
-		if iss != "" && k.Issuer == iss {
-			source, keys = &sources[i], k
-			break
+		if k.Issuer != iss {
+			continue
 		}
+		if source != nil {
+			return failed("two identity providers the actor's mapping lists share this token's issuer",
+				fmt.Errorf("OIDCConfigs %q and %q both resolve to the issuer %q", source.OIDCConfig, sources[i].OIDCConfig, iss))
+		}
+		source, keys = &sources[i], k
+	}
+	if source != nil && len(unresolved) > 0 {
+		// Another source issued the token, so the exchange goes on; the
+		// broken ones still need an admin.
+		log.Warn().Err(errors.Join(unresolved...)).Msg("subject-token sources skipped: they couldn't be resolved")
 	}
 	switch {
 	case source == nil && len(unresolved) > 0:
@@ -128,9 +152,12 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 				return nil, jwt.ErrTokenUsedBeforeIssued
 			}
 			kid, _ := t.Header["kid"].(string)
+			if kid == "" {
+				return nil, errNoKID
+			}
 			key, err := keySource.PublicKey(kid)
 			if err != nil {
-				return nil, jwtutil.NotPublished(err, iat.Time)
+				return nil, jwtutil.NotPublished(jwtutil.NotPublishedSince(err, received), iat.Time)
 			}
 			return key, nil
 		})
@@ -138,8 +165,11 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	case errors.Is(err, jwtutil.ErrKeyNotPublished):
 		return invalid("the subject token didn't verify against its identity provider", err)
 	case errors.Is(err, jwtutil.ErrKeyUnavailable):
-		// The provider's keys couldn't be read: not the token's fault.
-		return failed("the identity provider's signing keys couldn't be read", err)
+		// The provider's keys couldn't be read, or its set predates both the
+		// request and the token: neither is decided, so retry.
+		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.NoDelegationDenial,
+			subjectKeyUnavailable("the identity provider's signing key for the subject token isn't available yet: retry", err,
+				retryAfter(keySource.NextRefresh()))
 	case errors.Is(err, jwt.ErrTokenExpired):
 		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectTokenExpired, subjectInvalid(errors.New("the subject token has expired"))
 	case err != nil:
@@ -198,6 +228,18 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	}
 	return person, expAt.Time, &person, auditlog.NoDelegationDenial, nil
 }
+
+// retryAfter is how long until the key source may fetch again (its refresh
+// floor), at least a second: from then on, a key the provider has published
+// is found by the next exchange.
+func retryAfter(next time.Time) time.Duration {
+	return max(time.Until(next), time.Second)
+}
+
+// errNoKID refuses an access token without a kid: Keycloak always names the
+// key it signed with, and without one a key the provider doesn't publish
+// can't be told from one authn can't pick.
+var errNoKID = errors.New("the token names no signing key (kid)")
 
 // errNoIssuedAt refuses an access token without iat, which RFC 9068 §2.2
 // requires: without it a kid the provider doesn't publish can't be told from

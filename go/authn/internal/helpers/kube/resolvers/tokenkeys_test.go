@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -38,9 +39,8 @@ func TestTokenKeysFlagARESTActionMapping(t *testing.T) {
 	assert.Equal(t, discoveredIssuer, got.Issuer)
 }
 
-// The discovery document is fetched once per DiscoveryTTL, a failure once per
-// DiscoveryFailureTTL, and a fetch the caller's own context cut short isn't
-// remembered at all.
+// The discovery document is fetched once per DiscoveryTTL, and a failure once
+// per DiscoveryFailureTTL.
 func TestTokenKeysResolverCachesDiscovery(t *testing.T) {
 	var fetches atomic.Int32
 	var down atomic.Bool
@@ -84,14 +84,78 @@ func TestTokenKeysResolverCachesDiscovery(t *testing.T) {
 	_, err = r.discovery(ctx, srv.URL)
 	require.NoError(t, err, "the provider is back once the failure lapses")
 	assert.EqualValues(t, 3, fetches.Load())
+}
 
-	canceled, cancel := context.WithCancel(ctx)
+// Concurrent exchanges share one fetch; one that gives up stops waiting
+// without abandoning the fetch, whose outcome is cached for the rest.
+func TestTokenKeysResolverSharesOneFetch(t *testing.T) {
+	var fetches atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetches.Add(1)
+		<-release
+		_ = json.NewEncoder(w).Encode(map[string]string{"issuer": discoveredIssuer, "jwks_uri": "https://idp.example/certs"})
+	}))
+	t.Cleanup(srv.Close)
+	r := NewTokenKeysResolver(nil)
+
+	gaveUp, cancel := context.WithCancel(context.Background())
+	early := make(chan error, 1)
+	go func() {
+		_, err := r.discovery(gaveUp, srv.URL)
+		early <- err
+	}()
+	require.Eventually(t, func() bool { return fetches.Load() == 1 }, 5*time.Second, 5*time.Millisecond)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 5)
+	for range 5 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := r.discovery(context.Background(), srv.URL)
+			errs <- err
+		}()
+	}
 	cancel()
-	other := srv.URL + "/other"
-	_, err = r.discovery(canceled, other)
-	require.Error(t, err)
-	_, err = r.discovery(ctx, other)
-	require.NoError(t, err, "a canceled fetch isn't cached as the provider's failure")
+	assert.ErrorIs(t, <-early, ErrDiscoveryFailed, "the caller that gave up stops waiting")
+	close(release)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		assert.NoError(t, err)
+	}
+	_, err := r.discovery(context.Background(), srv.URL)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, fetches.Load(), "one fetch served every caller, and is cached")
+}
+
+// A provider that accepts the connection and stalls is cut off by
+// discoveryTimeout, whatever the caller allows, and remembered as a failure.
+func TestDiscoveryTimesOut(t *testing.T) {
+	old := discoveryTimeout
+	discoveryTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { discoveryTimeout = old })
+
+	var fetches atomic.Int32
+	stalled := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, req *http.Request) {
+		fetches.Add(1)
+		select {
+		case <-stalled:
+		case <-req.Context().Done():
+		}
+	}))
+	t.Cleanup(func() { close(stalled); srv.Close() })
+
+	r := NewTokenKeysResolver(nil)
+	start := time.Now()
+	_, err := r.discovery(context.Background(), srv.URL)
+	assert.ErrorIs(t, err, ErrDiscoveryFailed)
+	assert.Less(t, time.Since(start), 5*time.Second)
+	_, err = r.discovery(context.Background(), srv.URL)
+	assert.ErrorIs(t, err, ErrDiscoveryFailed)
+	assert.EqualValues(t, 1, fetches.Load(), "the timeout is cached as the provider's failure")
 }
 
 // A discovery document past the cap isn't read into memory.

@@ -19,6 +19,7 @@ import (
 	"github.com/krateo-platformops/authn/internal/helpers/kube/client"
 	"github.com/krateo-platformops/authn/internal/helpers/kube/util"
 	"github.com/krateo-platformops/authn/internal/helpers/outbound"
+	"golang.org/x/sync/singleflight"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
 )
@@ -110,13 +111,15 @@ const (
 // (authn#155). It reads the OIDCConfig on every call, as a sign-in does, so a
 // change to its allowedGroups, issuer or restActionRef applies at once. The
 // provider's discovery document, which only the provider changes, is cached
-// by URL. It is safe for concurrent use.
+// by URL, and concurrent exchanges share one fetch of it. It is safe for
+// concurrent use.
 type TokenKeysResolver struct {
 	rc  *rest.Config
 	now func() time.Time
 
-	mu   sync.Mutex
-	docs map[string]cachedDiscovery
+	mu     sync.Mutex
+	docs   map[string]cachedDiscovery
+	flight singleflight.Group
 }
 
 type cachedDiscovery struct {
@@ -140,8 +143,10 @@ func (r *TokenKeysResolver) TokenKeys(ctx context.Context, name string) (OIDCTok
 }
 
 // discovery is the discovery document at url, from the cache while it is
-// fresh. A fetch cut short by the caller's own context isn't cached: it says
-// nothing about the provider.
+// fresh. Otherwise one fetch serves every caller waiting on url. The fetch is
+// bounded by discoveryTimeout, not by a caller's context, so its outcome,
+// a timeout included, is always the provider's and is cached. A caller that
+// gives up stops waiting without abandoning the fetch for the others.
 func (r *TokenKeysResolver) discovery(ctx context.Context, url string) (DiscoveryEndpointResponse, error) {
 	r.mu.Lock()
 	c, ok := r.docs[url]
@@ -149,18 +154,24 @@ func (r *TokenKeysResolver) discovery(ctx context.Context, url string) (Discover
 	if ok && r.now().Before(c.until) {
 		return c.doc, c.err
 	}
-	doc, err := fetchDiscovery(ctx, url)
-	if ctx.Err() != nil {
+	fetched := r.flight.DoChan(url, func() (any, error) {
+		doc, err := fetchDiscovery(context.WithoutCancel(ctx), url)
+		ttl := DiscoveryTTL
+		if err != nil {
+			ttl = DiscoveryFailureTTL
+		}
+		r.mu.Lock()
+		r.docs[url] = cachedDiscovery{doc: doc, err: err, until: r.now().Add(ttl)}
+		r.mu.Unlock()
 		return doc, err
+	})
+	select {
+	case res := <-fetched:
+		doc, _ := res.Val.(DiscoveryEndpointResponse)
+		return doc, res.Err
+	case <-ctx.Done():
+		return DiscoveryEndpointResponse{}, fmt.Errorf("%w: %v", ErrDiscoveryFailed, ctx.Err())
 	}
-	ttl := DiscoveryTTL
-	if err != nil {
-		ttl = DiscoveryFailureTTL
-	}
-	r.mu.Lock()
-	r.docs[url] = cachedDiscovery{doc: doc, err: err, until: r.now().Add(ttl)}
-	r.mu.Unlock()
-	return doc, err
 }
 
 // tokenKeys is cfg's OIDCTokenKeys, its discovery document read by discover.
@@ -307,8 +318,16 @@ func doDiscovery(ctx context.Context, cfg *oidcv1alpha1.OIDCConfig) error {
 // filling authn's memory.
 const maxDiscoveryBody = 1 << 20
 
+// discoveryTimeout bounds one discovery fetch, whatever the caller's context
+// allows: a provider that accepts the connection and then stalls can't hold a
+// sign-in or an exchange, or a connection, for longer. outbound.Client has
+// no timeout of its own.
+var discoveryTimeout = 10 * time.Second
+
 func fetchDiscovery(ctx context.Context, discoveryURL string) (DiscoveryEndpointResponse, error) {
 	var doc DiscoveryEndpointResponse
+	ctx, cancel := context.WithTimeout(ctx, discoveryTimeout)
+	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
 	if err != nil {
 		return doc, fmt.Errorf("%w: creating the request: %v", ErrDiscoveryFailed, err)

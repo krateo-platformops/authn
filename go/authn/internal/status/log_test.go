@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -92,6 +93,26 @@ func TestFailedPrivately(t *testing.T) {
 	assert.Equal(t, "error", got["level"])
 	assert.Equal(t, "the identity provider's signing keys couldn't be read", got["error"])
 	assert.Contains(t, got["reason"], "connection refused")
+}
+
+// RetryAfter is in whole seconds, rounded up, and only when set.
+func TestRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		in   time.Duration
+		want int
+		ok   bool
+	}{
+		{in: 0, ok: false},
+		{in: 300 * time.Millisecond, want: 1, ok: true},
+		{in: 29*time.Second + time.Millisecond, want: 30, ok: true},
+		{in: 30 * time.Second, want: 30, ok: true},
+	} {
+		got, ok := RetryAfter(fmt.Errorf("wrapped: %w", CauseError{Code: 503, Cause: "X", Err: errors.New("x"), RetryAfter: tc.in}))
+		assert.Equal(t, tc.ok, ok, tc.in)
+		assert.Equal(t, tc.want, got, tc.in)
+	}
+	_, ok := RetryAfter(errors.New("plain"))
+	assert.False(t, ok)
 }
 
 // Answered text reaches the caller, never the log.

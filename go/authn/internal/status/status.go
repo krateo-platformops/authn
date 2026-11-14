@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Values of Status.Status
@@ -255,13 +256,16 @@ func New(code int, err error) Status {
 // Answered, when set, is the opposite: text answered after Err and never
 // logged. It is for text authn doesn't write and that may name an identity,
 // such as the apiserver's verdict on the caller's own token: the caller may
-// read it, a log line may not carry it.
+// read it, a log line may not carry it. RetryAfter, when set on a 503, is
+// how long the caller should wait before retrying, answered as Retry-After
+// (RFC 9110 §10.2.3) by a route that sends it.
 type CauseError struct {
-	Code     int
-	Cause    CauseType
-	Err      error
-	Private  error
-	Answered string
+	Code       int
+	Cause      CauseType
+	Err        error
+	Private    error
+	Answered   string
+	RetryAfter time.Duration
 }
 
 func (e CauseError) Error() string { return e.Err.Error() }
@@ -302,6 +306,16 @@ func IssueFailure(what string, err error) error {
 		return err
 	}
 	return Failed(CauseIssuanceFailed, fmt.Errorf("issuing %s: %w", what, err))
+}
+
+// RetryAfter is err's Retry-After in whole seconds, rounded up and at least
+// 1, and whether err carries one.
+func RetryAfter(err error) (int, bool) {
+	var ce CauseError
+	if !errors.As(err, &ce) || ce.RetryAfter <= 0 {
+		return 0, false
+	}
+	return int((ce.RetryAfter + time.Second - 1) / time.Second), true
 }
 
 // FromError renders err as a Status with its code and cause. An error that

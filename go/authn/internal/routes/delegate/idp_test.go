@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -42,6 +44,8 @@ const (
 type realm struct {
 	issuer string
 	key    *rsa.PrivateKey
+	// keysDown makes its JWKS answer 500.
+	keysDown *atomic.Bool
 }
 
 func newRealm(t *testing.T) realm {
@@ -49,6 +53,7 @@ func newRealm(t *testing.T) realm {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 	var issuer string
+	down := &atomic.Bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -58,6 +63,10 @@ func newRealm(t *testing.T) realm {
 				"authorization_endpoint": issuer + "/auth", "token_endpoint": issuer + "/token",
 			})
 		case "/realms/krateo/certs":
+			if down.Load() {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]string{{
 				"kty": "RSA", "kid": kcKID, "use": "sig", "alg": "RS256",
 				"n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()),
@@ -69,7 +78,7 @@ func newRealm(t *testing.T) realm {
 	}))
 	t.Cleanup(srv.Close)
 	issuer = srv.URL + "/realms/krateo"
-	return realm{issuer: issuer, key: key}
+	return realm{issuer: issuer, key: key, keysDown: down}
 }
 
 // accessToken is a Keycloak access token for alice, signed by key, with
@@ -104,7 +113,7 @@ func (k realm) sign(t *testing.T, key *rsa.PrivateKey, method jwt.SigningMethod,
 	}
 	var signed string
 	var err error
-	if method == jwt.SigningMethodHS256 {
+	if method == jwt.SigningMethodHS256 || method == jwt.SigningMethodHS512 {
 		signed, err = tok.SignedString(key.N.Bytes())
 	} else {
 		signed, err = tok.SignedString(key)
@@ -305,6 +314,24 @@ func TestExchangeRefusals(t *testing.T) {
 				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"typ": nil})
 			},
 			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "a kid the provider doesn't publish, its keys read during the request (iat now)",
+			token: func(t *testing.T) string {
+				return kc.sign(t, stranger, jwt.SigningMethodRS256, map[string]any{"kid": "forged"}, nil)
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "no kid",
+			token: func(t *testing.T) string {
+				return kc.sign(t, kc.key, jwt.SigningMethodRS256, map[string]any{"kid": nil}, nil)
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "RS512, whose keys authn never loads",
+			token: func(t *testing.T) string { return kc.accessToken(t, kc.key, jwt.SigningMethodRS512, nil) },
+			code:  http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
+		{name: "no issuer",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"iss": nil})
+			},
+			code: http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},
 		{name: "a kid the provider doesn't publish, on a token issued before its keys were read",
 			token: func(t *testing.T) string {
 				return kc.sign(t, stranger, jwt.SigningMethodRS256, map[string]any{"kid": "forged"},
@@ -355,6 +382,7 @@ func TestExchangeRefusals(t *testing.T) {
 			rec := exchange(h, "sa", idpForm(tokenFor(t), tc.audience...))
 			require.Equal(t, tc.code, rec.Code, rec.Body.String())
 			assert.Equal(t, tc.cause, cause(t, rec))
+			assert.Empty(t, rec.Header().Get("Retry-After"), "a refusal isn't retried")
 			assert.NotContains(t, rec.Body.String(), "access_token")
 			assert.NotContains(t, rec.Body.String(), kc.issuer, "the answer never names the provider's addresses")
 			assert.NotContains(t, rec.Body.String(), "forged", "nor a kid")
@@ -414,19 +442,21 @@ func TestExchangeSkipsAnUnresolvableSource(t *testing.T) {
 
 // authn's failures to verify an identity provider's token (500
 // IssuanceFailed, a failure record that names no subject): its sources can't
-// be resolved, its OIDCConfig maps identities through a RESTAction, or its
-// keys can't be read. The answer names neither the provider's addresses nor
+// be resolved, two share its issuer, or its OIDCConfig maps identities
+// through a RESTAction. The answer names neither the provider's addresses nor
 // the OIDCConfig; the log does.
 func TestExchangeFailures(t *testing.T) {
 	k, kc := newKeys(t), newRealm(t)
 	gone := httptest.NewServer(http.NotFoundHandler())
 	gone.Close()
 	discovery := `"discoveryURL":"` + kc.issuer + `/.well-known/openid-configuration"`
+	twoSources := `{"allowed":true,"subjectTokens":[{"oidcConfig":"keycloak","audiences":["` + mcpAudience + `"]},` +
+		`{"oidcConfig":"keycloak-copy","audiences":["` + mcpAudience + `"]}]}`
 	for _, tc := range []struct {
-		name   string
-		specs  map[string]string
-		token  func(t *testing.T) string
-		answer string
+		name       string
+		delegation string
+		specs      map[string]string
+		answer     string
 	}{
 		{name: "the only source's OIDCConfig is missing", specs: map[string]string{},
 			answer: "couldn't be resolved"},
@@ -435,24 +465,22 @@ func TestExchangeFailures(t *testing.T) {
 		{name: "the OIDCConfig maps identities through a RESTAction",
 			specs:  map[string]string{"keycloak": `{` + discovery + `,"restActionRef":{"name":"userinfo","namespace":"krateo-system"}}`},
 			answer: "RESTAction"},
-		{name: "a kid the provider's keys, read just now, may predate",
-			specs: map[string]string{"keycloak": `{` + discovery + `}`},
-			token: func(t *testing.T) string {
-				return kc.sign(t, k.stranger, jwt.SigningMethodRS256, map[string]any{"kid": "kc2"}, nil)
-			},
-			answer: "signing keys couldn't be read"},
+		{name: "two sources share the issuer", delegation: twoSources,
+			specs:  map[string]string{"keycloak": `{` + discovery + `}`, "keycloak-copy": `{` + discovery + `}`},
+			answer: "share this token's issuer"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			tokenFor := tc.token
-			if tokenFor == nil {
-				tokenFor = func(t *testing.T) string { return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil) }
+			delegation := tc.delegation
+			if delegation == "" {
+				delegation = idpDelegation
 			}
-			h, records := k.idpRoute(t, idpAPIServerWith(t, idpDelegation, tc.specs), secrets{"alice": claimed(kc.claimOf("uid-alice"))})
-			rec := exchange(h, "sa", idpForm(tokenFor(t)))
+			h, records := k.idpRoute(t, idpAPIServerWith(t, delegation, tc.specs), secrets{"alice": claimed(kc.claimOf("uid-alice"))})
+			rec := exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil)))
 			require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 			assert.Equal(t, "IssuanceFailed", cause(t, rec))
+			assert.Empty(t, rec.Header().Get("Retry-After"))
 			assert.Contains(t, rec.Body.String(), tc.answer)
-			for _, private := range []string{kc.issuer, gone.URL, "keycloak", "userinfo", "kc2"} {
+			for _, private := range []string{kc.issuer, gone.URL, "keycloak", "userinfo"} {
 				assert.NotContains(t, rec.Body.String(), private)
 			}
 
@@ -461,4 +489,67 @@ func TestExchangeFailures(t *testing.T) {
 			assert.Empty(t, auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
 		})
 	}
+}
+
+// A key authn can't decide on is 503 SubjectKeyUnavailable, retry (Diego,
+// 2026-11-14): the provider's keys can't be read, or a token claiming to be
+// newer than the key set names a kid the set lacks while the key source's
+// refresh floor keeps it from refetching. A genuine token signed with a
+// just-rotated key then verifies once the floor lapses. The record is a
+// failure naming no subject; the answer names no kid or address.
+func TestExchangeOfAKeyNotYetKnown(t *testing.T) {
+	k, kc := newKeys(t), newRealm(t)
+	rc := idpAPIServer(t, kc, idpDelegation, nil)
+	signedIn := secrets{"alice": claimed(kc.claimOf("uid-alice"))}
+
+	t.Run("the set predates the request and the token", func(t *testing.T) {
+		h, records := k.idpRoute(t, rc, signedIn)
+		// The first exchange reads the realm's keys.
+		issued(t, k, exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil))))
+		records.Reset()
+
+		rec := exchange(h, "sa", idpForm(kc.sign(t, k.stranger, jwt.SigningMethodRS256, map[string]any{"kid": "kc2"},
+			map[string]any{"iat": time.Now().Add(30 * time.Second).Unix()})))
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+		assert.Equal(t, "SubjectKeyUnavailable", cause(t, rec))
+		assertRetryAfter(t, rec)
+		assert.NotContains(t, rec.Body.String(), "kc2")
+		assert.NotContains(t, rec.Body.String(), kc.issuer)
+		r := auditlogtest.Only(t, records)
+		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(r, "krateo.audit.outcome"))
+		assert.Empty(t, auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
+	})
+
+	t.Run("the provider's keys can't be read", func(t *testing.T) {
+		kc.keysDown.Store(true)
+		t.Cleanup(func() { kc.keysDown.Store(false) })
+		h, records := k.idpRoute(t, rc, signedIn)
+		rec := exchange(h, "sa", idpForm(kc.accessToken(t, kc.key, jwt.SigningMethodRS256, nil)))
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+		assert.Equal(t, "SubjectKeyUnavailable", cause(t, rec))
+		assertRetryAfter(t, rec)
+		assert.NotContains(t, rec.Body.String(), kc.issuer)
+		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(auditlogtest.Only(t, records), "krateo.audit.outcome"))
+	})
+}
+
+// assertRetryAfter checks the 503's Retry-After: whole seconds, within the
+// key source's 30-second refresh floor.
+func assertRetryAfter(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	secs, err := strconv.Atoi(rec.Header().Get("Retry-After"))
+	require.NoError(t, err, "Retry-After is whole seconds")
+	assert.GreaterOrEqual(t, secs, 1)
+	assert.LessOrEqual(t, secs, 30)
+}
+
+// Retry-After is when the key source may fetch again, and never less than a
+// second: a source that may fetch now (no attempt yet, or the floor lapsed)
+// still answers 1, so the header is always sent on the 503.
+func TestRetryAfter(t *testing.T) {
+	assert.Equal(t, time.Second, retryAfter(time.Time{}), "never fetched")
+	assert.Equal(t, time.Second, retryAfter(time.Now().Add(-time.Minute)), "the floor has lapsed")
+	got := retryAfter(time.Now().Add(20 * time.Second))
+	assert.Greater(t, got, 19*time.Second)
+	assert.LessOrEqual(t, got, 20*time.Second)
 }

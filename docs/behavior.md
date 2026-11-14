@@ -296,16 +296,22 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   `subjectTokens[]` {`oidcConfig`, `audiences[]`} (#155) lets it exchange an identity
   provider's access token (`subject_token_type` `…:access_token`) from a listed
   OIDCConfig in authn's namespace: the token must verify against that provider's JWKS
-  (an RSA signature, `iss` exactly, an `iat` not in the future, an unexpired `exp`, an
+  (an RS256 signature naming a `kid`, `iss` exactly, an `iat` not in the future, an unexpired `exp`, an
   `aud` the entry lists, a `sub`) and be an access token (header `typ: at+jwt` per RFC
   9068, or claim `typ: Bearer` as Keycloak marks them; never an ID or refresh token). A
-  `kid` the provider's freshly read key set lacks, on a token issued before that read, is
-  `SubjectTokenInvalid`, not authn's failure (plumbing's `jwtutil.NotPublished`). A listed
-  OIDCConfig that can't be resolved is skipped; only when no other one issued the token
-  is it `500 IssuanceFailed`. An OIDCConfig with `restActionRef` is refused (`500`): an
+  `kid` the provider's key set lacks is `SubjectTokenInvalid` when the set was read after
+  the request arrived (plumbing's `jwtutil.NotPublishedSince`, which trusts no claim) or
+  after the token's `iat` (`jwtutil.NotPublished`); a set read before both, which the key
+  source's 30-second refresh floor kept from refetching, can't decide it, and neither can
+  a provider whose keys can't be fetched: `503 SubjectKeyUnavailable`, retry (Diego,
+  2026-11-14), with `Retry-After` set to when the key source may fetch again
+  (plumbing's `JWKSKeySource.NextRefresh`). A listed OIDCConfig that can't be resolved is skipped (and logged); only
+  when no other one issued the token is it `500 IssuanceFailed`, as is a token whose
+  issuer two listed OIDCConfigs share. An OIDCConfig with `restActionRef` is refused (`500`): an
   exchange doesn't run that RESTAction, so it would map the person differently from their
   sign-in. The OIDCConfig is read on every exchange; its provider's discovery document is
-  cached 5 minutes (30 seconds after a failure) and read up to 1 MiB. The person is mapped as `/oidc/login` maps an ID token (username from
+  cached 5 minutes (30 seconds after a failure), fetched once for concurrent exchanges,
+  cut off after 10 seconds (sign-ins too) and read up to 1 MiB. The person is mapped as `/oidc/login` maps an ID token (username from
   `preferred_username`, groups from `groups`, claim `["oidc", iss, sub]`), and
   `config.VouchForExchange` runs a sign-in's identity checks (no `system:` or `krateo:`
   group, the OIDCConfig's `allowedGroups`, a name that isn't reserved and, with exact
@@ -774,8 +780,8 @@ or a log line.
   `audience_not_allowed`, carrying the requested audience in `krateo.audit.token.audience`,
   or `invalid_request` for a malformed one or several, without the value; a success that
   issued an audience carries it too. It's `failure` when signing fails, or when no listed
-  OIDCConfig issued the token and one can't be resolved, its OIDCConfig sets
-  `restActionRef`, or its provider's keys can't be read. An actor refused or failed at
+  OIDCConfig issued the token and one can't be resolved, two share its issuer, its
+  OIDCConfig sets `restActionRef`, or its key can't be decided (`SubjectKeyUnavailable`). An actor refused or failed at
   its mapping lookup is recorded as on ServiceAccount login (above), under
   `authn.delegate`.
 - **`/usernames/check`** (audit v0.10.0). The actor is the caller's mapping, of its declared

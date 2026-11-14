@@ -161,7 +161,7 @@ For IDE sign-in to Agentiko over MCP, Diego decided on 2026-11-13:
    OIDCConfigs and the access token's accepted audiences) and `spec.delegation.audiences`
    (what the issued token's `aud` may be).
 
-The access token is verified against the provider's JWKS (RSA only, `iss` exactly,
+The access token is verified against the provider's JWKS (RS256 with a `kid`, `iss` exactly,
 `iat`, `exp`, `aud`) and must be an access token (`typ: at+jwt` in its header, or
 Keycloak's `typ: Bearer` claim), so an ID token the same realm signed can't be
 exchanged. An OIDCConfig with `restActionRef` is refused: the exchange would map the

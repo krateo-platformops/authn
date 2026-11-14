@@ -33,7 +33,14 @@ a `kid` the provider no longer publishes is the token's fault (`401`, plumbing v
 `jwtutil.NotPublished`), not authn's; an OIDCConfig with `restActionRef` is refused, so an
 exchange never maps a person differently from their sign-in; one unresolvable source no longer
 fails exchanges another source verifies; discovery is cached and capped at 1 MiB; and no
-answer names the provider's addresses, a `kid` or the OIDCConfig.
+answer names the provider's addresses, a `kid` or the OIDCConfig. A second review closed the
+rest: a `kid` missing from a key set read after the request arrived is `401` whatever the
+token's unsigned `iat` claims (plumbing v1.71.0's `jwtutil.NotPublishedSince`), so only a
+truly undecidable key, or a provider whose keys can't be fetched, is `503
+SubjectKeyUnavailable` (Diego's decision); a token needs a `kid` and RS256, the only keys
+plumbing loads; two OIDCConfigs sharing an issuer are refused; and discovery has its own
+10-second timeout and one shared fetch. The 503 carries `Retry-After`, the key source's
+`NextRefresh`, which the bridge follows.
 
 ## 2026-11-13 — a refusal names only the username's own Secret
 

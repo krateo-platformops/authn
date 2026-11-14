@@ -12,6 +12,7 @@ import (
 	"github.com/krateo-platformops/audit"
 	"github.com/krateo-platformops/authn/internal/auditlog"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -67,6 +68,10 @@ const (
 	CauseDelegationNotAllowed status.CauseType = "DelegationNotAllowed"     // 403
 	CauseDelegationTooDeep    status.CauseType = "DelegationTooDeep"        // 403
 	CauseIssuanceFailed                        = status.CauseIssuanceFailed // 500
+	// CauseSubjectKeyUnavailable: an identity provider's subject token
+	// names a key authn can't read yet, because the provider's keys couldn't
+	// be fetched or the set it has may predate the key (authn#155). Retry.
+	CauseSubjectKeyUnavailable status.CauseType = "SubjectKeyUnavailable" // 503
 )
 
 type Options struct {
@@ -130,6 +135,9 @@ func (r *route) Handler() http.HandlerFunc {
 		log := zerolog.Ctx(req.Context())
 		fail := func(err error, msg string) {
 			status.LogFailure(*log, err).Msg(msg)
+			if secs, ok := status.RetryAfter(err); ok {
+				wri.Header().Set("Retry-After", strconv.Itoa(secs))
+			}
 			encode.Failure(wri, status.FromError(err))
 		}
 
@@ -374,6 +382,14 @@ func withoutReserved(groups []string) []string {
 // expired (401): the caller must get a fresh one from the person's session.
 func subjectInvalid(err error) status.CauseError {
 	return status.CauseError{Code: http.StatusUnauthorized, Cause: CauseSubjectTokenInvalid, Err: err}
+}
+
+// subjectKeyUnavailable answers public with 503 SubjectKeyUnavailable and
+// Retry-After retryAfter, the key source's detail kept private for the
+// server log.
+func subjectKeyUnavailable(public string, private error, retryAfter time.Duration) status.CauseError {
+	return status.CauseError{Code: http.StatusServiceUnavailable, Cause: CauseSubjectKeyUnavailable,
+		Err: errors.New(public), Private: private, RetryAfter: retryAfter}
 }
 
 // subjectInvalidPrivately is subjectInvalid answering public, with the
