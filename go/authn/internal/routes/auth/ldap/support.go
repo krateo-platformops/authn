@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"text/template"
 
@@ -39,6 +41,8 @@ type ldapConfig struct {
 	bindSecret string
 	baseDN     string
 	tls        bool
+	// tlsConfig verifies the server for StartTLS and ldaps:// (authn#160).
+	tlsConfig *tls.Config
 
 	groupBaseDN   string
 	groupFilter   *template.Template
@@ -141,11 +145,52 @@ func getConfig(rc *rest.Config, name string) (ldapConfig, error) {
 		}
 	}
 
+	// The server is verified against spec.tlsCA, or the system roots. A CA
+	// authn can't read is authn's failure; one that holds no certificate is
+	// a misconfigured LDAPConfig. Both are found here, before any connection.
+	var roots *x509.CertPool
+	if ref := cfg.Spec.TLSCA; ref != nil {
+		sec, err := secrets.Get(context.Background(), rc, ref)
+		if err != nil {
+			return res, status.Failed(CauseLDAPConfigLookupFailed, fmt.Errorf("reading spec.tlsCA: %w", err))
+		}
+		roots = x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(sec.Data[ref.Key]) {
+			return res, status.Failed(CauseLDAPConfigInvalid,
+				fmt.Errorf("LDAPConfig %q: spec.tlsCA key %q holds no PEM certificate", name, ref.Key))
+		}
+	}
+	tlsConfig, err := verifyingTLSConfig(res.dialURL, roots)
+	if err != nil {
+		return res, status.Failed(CauseLDAPConfigInvalid, fmt.Errorf("LDAPConfig %q: %w", name, err))
+	}
+	res.tlsConfig = tlsConfig
+
 	return res, nil
 }
 
-// dial connects to the LDAP server; tests replace it with a fake.
-var dial = func(url string) (ldap.Client, error) { return ldap.DialURL(url) }
+// dial connects to the LDAP server, verifying an ldaps:// server with
+// tlsConfig; tests replace it with a fake.
+var dial = func(url string, tlsConfig *tls.Config) (ldap.Client, error) {
+	return ldap.DialURL(url, ldap.DialWithTLSConfig(tlsConfig))
+}
+
+// verifyingTLSConfig is the TLS the LDAP login uses for StartTLS and
+// ldaps:// (authn#160): the server's certificate verified for the host in
+// dialURL, against roots, or the system roots when roots is nil. Never
+// InsecureSkipVerify: a bind sends the user's password, and an unverified
+// server could be anyone in the path.
+func verifyingTLSConfig(dialURL string, roots *x509.CertPool) (*tls.Config, error) {
+	u, err := url.Parse(dialURL)
+	if err != nil {
+		return nil, fmt.Errorf("spec.dialURL %q isn't a URL: %w", dialURL, err)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return nil, fmt.Errorf("spec.dialURL %q names no host to verify the server's certificate for", dialURL)
+	}
+	return &tls.Config{ServerName: host, RootCAs: roots, MinVersion: tls.VersionTLS12}, nil
+}
 
 // doLogin authenticates username against the LDAP server. Every error it
 // returns is a status.CauseError: the caller's refusal (the user is unknown,
@@ -154,7 +199,7 @@ var dial = func(url string) (ldap.Client, error) { return ldap.DialURL(url) }
 // refused bind are the same InvalidCredentials body, so a caller can't probe
 // which users exist; the real reason only reaches the log.
 func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
-	l, err := dial(cfg.dialURL)
+	l, err := dial(cfg.dialURL, cfg.tlsConfig)
 	if err != nil {
 		return nil, status.Failed(CauseLDAPUnavailable, ldapResult(err))
 	}
@@ -162,7 +207,7 @@ func doLogin(username, password string, cfg ldapConfig) (userinfo.Info, error) {
 
 	if cfg.tls {
 		// Reconnect with TLS
-		err = l.StartTLS(&tls.Config{InsecureSkipVerify: true})
+		err = l.StartTLS(cfg.tlsConfig)
 		if err != nil {
 			return nil, status.Failed(CauseLDAPUnavailable, ldapResult(err))
 		}

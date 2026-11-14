@@ -14,6 +14,17 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-14 — LDAP verifies the server's certificate
+
+`spec.tls`'s StartTLS used `InsecureSkipVerify`, so an LDAP bind, which carries the user's
+password, went to whatever server answered (#160). StartTLS and `ldaps://` now verify the
+certificate for the host in `spec.dialURL`, against the system roots or a new optional
+`spec.tlsCA` (a Secret key with the server's CA). Diego's decision: verify by default, no
+option to skip. **Upgrade note:** an LDAPConfig whose server uses a private CA, or a
+certificate for another host, fails sign-in (`500 LDAPUnavailable`) until `spec.tlsCA` is
+set or the dialURL matches the certificate. Neither demo nor 057 had an LDAPConfig when it
+shipped.
+
 ## 2026-11-14 — a refused ServiceAccount sign-in says whose it was too
 
 The `identity.claim` of 0.48.0 covered sign-ins that reached issuance. A ServiceAccount login

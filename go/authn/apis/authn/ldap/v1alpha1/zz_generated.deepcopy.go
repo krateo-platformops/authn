@@ -100,6 +100,10 @@ func (in *LDAPConfigSpec) DeepCopyInto(out *LDAPConfigSpec) {
 		*out = new(bool)
 		**out = **in
 	}
+	if in.TLSCA != nil {
+		in, out := &in.TLSCA, &out.TLSCA
+		*out = (*in).DeepCopy()
+	}
 	if in.GroupSearch != nil {
 		in, out := &in.GroupSearch, &out.GroupSearch
 		*out = new(LDAPGroupSearch)
