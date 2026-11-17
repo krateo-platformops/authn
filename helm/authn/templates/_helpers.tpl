@@ -51,13 +51,20 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
-Create the name of the service account to use
+The ServiceAccount authn runs as, and the one its RoleBinding and
+ClusterRoleBindings name: the pod and its RBAC must agree, or CSR approval and
+TokenReview fail with 403. With serviceAccount.create false a name is required:
+the chart won't bind authn's rights (CSR approval, the kube-apiserver-client
+signer, TokenReview) to the namespace's "default" ServiceAccount, which every
+pod without one of its own runs as.
 */}}
 {{- define "authn.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
 {{- default (include "authn.fullname" .) .Values.serviceAccount.name }}
+{{- else if .Values.serviceAccount.name }}
+{{- .Values.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- fail "serviceAccount.name is required when serviceAccount.create is false: the chart binds authn's RBAC to it, and won't bind it to the namespace's default ServiceAccount" }}
 {{- end }}
 {{- end }}
 
