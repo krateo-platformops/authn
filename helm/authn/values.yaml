@@ -28,8 +28,10 @@ serviceAccount:
   automount: true
   # Annotations to add to the service account
   annotations: {}
-  # The name of the service account to use.
-  # If not set and create is true, a name is generated using the fullname template
+  # The name of the service account authn runs as and its RBAC is bound to.
+  # If not set and create is true, a name is generated using the fullname template.
+  # Required when create is false: the chart refuses to bind authn's RBAC to
+  # the namespace's default ServiceAccount.
   name: ""
 
 podAnnotations: {}

@@ -10,7 +10,7 @@ roleRef:
   name: {{ include "authn.fullname" . }}-{{ .Release.Namespace }}
 subjects:
 - kind: ServiceAccount
-  name: {{ include "authn.fullname" . }}
+  name: {{ include "authn.serviceAccountName" . }}
   namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
