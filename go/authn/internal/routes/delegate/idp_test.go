@@ -95,7 +95,7 @@ func (k realm) sign(t *testing.T, key *rsa.PrivateKey, method jwt.SigningMethod,
 	t.Helper()
 	c := jwt.MapClaims{
 		"iss": k.issuer, "sub": "uid-alice", "aud": mcpAudience, "typ": "Bearer", "preferred_username": "alice",
-		"groups": []any{"tenants"}, "exp": time.Now().Add(5 * time.Minute).Unix(), "iat": time.Now().Unix(),
+		"sid": "session-alice", "groups": []any{"tenants"}, "exp": time.Now().Add(5 * time.Minute).Unix(), "iat": time.Now().Unix(),
 	}
 	for name, v := range claims {
 		if v == nil {
@@ -253,6 +253,19 @@ func TestExchangeOfAnIdentityProvidersToken(t *testing.T) {
 	assert.Empty(t, auditlogtest.String(auditlogtest.Only(t, records), audit.KeyTokenAudience))
 }
 
+// authn#165's control: what makes a subject a person is its user session
+// (sid), not its name. A real user may be named service-account-... (Keycloak
+// 26.6.3 creates one), and with a session that user is exchanged.
+func TestExchangeOfAUserNamedLikeAServiceAccount(t *testing.T) {
+	k, kc := newKeys(t), newRealm(t)
+	rc := idpAPIServer(t, kc, idpDelegation, []string{"tenants"})
+	h, _ := k.idpRoute(t, rc, secrets{"service-account-x-sa2": claimed(kc.claimOf("uid-sa2"))})
+	tok := kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{
+		"sub": "uid-sa2", "preferred_username": "service-account-x-sa2", "sid": "session-sa2"})
+	_, nfo := issued(t, k, exchange(h, "sa", idpForm(tok)))
+	assert.Equal(t, "service-account-x-sa2", nfo.Username)
+}
+
 // Every refusal of the exchange (authn#155): the answer the bridge maps, and
 // a conformant denied record with its reason. A subject the provider
 // verified is named on the record; one that didn't verify isn't.
@@ -285,6 +298,30 @@ func TestExchangeRefusals(t *testing.T) {
 				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"groups": []any{"tenants", "krateo:admins"}})
 			},
 			code: http.StatusForbidden, cause: "PlatformGroupNotAllowed", reason: audit.DenialReasonPlatformGroup, named: true},
+		// authn#165: no user session, no person. The shapes are Keycloak
+		// 26.6.3's, measured: a client-credentials token has no sid and has
+		// client_id; its username is service-account-<clientId>.
+		{name: "a service account's client-credentials token",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{
+					"sid": nil, "client_id": "x-sa", "preferred_username": "service-account-x-sa", "groups": nil})
+			},
+			code: http.StatusForbidden, cause: "SubjectNotAPerson", reason: audit.DenialReasonSubjectNotAPerson},
+		{name: "a user token without sid (an access token configured to leave it out)",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"sid": nil})
+			},
+			code: http.StatusForbidden, cause: "SubjectNotAPerson", reason: audit.DenialReasonSubjectNotAPerson},
+		{name: "an empty sid",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"sid": ""})
+			},
+			code: http.StatusForbidden, cause: "SubjectNotAPerson", reason: audit.DenialReasonSubjectNotAPerson},
+		{name: "a sid that isn't a string",
+			token: func(t *testing.T) string {
+				return kc.accessToken(t, kc.key, jwt.SigningMethodRS256, map[string]any{"sid": 7})
+			},
+			code: http.StatusForbidden, cause: "SubjectNotAPerson", reason: audit.DenialReasonSubjectNotAPerson},
 		{name: "signed by another key",
 			token: func(t *testing.T) string { return kc.accessToken(t, stranger, jwt.SigningMethodRS256, nil) },
 			code:  http.StatusUnauthorized, cause: "SubjectTokenInvalid", reason: audit.DenialReasonSubjectTokenInvalid},

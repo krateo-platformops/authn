@@ -64,7 +64,11 @@ const (
 	CauseInvalidTarget status.CauseType = "InvalidTarget" // 400
 	// CauseGroupNotAllowed: an identity provider's subject is in none of
 	// its OIDCConfig's allowedGroups: /oidc/login's cause of the same name.
-	CauseGroupNotAllowed      status.CauseType = "GroupNotAllowed"          // 403
+	CauseGroupNotAllowed status.CauseType = "GroupNotAllowed" // 403
+	// CauseSubjectNotAPerson: an identity provider's subject token verified
+	// but carries no user session (no sid): a service account's
+	// client-credentials token names no person to act for (authn#165).
+	CauseSubjectNotAPerson    status.CauseType = "SubjectNotAPerson"        // 403
 	CauseDelegationNotAllowed status.CauseType = "DelegationNotAllowed"     // 403
 	CauseDelegationTooDeep    status.CauseType = "DelegationTooDeep"        // 403
 	CauseIssuanceFailed                        = status.CauseIssuanceFailed // 500
