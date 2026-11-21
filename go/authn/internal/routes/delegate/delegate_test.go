@@ -96,6 +96,8 @@ func (k keys) route(rc *rest.Config) http.Handler {
 		PrivateKey:   k.current,
 		KeyID:        "current",
 		PreviousKeys: []jwks.Key{{KID: "previous", Pub: &k.previous.PublicKey}},
+		Lookup:       everyoneSignedIn{},
+		Generator:    &fakeGenerator{},
 	}).Handler()
 }
 
@@ -107,6 +109,8 @@ func (k keys) recorded(t *testing.T, rc *rest.Config) (http.Handler, *audittest.
 		KeyID:        "current",
 		PreviousKeys: []jwks.Key{{KID: "previous", Pub: &k.previous.PublicKey}},
 		Audit:        audit,
+		Lookup:       everyoneSignedIn{},
+		Generator:    &fakeGenerator{},
 	}).Handler()), records
 }
 
@@ -182,7 +186,7 @@ func TestDelegationIssuesActorToken(t *testing.T) {
 	rec := exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil)))
 
 	// One conformant record: the actor, acting for alice, through its mapping (AUDIT-4).
-	r := auditlogtest.Only(t, records)
+	r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 	assert.Equal(t, "authn.delegate", auditlogtest.String(r, "krateo.action"))
 	assert.Equal(t, "success", auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Equal(t, "kagent", auditlogtest.String(r, "user.name"))
@@ -271,10 +275,12 @@ func TestDelegationSigningFailureIsRecorded(t *testing.T) {
 		KeyID:        "current",
 		PreviousKeys: []jwks.Key{{KID: "previous", Pub: &k.previous.PublicKey}},
 		Audit:        audit,
+		Lookup:       everyoneSignedIn{},
+		Generator:    &fakeGenerator{},
 	}).Handler())
 	rec := exchange(h, "projected-sa-token", form(token(t, k.previous, "previous", time.Hour, nil)))
 	require.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
-	r := auditlogtest.Only(t, records)
+	r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 	assert.Equal(t, "failure", auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Equal(t, "alice", auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
 	for _, kv := range audittest.Attributes(r) {
@@ -290,7 +296,7 @@ func TestDelegationRefusalsAreRecorded(t *testing.T) {
 	h, records := k.recorded(t, rc)
 	rec := exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil)))
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	r := auditlogtest.Only(t, records)
+	r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 	assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Equal(t, "kagent", auditlogtest.String(r, "krateo.audit.object_ref.name"))
 
@@ -377,7 +383,7 @@ func TestDelegationRefusals(t *testing.T) {
 			}
 			// The actor is verified: every refusal of it is one denied record of
 			// the issuance (AUDIT-4), whichever check refused it.
-			r := auditlogtest.Only(t, records)
+			r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 			assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
 			assert.Equal(t, "create", auditlogtest.String(r, "krateo.audit.verb"))
 			assert.Equal(t, "token", auditlogtest.String(r, "krateo.audit.object_ref.subresource"))

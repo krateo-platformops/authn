@@ -327,7 +327,7 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   group, the OIDCConfig's `allowedGroups`, a name that isn't reserved and, with exact
   naming, is issuable) and then the **claim-first rule**: the username's credential
   Secret (the same Secrets the name guard reads) must already carry exactly this claim.
-  An exchange writes no Secret, so it never claims a name: no Secret is `403
+  An exchange never writes a session Secret, so it never claims a name: no Secret is `403
   SubjectNotSignedIn` (sign in to the portal once), another identity's claim or a
   pre-claims Secret is the opaque `403 UsernameUnavailable`. `audiences[]` lists what the
   issued token's `aud` may be, through RFC 8693's `audience` parameter (at most one; a
@@ -336,7 +336,33 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   The subject token is verified against authn's current and previous keys
   (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
   minus reserved ones, and its `principal`, adds `act` (`plumbing/jwtutil.Actor`) with
-  this service's `principal`, and lives `min(15m, subject exp)`. It mints no kubeconfig.
+  this service's `principal`, and lives `min(15m, subject exp)`, and never past its
+  credential. It mints no kubeconfig. **Each token is issued with its delegated
+  credential** (authn#167, Diego 2026-11-21). snowplow authorizes a delegated token by its
+  username and groups and then calls the apiserver with a certificate. The person's
+  session certificate carried the groups of their last sign-in (the ID token, after the
+  RESTAction) and lived 24h, renewed only by a sign-in, so the two could disagree and an
+  agent's calls failed a day after the person's last visit. Now `/delegate` mints, once
+  every check has passed, a certificate for exactly the token's username (CN) and groups
+  (O), bound once in the handler so the claim and the certificate can't differ. The
+  generator refuses a reserved group rather than dropping it. The certificate is requested
+  for the token's lifetime (at least `config.MinCertDuration`, 10 minutes, the CSR API's
+  minimum), and the token is clamped to its granted `NotAfter`. It is stored as
+  `endpoints.DelegatedSecretName(username, act.sub)`: one Secret per person and actor,
+  replaced on each exchange (conditionally on the version read). A Secret under the name
+  that isn't this person's and actor's is never replaced. It carries the username, actor,
+  strategy, groups, validity and claim annotations, and none of the labels the tenant
+  policy selects sign-ins by. For an identity provider's token the strategy is `oidc` and
+  the claim the one the claim-first rule vouched for. For an authn token they are read
+  from the person's session Secret (`config.SessionIdentity`): no session Secret is `403
+  SubjectNotSignedIn`, one recording no strategy `403 UsernameUnavailable`. Either path
+  needs the session Secret to exist, never its certificate to be valid: authn never
+  deletes a session Secret, and an expired session certificate is exactly what the
+  delegated credential stands in for (pinned by
+  `TestAnExchangeAdmitsAnExpiredSessionCertificate`). A credential
+  that fails is `500 IssuanceFailed`, and no token is issued. Its write is its own audit
+  record, `authn.delegate.credential`, next to the `authn.delegate` decision. The sweep
+  deletes it once expired (`authn.delegate.expired`), as it does a step-up credential.
 - `spec.principal` (optional, `agent` | `controller` | `service`) — the kind of identity
   this service is, signed into its tokens as the `principal` claim
   (`serviceaccount.Principal`). Omitted: `service`.
@@ -735,8 +761,10 @@ or a log line.
 | basic, LDAP, OAuth, OIDC, ServiceAccount login | `authn.login.<strategy>` | the `<username>-clientconfig` Secret | `create` or `update`, as sent |
 | OIDC step-up | `authn.stepup.oidc` | the `<username>-clientconfig-stepup` Secret | `create` or `update` |
 | `/delegate` | `authn.delegate` | the actor's `serviceaccount.authn.krateo.io` mapping, subresource `token` | `create` (the issuance; no status code) |
+| `/delegate`'s credential (authn#167) | `authn.delegate.credential` | the `delegated-<sha256>` Secret of the person and the actor | `create` or `update`, as sent |
 | `/usernames/check` | `authn.username.check` | the checked name's `<username>-clientconfig` Secret | `get` (a read; no status code unless a failed lookup was answered) |
 | step-up sweep (background) | `authn.stepup.expired` | the expired step-up Secret | `delete` |
+| sweep (background) | `authn.delegate.expired` | the expired delegated Secret | `delete` |
 | authn's own certificate (background) | `authn.servicecert.issued` | authn's `<authn-username>-clientconfig` Secret | `create` or `update`, as sent |
 | identity backfill at startup (background) | `authn.identity.backfilled` | a user's `-clientconfig` Secret it stamped | `update` |
 | identity backfill at startup, exact naming on (background) | `authn.identity.inconsistent` | a `-clientconfig` Secret holding an identity key with another value, left as found | `update` (denied, `kept_existing_value`, one per key; no method, no status code) |

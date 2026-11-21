@@ -66,27 +66,29 @@ var idpAlgorithms = []string{"RS256"}
 //   - config.VouchForExchange then runs a sign-in's identity checks, the
 //     OIDCConfig's allowedGroups among them, and the claim-first rule.
 //
-// On a refusal it returns the record's reason; with
+// On success claim is the person's, the one their session Secret carries,
+// for the delegated credential (authn#167). On a refusal it returns the
+// record's reason; with
 // auditlog.NoDelegationDenial it is authn's failure. Neither answers the
 // provider's addresses, kids or verification detail: the server log has
 // them. verified is the person once the token verified, so a refusal of a
 // verified identity names them; nil before.
 func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor *sav1alpha1.ServiceAccount, token string) (
-	subject jwtutil.UserInfo, exp time.Time, verified *jwtutil.UserInfo, why auditlog.DelegationDenial, err error) {
+	subject jwtutil.UserInfo, exp time.Time, claim string, verified *jwtutil.UserInfo, why auditlog.DelegationDenial, err error) {
 	// The token was received no later than now: a key set fetched from here
 	// on that lacks its kid proves the key isn't published.
 	received := time.Now()
-	invalid := func(public string, private error) (jwtutil.UserInfo, time.Time, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectTokenInvalid, subjectInvalidPrivately(public, private)
+	invalid := func(public string, private error) (jwtutil.UserInfo, time.Time, string, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.SubjectTokenInvalid, subjectInvalidPrivately(public, private)
 	}
-	failed := func(public string, private error) (jwtutil.UserInfo, time.Time, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.NoDelegationDenial,
+	failed := func(public string, private error) (jwtutil.UserInfo, time.Time, string, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.NoDelegationDenial,
 			status.FailedPrivately(CauseIssuanceFailed, errors.New(public), private)
 	}
 
 	sources := actor.Spec.Delegation.SubjectTokens
 	if len(sources) == 0 {
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.DelegationNotAllowed, status.Refused(CauseDelegationNotAllowed,
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.DelegationNotAllowed, status.Refused(CauseDelegationNotAllowed,
 			errors.New("the actor's ServiceAccount mapping lists no identity provider whose tokens it may exchange (spec.delegation.subjectTokens)"))
 	}
 	unverified := jwt.MapClaims{}
@@ -125,14 +127,14 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 		// the client may outlast, answered as an unreadable key is; otherwise
 		// an admin must fix an OIDCConfig.
 		if at, ok := providersUnavailable(unresolved); ok {
-			return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.NoDelegationDenial,
+			return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.NoDelegationDenial,
 				subjectKeyUnavailable("an identity provider the actor's mapping lists is unavailable: retry",
 					fmt.Errorf("resolving the actor's subject-token sources: %w", errors.Join(unresolved...)), retryAfter(at))
 		}
 		return failed("an identity provider the actor's mapping lists couldn't be resolved",
 			fmt.Errorf("resolving the actor's subject-token sources: %w", errors.Join(unresolved...)))
 	case source == nil:
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.DelegationNotAllowed, status.Refused(CauseDelegationNotAllowed,
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.DelegationNotAllowed, status.Refused(CauseDelegationNotAllowed,
 			errors.New("the actor's ServiceAccount mapping lists no identity provider that issued this token"))
 	case keys.MapsThroughRESTAction:
 		return failed("this OIDCConfig maps identities through a RESTAction, which a token exchange doesn't run",
@@ -170,11 +172,11 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	case errors.Is(err, jwtutil.ErrKeyUnavailable):
 		// The provider's keys couldn't be read, or its set predates both the
 		// request and the token: neither is decided, so retry.
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.NoDelegationDenial,
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.NoDelegationDenial,
 			subjectKeyUnavailable("the identity provider's signing key for the subject token isn't available yet: retry", err,
 				retryAfter(keySource.NextRefresh()))
 	case errors.Is(err, jwt.ErrTokenExpired):
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectTokenExpired, subjectInvalid(errors.New("the subject token has expired"))
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.SubjectTokenExpired, subjectInvalid(errors.New("the subject token has expired"))
 	case err != nil:
 		return invalid("the subject token didn't verify against its identity provider", err)
 	}
@@ -190,7 +192,7 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 		return invalid("the subject token has no expiry", err)
 	}
 	if time.Until(expAt.Time) < time.Second {
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectTokenExpired, subjectInvalid(errors.New("the subject token is about to expire"))
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.SubjectTokenExpired, subjectInvalid(errors.New("the subject token is about to expire"))
 	}
 	sub, _ := claims["sub"].(string)
 	if sub == "" {
@@ -207,7 +209,7 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	// A provider configured to leave sid out of access tokens (Keycloak's
 	// lightweight access tokens) is refused here too: fail closed.
 	if sid, ok := claims["sid"].(string); !ok || sid == "" {
-		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectNotAPerson, status.RefusedPrivately(CauseSubjectNotAPerson,
+		return jwtutil.UserInfo{}, time.Time{}, "", nil, auditlog.SubjectNotAPerson, status.RefusedPrivately(CauseSubjectNotAPerson,
 			errors.New("the subject token isn't a person's: it carries no user session (sid), as a service account's token doesn't; if it is a user's, the identity provider must include sid in its access tokens"),
 			fmt.Errorf("sid %v", claims["sid"]))
 	}
@@ -224,11 +226,9 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	user.Subject = userinfo.Subject{Issuer: keys.Issuer, ID: sub}
 	person := jwtutil.UserInfo{Username: user.GetUserName(), Groups: user.GetGroups(), Principal: jwtutil.PrincipalHuman}
 
-	lookup := r.opts.Lookup
-	if lookup == nil {
-		if lookup, err = kubeconfig.NewNameLookup(r.rc); err != nil {
-			return failed("the name lookup couldn't be built", err)
-		}
+	lookup, err := r.nameLookup()
+	if err != nil {
+		return failed("the name lookup couldn't be built", err)
 	}
 	allowed := keys.AllowedGroups
 	admit := kubeconfig.Admit(func(u userinfo.Info) error {
@@ -238,13 +238,14 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 		return kubeconfig.Refused(kubeconfig.RefusalGroupNotAllowed, status.Refused(CauseGroupNotAllowed,
 			errors.New("the person is in none of the groups the OIDCConfig admits")))
 	})
-	if _, err := kubeconfig.VouchForExchange(ctx, lookup, r.opts.Naming, log, storage.StrategyOIDC, user, admit); err != nil {
+	claim, err = kubeconfig.VouchForExchange(ctx, lookup, r.opts.Naming, log, storage.StrategyOIDC, user, admit)
+	if err != nil {
 		if why := kubeconfig.RefusalOf(err); why != "" {
-			return jwtutil.UserInfo{}, time.Time{}, &person, auditlog.DelegationRefusal(why), err
+			return jwtutil.UserInfo{}, time.Time{}, "", &person, auditlog.DelegationRefusal(why), err
 		}
-		return jwtutil.UserInfo{}, time.Time{}, &person, auditlog.NoDelegationDenial, err
+		return jwtutil.UserInfo{}, time.Time{}, "", &person, auditlog.NoDelegationDenial, err
 	}
-	return person, expAt.Time, &person, auditlog.NoDelegationDenial, nil
+	return person, expAt.Time, claim, &person, auditlog.NoDelegationDenial, nil
 }
 
 // providersUnavailable says whether every error is a provider's outage

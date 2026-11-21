@@ -109,3 +109,50 @@ func claimFirst(held []*corev1.Secret, claim string, refuse func(Refusal, string
 	}
 	return claim, nil
 }
+
+// SessionIdentity is the identity recorded on username's session credential:
+// the strategy that issued it and its claim, "" when it carries none (written
+// before claims). An exchange of an authn token (/delegate) records it on the
+// delegated credential it issues (authn#167). The token names the username,
+// and the session Secret names who holds it. It writes nothing, and decides
+// from the Secrets a sign-in does (nameGuard.held), the name authn writes
+// first. The refusals are:
+//   - RefusalNotSignedIn: no session Secret is the username's, so the
+//     credential the token was issued with is gone. 403 SubjectNotSignedIn:
+//     sign in again;
+//   - RefusalClaimed, RefusalHeldLegacy: as at a sign-in, the opaque 403
+//     UsernameUnavailable;
+//   - RefusalHeldLegacy as well for a session Secret that records no
+//     strategy (written before identities were recorded, and not
+//     backfilled).
+func SessionIdentity(ctx context.Context, lookup NameLookup, naming storage.Naming, log zerolog.Logger, username string) (storage.Strategy, string, error) {
+	if username == "" {
+		return "", "", refused(RefusalNameMissing, status.Refused(status.CauseUsernameUnavailable, errors.New("the identity has no username")))
+	}
+	if lookup == nil {
+		return "", "", status.Failed(status.CauseIssuanceFailed, errors.New("no name lookup to read the username's session credential"))
+	}
+	g := nameGuard{lookup: lookup, log: log, naming: naming}
+	refuse := func(why Refusal, reason string, args ...any) error {
+		private := fmt.Errorf("the username "+reason, args...)
+		log.Warn().Str("refusal", string(why)).Str("reason", private.Error()).Msg("exchange refused")
+		return refused(why, status.RefusedPrivately(status.CauseUsernameUnavailable, errUsernameUnavailable, private))
+	}
+	failed := func(err error) error {
+		return status.Failed(status.CauseIssuanceFailed, fmt.Errorf("reading the username's session credential: %w", err))
+	}
+	held, err := g.held(ctx, username, false, refuse, failed)
+	if err != nil {
+		return "", "", err
+	}
+	if len(held) == 0 {
+		return "", "", refused(RefusalNotSignedIn, status.Refused(status.CauseSubjectNotSignedIn,
+			errors.New("the person has no credential: sign in to the portal again, then retry")))
+	}
+	ann := held[0].GetAnnotations()
+	strategy := storage.Strategy(ann[storage.StrategyAnnotation])
+	if strategy == "" {
+		return "", "", refuse(RefusalHeldLegacy, "has a credential that records no strategy")
+	}
+	return strategy, ann[storage.ClaimAnnotation], nil
+}

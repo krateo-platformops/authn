@@ -30,8 +30,12 @@ const (
 // The krateo.action literals.
 const (
 	ActionDelegate = "authn.delegate"
-	actionLogin    = "authn.login."
-	ActionStepUp   = "authn.stepup.oidc"
+	// ActionDelegateCredential is the write of the credential issued with a
+	// delegated token (authn#167): its own record, naming the Secret, next to
+	// the authn.delegate record of the decision.
+	ActionDelegateCredential = "authn.delegate.credential"
+	actionLogin              = "authn.login."
+	ActionStepUp             = "authn.stepup.oidc"
 )
 
 // LoginAction is the krateo.action of a login with strategy.

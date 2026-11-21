@@ -334,3 +334,8 @@ func TestLoginIssuanceFailureIsRecorded(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "accessToken")
 	auditlogtest.OnlyWriteFailed(t, records, "authn.login.basic", "admin", http.StatusInternalServerError)
 }
+
+// GenerateDelegated is /delegate's (authn#167); no login issues one.
+func (g *fakeGenerator) GenerateDelegated(storage.Strategy, userinfo.Info, string, string, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	return kubeconfig.Issued{}, errors.New("a login never issues a delegated credential")
+}

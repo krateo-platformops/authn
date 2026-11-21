@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -375,4 +376,9 @@ func TestInternalSurface(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "the public listener must not serve /usernames/check")
+}
+
+// GenerateDelegated is /delegate's (authn#167); no login issues one.
+func (g *mintCounter) GenerateDelegated(storage.Strategy, userinfo.Info, string, string, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	return kubeconfig.Issued{}, errors.New("a login never issues a delegated credential")
 }

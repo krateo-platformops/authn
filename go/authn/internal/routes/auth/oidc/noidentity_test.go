@@ -194,3 +194,8 @@ func TestOIDCStepUpLogsNoIdentity(t *testing.T) {
 		})
 	}
 }
+
+// GenerateDelegated is /delegate's (authn#167); no login issues one.
+func (g *failingGenerator) GenerateDelegated(storage.Strategy, userinfo.Info, string, string, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	return kubeconfig.Issued{}, errors.New("a login never issues a delegated credential")
+}
