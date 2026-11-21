@@ -14,6 +14,9 @@ import (
 const (
 	// ActionStepUpExpired: the step-up sweep deleted an expired step-up credential.
 	ActionStepUpExpired = "authn.stepup.expired"
+	// ActionDelegateExpired: the sweep deleted an expired delegated
+	// credential (authn#167).
+	ActionDelegateExpired = "authn.delegate.expired"
 	// ActionServiceCertIssued: authn issued (or renewed) its own client
 	// certificate and stored it in its clientconfig Secret.
 	ActionServiceCertIssued = "authn.servicecert.issued"
@@ -74,11 +77,21 @@ type SecretRef struct {
 // is the apiserver's HTTP status (0 when not known, and then omitted rather
 // than assumed), err the delete's error.
 func (c *Controller) StepUpExpired(ctx context.Context, ref SecretRef, code int, err error) {
+	c.expired(ctx, ActionStepUpExpired, ref, code, err)
+}
+
+// DelegatedExpired records the sweep's delete of an expired delegated
+// credential (authn#167), as StepUpExpired does a step-up one's.
+func (c *Controller) DelegatedExpired(ctx context.Context, ref SecretRef, code int, err error) {
+	c.expired(ctx, ActionDelegateExpired, ref, code, err)
+}
+
+func (c *Controller) expired(ctx context.Context, action string, ref SecretRef, code int, err error) {
 	if c == nil || c.e == nil {
 		return
 	}
 	ev := audit.Event{
-		Action:     ActionStepUpExpired,
+		Action:     action,
 		Verb:       "delete",
 		HTTPMethod: http.MethodDelete,
 		Outcome:    audit.OutcomeSuccess,

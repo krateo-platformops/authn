@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/krateo-platformops/audit/audittest"
 	"github.com/krateo-platformops/authn/internal/auditlog/auditlogtest"
@@ -105,4 +106,9 @@ func TestLoginStopsWhenTheRESTActionAnswerIsUnusable(t *testing.T) {
 	assert.Equal(t, "Status", out.Kind)
 	assert.Equal(t, http.StatusInternalServerError, out.Code)
 	assert.ErrorIs(t, dec.Decode(&struct{}{}), io.EOF, "exactly one response is written")
+}
+
+// GenerateDelegated is /delegate's (authn#167); no login issues one.
+func (g *fakeGenerator) GenerateDelegated(storage.Strategy, userinfo.Info, string, string, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	return kubeconfig.Issued{}, errors.New("a login never issues a delegated credential")
 }

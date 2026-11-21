@@ -91,6 +91,8 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 		// An identity provider's subject (authn#155) is checked against the
 		// Secrets a sign-in reads.
 		Naming: o.Naming,
+		// Each delegated token is issued with its own credential (authn#167).
+		Generator: o.Generator,
 	}))
 
 	all = append(all, ldap.Login(o.RestConfig, ldap.LoginOptions{

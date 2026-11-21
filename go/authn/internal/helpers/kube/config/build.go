@@ -41,7 +41,22 @@ type Generator interface {
 	// lifetime. The returned notAfter is the granted one, which bounds the
 	// step-up JWT.
 	GenerateStepUp(strategy storage.Strategy, user userinfo.Info, ttl time.Duration, opts ...IssueOption) (Issued, error)
+
+	// GenerateDelegated mints the credential issued with a delegated token
+	// (authn#167): a client certificate for exactly user's username and
+	// groups, the token's, stored as the Secret storage.DelegatedSecretName
+	// names for user and actor (the token's outermost act.sub). Neither the
+	// session nor the step-up Secret is touched, and no kubeconfig is
+	// returned. The caller has vouched for the exchange; strategy and claim
+	// are the person's, recorded on the Secret. ttl is the token's lifetime,
+	// requested as at least MinCertDuration. The returned notAfter is the
+	// granted expiry, which bounds the delegated token.
+	GenerateDelegated(strategy storage.Strategy, user userinfo.Info, actor, claim string, ttl time.Duration, opts ...IssueOption) (Issued, error)
 }
+
+// MinCertDuration is the shortest certificate the CSR API issues: it refuses
+// an expirationSeconds below 600.
+const MinCertDuration = 10 * time.Minute
 
 // Issued is the outcome of one Generate or GenerateStepUp, for the caller's
 // audit record (AUDIT-4) as much as for its answer.
@@ -301,7 +316,7 @@ func (g *kubeconfigGenerator) generate(strategy storage.Strategy, userInfo useri
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 
-	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, o, claim, log)
+	certInfo, clusterInfo, notAfter, written, err := g.issue(strategy, userInfo, g.certDuration, false, "", o, claim, log)
 	if err != nil {
 		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
 	}
@@ -366,7 +381,36 @@ func (g *kubeconfigGenerator) generateStepUp(strategy storage.Strategy, userInfo
 		return Issued{Secret: g.wouldWrite(target)}, err
 	}
 	// A step-up credential has no owner: it expires, and the sweep deletes it.
-	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, IssueOptions{Principal: o.Principal}, claim, log)
+	_, _, notAfter, written, err := g.issue(strategy, userInfo, ttl, true, "", IssueOptions{Principal: o.Principal}, claim, log)
+	if err != nil {
+		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
+	}
+	return Issued{NotAfter: notAfter, Secret: written}, nil
+}
+
+func (g *kubeconfigGenerator) GenerateDelegated(strategy storage.Strategy, userInfo userinfo.Info, actor, claim string, ttl time.Duration, opts ...IssueOption) (Issued, error) {
+	target := ""
+	if userInfo.GetUserName() != "" && actor != "" {
+		target = storage.DelegatedSecretName(userInfo.GetUserName(), actor)
+	}
+	o := NewIssueOptions(opts...)
+	log := o.logger(g.log)
+	if actor == "" {
+		return Issued{Secret: g.wouldWrite(target)}, status.Failed(status.CauseIssuanceFailed, errors.New("a delegated credential needs its actor"))
+	}
+	// The token's groups are the certificate's, as they are: a reserved one,
+	// which no delegated token carries, is refused rather than dropped, so the
+	// two can never differ (endpoints.CheckDelegatedCredential). userinfo
+	// drops reserved groups as it builds the identity, so a dropped one is
+	// refused too: the caller's groups weren't the ones it would mint.
+	if len(userInfo.DroppedGroups()) > 0 {
+		return Issued{Secret: g.wouldWrite(target)}, status.Failed(status.CauseIssuanceFailed,
+			fmt.Errorf("a delegated credential can't carry a %s group", userinfo.ReservedGroupPrefix))
+	}
+	if err := g.checkGroups(userInfo, false, log); err != nil {
+		return Issued{Secret: g.wouldWrite(target)}, err
+	}
+	_, _, notAfter, written, err := g.issue(strategy, userInfo, max(ttl, MinCertDuration), false, actor, IssueOptions{Principal: o.Principal}, claim, log)
 	if err != nil {
 		return Issued{NotAfter: notAfter, Secret: g.orWouldWrite(written, target, err)}, err
 	}
@@ -508,7 +552,7 @@ func (g *kubeconfigGenerator) checkGroups(userInfo userinfo.Info, stepUp bool, l
 
 // issue mints a certificate for userInfo valid for duration and stores it as
 // the user's session or step-up credential.
-func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, o IssueOptions, claim string, log zerolog.Logger) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
+func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo.Info, duration time.Duration, stepUp bool, actor string, o IssueOptions, claim string, log zerolog.Logger) (CertInfo, ClusterInfo, time.Time, storage.Written, error) {
 	if len(g.caData) == 0 {
 		caCrt, err := configmaps.CACrt(context.Background(), g.restconfig)
 		if err != nil {
@@ -522,7 +566,7 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 		return certInfo, clusterInfo, notAfter, storage.Written{}, err
 	}
 
-	written, err := g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, o.Owner, o.Principal, claim)
+	written, err := g.storeCertAndClusterInfo(strategy, userInfo.GetUserName(), certInfo, clusterInfo, stepUp, actor, o.Owner, o.Principal, claim)
 	switch {
 	case errors.Is(err, storage.ErrClaimedByAnother):
 		// Another identity claimed the name between the guard and this write.
@@ -540,8 +584,9 @@ func (g *kubeconfigGenerator) issue(strategy storage.Strategy, userInfo userinfo
 	return certInfo, clusterInfo, notAfter, written, err
 }
 
-func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, owner *metav1.OwnerReference, principal, claim string) (storage.Written, error) {
+func (g *kubeconfigGenerator) storeCertAndClusterInfo(strategy storage.Strategy, name string, certInfo CertInfo, clusterInfo ClusterInfo, stepUp bool, actor string, owner *metav1.OwnerReference, principal, claim string) (storage.Written, error) {
 	nfo := storage.AuthInfo{
+		Actor:     actor,
 		Claim:     claim,
 		Owner:     owner,
 		Principal: principal,

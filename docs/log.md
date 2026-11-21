@@ -14,6 +14,24 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-21 — each delegated token is issued with its own credential
+
+A delegated token's apiserver calls went through the person's `<user>-clientconfig`. Its
+certificate carried the groups of the last portal sign-in, not the token's, and lived 24h,
+renewed only by a sign-in. So snowplow's check of the token and the apiserver's check of
+the certificate could disagree, and an agent's calls failed a day after the person's last
+visit (agentiko's personal-agent events).
+
+Diego decided (authn#167) that `/delegate` mints, with each token, a certificate for
+exactly its username and groups, in one Secret per person and actor. plumbing v1.103.0 is
+the shared contract: `endpoints.DelegatedSecretName` and `CheckDelegatedCredential`,
+which snowplow serves it by (snowplow#1560). The token never outlives its credential. The
+Secret carries no tenant labels, since an exchange isn't a sign-in, and the sweep deletes
+it once expired.
+
+An authn token's exchange now needs the person's session Secret, whose strategy and claim
+the credential records: none is `403 SubjectNotSignedIn`.
+
 ## 2026-11-21 — `/delegate` exchanges only a person's token
 
 An identity provider's access token from a service account (client credentials) verified

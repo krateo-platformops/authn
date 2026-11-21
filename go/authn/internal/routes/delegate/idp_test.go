@@ -200,6 +200,7 @@ func (k keys) idpRoute(t *testing.T, rc *rest.Config, lookup kubeconfig.NameLook
 		PrivateKey: k.current, KeyID: "current",
 		PreviousKeys: []jwks.Key{{KID: "previous", Pub: &k.previous.PublicKey}},
 		Audit:        rec, Lookup: lookup,
+		Generator: &fakeGenerator{},
 	}).Handler()), records
 }
 
@@ -237,7 +238,7 @@ func TestExchangeOfAnIdentityProvidersToken(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, jwt.ClaimStrings{"agentiko"}, aud)
 
-	r := auditlogtest.Only(t, records)
+	r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 	assert.Equal(t, audit.OutcomeSuccess, auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Equal(t, "alice", auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
 	assert.Equal(t, "agentiko", auditlogtest.String(r, audit.KeyTokenAudience))
@@ -250,7 +251,7 @@ func TestExchangeOfAnIdentityProvidersToken(t *testing.T) {
 	_, _, err = jwt.NewParser().ParseUnverified(out.AccessToken, claims)
 	require.NoError(t, err)
 	assert.NotContains(t, claims, "aud")
-	assert.Empty(t, auditlogtest.String(auditlogtest.Only(t, records), audit.KeyTokenAudience))
+	assert.Empty(t, auditlogtest.String(auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate), audit.KeyTokenAudience))
 }
 
 // authn#165's control: what makes a subject a person is its user session
@@ -426,7 +427,7 @@ func TestExchangeRefusals(t *testing.T) {
 			assert.NotContains(t, rec.Body.String(), kc.issuer, "the answer never names the provider's addresses")
 			assert.NotContains(t, rec.Body.String(), "forged", "nor a kid")
 
-			r := auditlogtest.Only(t, records)
+			r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 			assert.Equal(t, audit.OutcomeDenied, auditlogtest.String(r, "krateo.audit.outcome"))
 			assert.Equal(t, tc.reason, auditlogtest.String(r, "krateo.audit.denial_reason"))
 			if tc.named {
@@ -443,7 +444,7 @@ func TestExchangeRefusals(t *testing.T) {
 // of a person's authn token carries the requested audience.
 func TestExchangeOfAnAuthnTokenCarriesTheAudience(t *testing.T) {
 	k, kc := newKeys(t), newRealm(t)
-	h, records := k.idpRoute(t, idpAPIServer(t, kc, idpDelegation, nil), secrets{})
+	h, records := k.idpRoute(t, idpAPIServer(t, kc, idpDelegation, nil), everyoneSignedIn{})
 	f := form(token(t, k.current, "current", time.Hour, nil))
 	f.Set("audience", "agentiko")
 	out, nfo := issued(t, k, exchange(h, "sa", f))
@@ -454,7 +455,7 @@ func TestExchangeOfAnAuthnTokenCarriesTheAudience(t *testing.T) {
 	aud, err := claims.GetAudience()
 	require.NoError(t, err)
 	assert.Equal(t, jwt.ClaimStrings{"agentiko"}, aud)
-	assert.Equal(t, "agentiko", auditlogtest.String(auditlogtest.Only(t, records), audit.KeyTokenAudience))
+	assert.Equal(t, "agentiko", auditlogtest.String(auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate), audit.KeyTokenAudience))
 }
 
 // An RFC 9068 access token, marked typ at+jwt in its header and carrying no
@@ -518,7 +519,7 @@ func TestExchangeFailures(t *testing.T) {
 				assert.NotContains(t, rec.Body.String(), private)
 			}
 
-			r := auditlogtest.Only(t, records)
+			r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 			assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(r, "krateo.audit.outcome"))
 			assert.Empty(t, auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
 		})
@@ -549,7 +550,7 @@ func TestExchangeOfAKeyNotYetKnown(t *testing.T) {
 		assertRetryAfter(t, rec)
 		assert.NotContains(t, rec.Body.String(), "kc2")
 		assert.NotContains(t, rec.Body.String(), kc.issuer)
-		r := auditlogtest.Only(t, records)
+		r := auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate)
 		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(r, "krateo.audit.outcome"))
 		assert.Empty(t, auditlogtest.String(r, "krateo.audit.on_behalf_of.user.name"))
 	})
@@ -567,7 +568,7 @@ func TestExchangeOfAKeyNotYetKnown(t *testing.T) {
 		assert.GreaterOrEqual(t, secs, 25, "when the discovery failure lapses (30 s)")
 		assert.NotContains(t, rec.Body.String(), gone.URL)
 		assert.NotContains(t, rec.Body.String(), "keycloak")
-		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(auditlogtest.Only(t, records), "krateo.audit.outcome"))
+		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate), "krateo.audit.outcome"))
 	})
 
 	t.Run("the provider's keys can't be read", func(t *testing.T) {
@@ -579,7 +580,7 @@ func TestExchangeOfAKeyNotYetKnown(t *testing.T) {
 		assert.Equal(t, "SubjectKeyUnavailable", cause(t, rec))
 		assertRetryAfter(t, rec)
 		assert.NotContains(t, rec.Body.String(), kc.issuer)
-		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(auditlogtest.Only(t, records), "krateo.audit.outcome"))
+		assert.Equal(t, audit.OutcomeFailure, auditlogtest.String(auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate), "krateo.audit.outcome"))
 	})
 }
 

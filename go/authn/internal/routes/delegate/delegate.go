@@ -98,6 +98,10 @@ type Options struct {
 	// Naming is how session Secrets are named (authn#140): the claim-first
 	// rule reads the Secrets a sign-in reads.
 	Naming storage.Naming
+	// Generator mints the credential issued with each delegated token
+	// (authn#167). Without one, every exchange fails: a delegated token is
+	// never issued without its credential.
+	Generator kubeconfig.Generator
 }
 
 func Route(rc *rest.Config, opts Options) routes.Route {
@@ -186,9 +190,14 @@ func (r *route) Handler() http.HandlerFunc {
 
 		var subject jwtutil.UserInfo
 		var exp time.Time
+		// The person's identity, recorded on the delegated credential: an
+		// identity provider's token's strategy and claim, vouched for against
+		// the person's session Secret, or for an authn token, the ones that
+		// Secret records.
+		strategy, claim := storage.StrategyOIDC, ""
 		if x.subjectType == TokenTypeAccessToken {
 			var verified *jwtutil.UserInfo
-			subject, exp, verified, why, err = r.verifyIdPSubject(req.Context(), *log, actor, x.subjectToken)
+			subject, exp, claim, verified, why, err = r.verifyIdPSubject(req.Context(), *log, actor, x.subjectToken)
 			if err != nil {
 				// A refusal of a subject the provider verified names them.
 				if why == auditlog.NoDelegationDenial {
@@ -221,10 +230,47 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
+		if x.subjectType != TokenTypeAccessToken {
+			lookup, err := r.nameLookup()
+			if err == nil {
+				strategy, claim, err = kubeconfig.SessionIdentity(req.Context(), lookup, r.opts.Naming, *log, subject.Username)
+			}
+			if err != nil {
+				if why := kubeconfig.RefusalOf(err); why != "" {
+					r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied, auditlog.DelegationRefusal(why), "")
+					fail(err, "delegation refused")
+					return
+				}
+				r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure, auditlog.NoDelegationDenial, "")
+				fail(status.Failed(CauseIssuanceFailed, err), "delegation failed reading the person's session credential")
+				return
+			}
+		}
+
+		// authn#167: the groups are bound once. They are the token's groups
+		// claim and its credential's certificate O alike, so a reader that
+		// checks one against the other (endpoints.CheckDelegatedCredential)
+		// never finds them apart.
+		groups := withoutReserved(subject.Groups)
 		ttl := min(r.opts.TTL, time.Until(exp))
+		credential, err := r.issueCredential(req, *log, strategy, subject, groups, actor.Name, claim, ttl)
+		if err != nil {
+			if why := kubeconfig.RefusalOf(err); why != "" {
+				r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeDenied, auditlog.DelegationRefusal(why), "")
+				fail(err, "delegation refused")
+				return
+			}
+			r.opts.Audit.Delegation(req, actor, actorPrincipal, &subject, act, audit.OutcomeFailure, auditlog.NoDelegationDenial, "")
+			fail(status.IssueFailure("delegated credential", err), "delegation failed issuing its credential")
+			return
+		}
+		// The token never outlives its credential: the signer may grant less
+		// than was asked.
+		ttl = min(ttl, time.Until(credential.NotAfter))
+
 		issued, err := jwtutil.CreateToken(jwtutil.CreateTokenOptions{
 			Username:   subject.Username,
-			Groups:     withoutReserved(subject.Groups),
+			Groups:     groups,
 			Duration:   ttl,
 			KeyID:      r.opts.KeyID,
 			PrivateKey: r.opts.PrivateKey,
@@ -253,6 +299,29 @@ func (r *route) Handler() http.HandlerFunc {
 			ExpiresIn:       int64(ttl / time.Second),
 		})
 	}
+}
+
+// issueCredential mints the credential issued with a delegated token for
+// subject through actor (authn#167): a certificate for exactly the token's
+// username and groups, valid for ttl. The person's session Secret is not
+// touched. The write is recorded (AUDIT-4) whatever its outcome.
+func (r *route) issueCredential(req *http.Request, log zerolog.Logger, strategy storage.Strategy, subject jwtutil.UserInfo, groups []string, actor, claim string, ttl time.Duration) (kubeconfig.Issued, error) {
+	if r.opts.Generator == nil {
+		return kubeconfig.Issued{}, status.Failed(CauseIssuanceFailed, errors.New("no credential generator is configured for delegated tokens"))
+	}
+	person := userinfo.NewDefaultUser(subject.Username, "", groups, nil)
+	issued, err := r.opts.Generator.GenerateDelegated(strategy, person, actor, claim, ttl, kubeconfig.Logger(log))
+	r.opts.Audit.Issuance(req, auditlog.ActionDelegateCredential, person, subject.Principal, issued, err)
+	return issued, err
+}
+
+// nameLookup is the lookup the claim-first rule and an authn token's session
+// identity read Secrets through.
+func (r *route) nameLookup() (kubeconfig.NameLookup, error) {
+	if r.opts.Lookup != nil {
+		return r.opts.Lookup, nil
+	}
+	return kubeconfig.NewNameLookup(r.rc)
 }
 
 // response is RFC 8693's token exchange response (§2.2.1).

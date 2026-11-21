@@ -115,6 +115,13 @@ type AuthInfo struct {
 	// UID: an owner the collector can't find makes it delete the Secret.
 	Owner *metav1.OwnerReference `json:"-"`
 
+	// Actor, when set, stores the credential as the one issued with a
+	// delegated token for this person through this actor (authn#167): the
+	// Secret endpoints.DelegatedSecretName(name, Actor), carrying
+	// endpoints.ActorAnnotation. Neither the session nor the step-up
+	// credential is touched. It can't be combined with StepUp or Owner.
+	Actor string `json:"-"`
+
 	// Principal is the kind of identity a ServiceAccount mapping declares
 	// (spec.principal), recorded as PrincipalLabel with exact naming on. Other
 	// strategies' kind follows from the strategy (PrincipalFor).
@@ -173,6 +180,10 @@ func (st *secretStore) Put(name string, nfo *AuthInfo) (Written, error) {
 	ns, err := util.GetOperatorNamespace()
 	if err != nil {
 		return Written{}, fmt.Errorf("unable to resolve service namespace: %w", err)
+	}
+
+	if nfo.Actor != "" {
+		return st.putDelegated(ns, name, nfo)
 	}
 
 	sec := corev1.Secret{}

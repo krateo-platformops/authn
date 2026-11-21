@@ -42,6 +42,25 @@ func Only(t testing.TB, rec *audittest.Recorder) sdklog.Record {
 	return r
 }
 
+// OnlyAction returns the single record whose krateo.action is action, after
+// checking that it conforms for the request writer and that Check catches
+// each required key's removal. Records of other actions are ignored.
+func OnlyAction(t testing.TB, rec *audittest.Recorder, action string) sdklog.Record {
+	t.Helper()
+	var found []sdklog.Record
+	for _, r := range rec.Records() {
+		if String(r, "krateo.action") == action {
+			found = append(found, r)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("%d records of action %q, want 1 (of %d records)", len(found), action, len(rec.Records()))
+	}
+	audittest.AssertConformant(t, audit.WriterRequest, found[0])
+	audittest.AssertRequiredKeysDetected(t, audit.WriterRequest, found[0])
+	return found[0]
+}
+
 // String returns the record's string attribute key, "" when absent.
 func String(r sdklog.Record, key string) string {
 	for _, kv := range audittest.Attributes(r) {

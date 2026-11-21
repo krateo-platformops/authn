@@ -155,7 +155,7 @@ For IDE sign-in to Agentiko over MCP, Diego decided on 2026-11-13:
    `urn:ietf:params:oauth:token-type:access_token`), so every internal hop keeps one
    issuer and each exchange is an audit record. The actor is the bridge's mapping.
 3. **Claim-first:** the person's username must already carry exactly their claim from a
-   portal sign-in. An exchange writes no Secret, so it never claims a name; otherwise two
+   portal sign-in. An exchange writes no session Secret, so it never claims a name; otherwise two
    identities could each be exchanged as the same unclaimed name.
 4. **Configuration on the actor's mapping:** `spec.delegation.subjectTokens` (the
    OIDCConfigs and the access token's accepted audiences) and `spec.delegation.audiences`
@@ -170,3 +170,35 @@ SubjectNotAPerson` (authn#165). An OIDCConfig with `restActionRef` is refused: t
 person differently from the sign-in that ran the RESTAction (Diego, 2026-11-13). `/oidc/login`'s ID token, by contrast,
 comes back-channel from the token endpoint and needs no signature check. The issued token never outlives the access token,
 so with Keycloak's short access tokens the bridge re-exchanges every few minutes.
+
+### 4.2 Each delegated token is issued with its credential (authn#167)
+
+Diego decided on 2026-11-21. snowplow authorizes a delegated token by its username and
+groups, then calls the apiserver with the person's `<user>-clientconfig` certificate.
+That certificate carries the groups of the last portal sign-in (the ID token, after the
+OIDCConfig's RESTAction), while the token carries the access token's groups at exchange
+time, so the two checks could disagree. It also lives 24h, renewed only by a sign-in, so
+an agent acting for someone who hadn't opened the portal for a day got `401
+SessionCredentialMissing`.
+
+1. **authn mints per exchange.** `/delegate` issues, with each token, a certificate for
+   exactly its username and groups, for its lifetime (at least the CSR API's 10 minutes).
+   The token is clamped to the certificate's granted expiry.
+2. **One Secret per person and actor.** It is named by plumbing's
+   `endpoints.DelegatedSecretName(username, act.sub)`, replaced by each exchange through
+   that actor, and deleted by the sweep once expired. Two actors never replace each
+   other's.
+3. **snowplow reads it for any token with `act`,** and serves it only when
+   `endpoints.CheckDelegatedCredential` finds it held. Otherwise it answers `401`
+   `DelegatedCredentialMissing` or `DelegatedCredentialMismatch`, and the client
+   exchanges again (snowplow#1560).
+
+Rejected:
+- snowplow impersonating the token's identity: it needs an any-user, any-group
+  `impersonate` grant;
+- renewing `<user>-clientconfig` on `/delegate`: it fixes the lifetime only, and the
+  portal's certificate would flip groups;
+- one Secret per person: two agents would knock out each other's;
+- one per token: Secret and CSR churn.
+
+The apiserver's own audit still shows the person, not the agent (§3).

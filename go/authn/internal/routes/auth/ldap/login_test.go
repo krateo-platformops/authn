@@ -429,3 +429,8 @@ func TestLoginRefusalAfterTheBindIsRecorded(t *testing.T) {
 	_, ok := auditlogtest.Int(r, "http.response.status_code")
 	assert.False(t, ok, "authn refused before asking the apiserver")
 }
+
+// GenerateDelegated is /delegate's (authn#167); no login issues one.
+func (g *fakeGenerator) GenerateDelegated(storage.Strategy, userinfo.Info, string, string, time.Duration, ...kubeconfig.IssueOption) (kubeconfig.Issued, error) {
+	return kubeconfig.Issued{}, errors.New("a login never issues a delegated credential")
+}

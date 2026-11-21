@@ -1,4 +1,6 @@
-// Package stepupsweep deletes expired step-up credentials.
+// Package stepupsweep deletes expired step-up credentials, and expired
+// delegated credentials (authn#167), which are short-lived and never renewed
+// alike.
 //
 // A step-up login (#49) writes <user>-clientconfig-stepup: a client
 // certificate that lives about 15 minutes and is never renewed. Once it has
@@ -8,8 +10,8 @@
 // holds the renewal Lease, like authn's other own-identity work.
 //
 // It is conservative:
-//   - only Secrets named like a step-up credential are considered; session
-//     credentials are never touched, expired or not;
+//   - only Secrets named like a step-up or a delegated credential are
+//     considered; session credentials are never touched, expired or not;
 //   - expiry is read from the stored certificate itself, and a Secret whose
 //     certificate can't be read is left alone and logged;
 //   - a Secret is deleted only once its certificate has been expired for
@@ -72,12 +74,13 @@ func RESTDelete(rc rest.Interface) func(context.Context, string, string, metav1.
 
 // Result counts what a pass did, for the log line and for tests.
 type Result struct {
-	Scanned int // step-up Secrets seen
+	Scanned int // step-up and delegated Secrets seen
 	Deleted int
 	Skipped int // unreadable certificate, or rewritten/deleted concurrently
 }
 
-// Sweep makes one pass and deletes the expired step-up Secrets it finds.
+// Sweep makes one pass and deletes the expired step-up and delegated Secrets
+// it finds.
 func Sweep(ctx context.Context, o Options) (Result, error) {
 	var res Result
 	now := time.Now
@@ -107,12 +110,18 @@ func Sweep(ctx context.Context, o Options) (Result, error) {
 			return res, err
 		}
 		for _, sec := range list.Items {
-			if !storage.IsStepUpSecretName(sec.Name) {
+			delegated := storage.IsDelegatedSecretName(sec.Name)
+			if !delegated && !storage.IsStepUpSecretName(sec.Name) {
 				continue
 			}
+			record, kind := o.Audit.StepUpExpired, "step-up"
+			if delegated {
+				record, kind = o.Audit.DelegatedExpired, "delegated"
+			}
 			res.Scanned++
-			// A step-up Secret is named after its user: the line names it by uid.
-			log := o.Log.With().Str("namespace", ns).Str("secret.uid", string(sec.UID)).Logger()
+			// A step-up Secret is named after its user, and a delegated one
+			// after a hash of its user's name: the line names either by uid.
+			log := o.Log.With().Str("namespace", ns).Str("secret.uid", string(sec.UID)).Str("credential", kind).Logger()
 
 			crt, err := kube.ParseCertificateBase64(string(sec.Data[storage.ClientCertLabel]))
 			if err != nil {
@@ -128,7 +137,7 @@ func Sweep(ctx context.Context, o Options) (Result, error) {
 			code, err := del(ctx, ns, sec.Name, metav1.DeleteOptions{
 				Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv},
 			})
-			o.Audit.StepUpExpired(ctx, auditlog.SecretRef{Namespace: ns, Name: sec.Name, UID: string(uid), ResourceVersion: rv}, code, err)
+			record(ctx, auditlog.SecretRef{Namespace: ns, Name: sec.Name, UID: string(uid), ResourceVersion: rv}, code, err)
 			switch {
 			case err == nil:
 				res.Deleted++
