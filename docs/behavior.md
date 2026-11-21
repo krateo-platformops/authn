@@ -355,7 +355,11 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   policy selects sign-ins by. For an identity provider's token the strategy is `oidc` and
   the claim the one the claim-first rule vouched for. For an authn token they are read
   from the person's session Secret (`config.SessionIdentity`): no session Secret is `403
-  SubjectNotSignedIn`, one recording no strategy `403 UsernameUnavailable`. A credential
+  SubjectNotSignedIn`, one recording no strategy `403 UsernameUnavailable`. Either path
+  needs the session Secret to exist, never its certificate to be valid: authn never
+  deletes a session Secret, and an expired session certificate is exactly what the
+  delegated credential stands in for (pinned by
+  `TestAnExchangeAdmitsAnExpiredSessionCertificate`). A credential
   that fails is `500 IssuanceFailed`, and no token is issued. Its write is its own audit
   record, `authn.delegate.credential`, next to the `authn.delegate` decision. The sweep
   deletes it once expired (`authn.delegate.expired`), as it does a step-up credential.

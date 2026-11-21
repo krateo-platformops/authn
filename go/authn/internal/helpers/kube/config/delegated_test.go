@@ -1,7 +1,14 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -13,6 +20,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 )
 
@@ -149,4 +157,32 @@ func TestSessionIdentity(t *testing.T) {
 
 	_, _, err := SessionIdentity(t.Context(), nil, exact, zerolog.Nop(), "alice")
 	assert.Equal(t, status.CauseIssuanceFailed, causeOf(err))
+}
+
+// An agent's exchange needs the person's session Secret to exist, not its
+// certificate to be valid (authn#167): authn never deletes a session Secret,
+// and an expired session certificate is exactly what the delegated
+// credential replaces for the agent. Both the authn-token and the identity
+// provider paths admit one whose certificate expired a day ago.
+func TestAnExchangeAdmitsAnExpiredSessionCertificate(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "alice"},
+		NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(-24 * time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	expired := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alice-clientconfig", Annotations: map[string]string{
+		storage.StrategyAnnotation: "oidc", storage.ClaimAnnotation: claims(storage.StrategyOIDC, "a")}},
+		Data: map[string][]byte{storage.ClientCertLabel: []byte(base64.StdEncoding.EncodeToString(
+			pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})))}}
+	lookup := &namesLookup{secrets: map[string]*corev1.Secret{"alice-clientconfig": expired}}
+
+	strategy, claim, err := SessionIdentity(t.Context(), lookup, exact, zerolog.Nop(), "alice")
+	require.NoError(t, err)
+	assert.Equal(t, storage.StrategyOIDC, strategy)
+	assert.Equal(t, claims(storage.StrategyOIDC, "a"), claim)
+
+	got, err := VouchForExchange(t.Context(), lookup, exact, zerolog.Nop(), storage.StrategyOIDC, userAs("alice", "kc", "a"))
+	require.NoError(t, err)
+	assert.Equal(t, claims(storage.StrategyOIDC, "a"), got)
 }
