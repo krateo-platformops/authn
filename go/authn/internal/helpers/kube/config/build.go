@@ -221,6 +221,15 @@ func Lookup(l NameLookup) GeneratorOption {
 	}
 }
 
+// CSRClient sets the client the generator sends its CSRs through. Without
+// it, one is built from the rest config. A caller's test passes a fake signer
+// (configtest.FakeSigner) to run the real generator end to end.
+func CSRClient(c kubernetes.Interface) GeneratorOption {
+	return func(g *kubeconfigGenerator) {
+		g.csrClient = c
+	}
+}
+
 func NewGenerator(restConfig *rest.Config, opts ...GeneratorOption) Generator {
 	gen := &kubeconfigGenerator{
 		restconfig: restConfig,

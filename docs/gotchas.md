@@ -69,6 +69,23 @@ again. The replica holding the `authn-cert-renewal` Lease deletes expired step-u
 every 5 minutes, once the certificate has been expired for 5 minutes
 (`internal/stepupsweep`). Session Secrets are never swept.
 
+## A delegated credential carries no labels, and its name never ends in `-clientconfig`
+
+`/delegate` writes `delegated-<64 hex>` (authn#167), one per person and actor. Two
+constraints outside authn rely on its shape:
+
+- **No labels.** The tenant policy (`tenant-namespace-on-login`) selects sign-ins by
+  `authn.krateo.io/principal` and `authn.krateo.io/username-label`, and matches Secret
+  names ending in `-clientconfig`. An actor's exchange isn't a sign-in. Add either label,
+  or a name ending in `-clientconfig`, and every exchange runs tenant onboarding.
+- **A name disjoint from session Secrets.** The sweep deletes expired delegated Secrets
+  by `endpoints.IsDelegatedSecretName`: the exact shape `delegated-` plus 64 lowercase
+  hex. That shape can never select a `<user>-clientconfig` Secret, which authn must never
+  delete. snowplow's learned identities also skip it by the same suffix.
+
+`TestPutDelegated` (no labels) and plumbing's `TestDelegatedSecretName` (never a session
+suffix) fail if either changes.
+
 ## An IdP can answer a step-up from SSO with an old `auth_time`
 `acr_values` alone doesn't make the IdP re-authenticate. Keycloak's level-2 condition
 has its own max age: when it is longer than `spec.stepUp.maxAge`, a step-up within it
