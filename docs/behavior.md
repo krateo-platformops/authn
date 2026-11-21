@@ -317,7 +317,12 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   sign-in. The OIDCConfig is read on every exchange; its provider's discovery document is
   cached 5 minutes (30 seconds after a failure), fetched once for concurrent exchanges,
   cut off after 10 seconds (sign-ins too) and read up to 1 MiB. The person is mapped as `/oidc/login` maps an ID token (username from
-  `preferred_username`, groups from `groups`, claim `["oidc", iss, sub]`), and
+  `preferred_username`, groups from `groups`, claim `["oidc", iss, sub]`). First, the
+  subject must be a **person**: the token must carry its user session (`sid`), or it is
+  `403 SubjectNotAPerson` (authn#165). A service account's client-credentials token has
+  none; the username can't tell them apart (a real user may be named
+  `service-account-…`), and neither can `client_id`, which RFC 9068 puts on every access
+  token. Then
   `config.VouchForExchange` runs a sign-in's identity checks (no `system:` or `krateo:`
   group, the OIDCConfig's `allowedGroups`, a name that isn't reserved and, with exact
   naming, is issuable) and then the **claim-first rule**: the username's credential

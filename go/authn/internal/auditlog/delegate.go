@@ -38,6 +38,10 @@ const (
 	// AudienceNotAllowed: the requested audience isn't in the actor's
 	// mapping's spec.delegation.audiences (authn#155).
 	AudienceNotAllowed DelegationDenial = audit.DenialReasonAudienceNotAllowed
+	// SubjectNotAPerson: an identity provider's subject token verified but
+	// carries no user session, so it is a service account's, not a person's
+	// (authn#165).
+	SubjectNotAPerson DelegationDenial = audit.DenialReasonSubjectNotAPerson
 )
 
 // DelegationRefusal is the denial reason of a refusal of an identity

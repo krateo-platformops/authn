@@ -196,6 +196,21 @@ func (r *route) verifyIdPSubject(ctx context.Context, log zerolog.Logger, actor 
 	if sub == "" {
 		return invalid("the subject token has no sub", nil)
 	}
+	// authn#165: the subject must be a PERSON. A token from a user's sign-in
+	// carries the session it belongs to (sid); a service account's
+	// client-credentials token has no session, and so no person behind it.
+	// Measured on Keycloak 26.6.3: sid is present on authorization-code,
+	// refreshed, offline and refreshed-offline user tokens alike, and absent
+	// from client credentials. The username can't tell them apart (a real
+	// user may be named service-account-...), and client_id can't either
+	// across providers: RFC 9068 section 2.2 puts it on every access token.
+	// A provider configured to leave sid out of access tokens (Keycloak's
+	// lightweight access tokens) is refused here too: fail closed.
+	if sid, ok := claims["sid"].(string); !ok || sid == "" {
+		return jwtutil.UserInfo{}, time.Time{}, nil, auditlog.SubjectNotAPerson, status.RefusedPrivately(CauseSubjectNotAPerson,
+			errors.New("the subject token isn't a person's: it carries no user session (sid), as a service account's token doesn't; if it is a user's, the identity provider must include sid in its access tokens"),
+			fmt.Errorf("sid %v", claims["sid"]))
+	}
 	preferred, ok := stringClaim(claims, "preferred_username")
 	if !ok {
 		return invalid("the subject token's preferred_username isn't a string", nil)

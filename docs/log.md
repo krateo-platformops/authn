@@ -14,6 +14,18 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-21 — `/delegate` exchanges only a person's token
+
+An identity provider's access token from a service account (client credentials) verified
+like a user's, and an audience scope later attached to a confidential client would have let
+one through, refused only because no portal sign-in had claimed its name (authn#165). The
+exchange now requires the token's user session, `sid`, and refuses one without it as `403
+SubjectNotAPerson` (audit reason `subject_not_a_person`, audit v0.16.0). The marker was
+chosen from claim names measured on Keycloak 26.6.3 by keycloak-provider-kog: `sid` is on
+authorization-code, refreshed, offline and refreshed-offline user tokens alike and absent
+from client credentials; a `service-account-` username is not a marker (Keycloak creates a
+real user by that name), nor is `client_id` (RFC 9068 §2.2 puts it on every access token).
+
 ## 2026-11-14 — LDAP verifies the server's certificate
 
 `spec.tls`'s StartTLS used `InsecureSkipVerify`, so an LDAP bind, which carries the user's
