@@ -82,7 +82,28 @@
         "name": {
           "type": "string"
         }
-      }
+      },
+      "if": {
+        "properties": {
+          "create": {
+            "const": false
+          }
+        },
+        "required": [
+          "create"
+        ]
+      },
+      "then": {
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "minLength": 1
+          }
+        }
+      },
+      "description": "The ServiceAccount authn runs as, which its RBAC is bound to. With create false, name is required (authn#164): the chart never binds authn's RBAC to the namespace's default ServiceAccount."
     },
     "podAnnotations": {
       "type": "object",

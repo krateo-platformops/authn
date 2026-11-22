@@ -14,6 +14,16 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-22 — the chart's values schema says that `serviceAccount.create: false` needs a name
+
+authn 0.53.0 (#164) binds authn's RBAC to the ServiceAccount the pod runs as. Since then the chart
+refuses `serviceAccount.create: false` without `serviceAccount.name` rather than binding the
+namespace's `default` ServiceAccount. That was a template `fail` and a values comment, so a reader
+of the values schema (installer's `componentValues.authn`) couldn't see the rule. installer found it
+diffing 0.52.0 → 0.55.0. The schema now states it (`if create is false then name is required,
+non-empty`). helm refuses at validation, and the template `fail` still guards a render that skips the
+schema. Clusters that set no `serviceAccount` override (057 among them) are unaffected.
+
 ## 2026-11-21 — each delegated token is issued with its own credential
 
 A delegated token's apiserver calls went through the person's `<user>-clientconfig`. Its
