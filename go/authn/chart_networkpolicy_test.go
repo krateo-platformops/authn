@@ -32,6 +32,12 @@ func helmForTest(t *testing.T) string {
 // placeholders filled as the release workflow fills them.
 func renderChart(t *testing.T, sets ...string) (string, error) {
 	t.Helper()
+	return renderChartWith(t, nil, sets...)
+}
+
+// renderChartWith is renderChart passing flags to helm template too.
+func renderChartWith(t *testing.T, flags []string, sets ...string) (string, error) {
+	t.Helper()
 	helm := helmForTest(t)
 	src := filepath.Join("..", "..", "helm", "authn")
 	dst := filepath.Join(t.TempDir(), "authn")
@@ -52,7 +58,7 @@ func renderChart(t *testing.T, sets ...string) (string, error) {
 		}
 		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
 	}))
-	args := []string{"template", "authn", dst}
+	args := append([]string{"template", "authn", dst}, flags...)
 	for _, s := range sets {
 		args = append(args, "--set", s)
 	}

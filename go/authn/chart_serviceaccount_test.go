@@ -51,7 +51,18 @@ func TestChartServiceAccountIsTheBoundOne(t *testing.T) {
 		})
 	}
 
-	out, err := renderChart(t, "serviceAccount.create=false")
+	// The values schema refuses it first, so a schema reader (installer's
+	// componentValues) sees the rule. An empty name is refused the same way.
+	for _, sets := range [][]string{{"serviceAccount.create=false"}, {"serviceAccount.create=false", "serviceAccount.name="}} {
+		out, err := renderChart(t, sets...)
+		require.Error(t, err, out)
+		assert.Contains(t, out, "values don't meet the specifications of the schema", sets)
+		assert.Contains(t, out, "serviceAccount", sets)
+		assert.NotContains(t, out, "name: default\n")
+	}
+
+	// Without the schema, the template still refuses.
+	out, err := renderChartWith(t, []string{"--skip-schema-validation"}, "serviceAccount.create=false")
 	require.Error(t, err, out)
 	assert.Contains(t, out, "serviceAccount.name is required when serviceAccount.create is false")
 	assert.NotContains(t, out, "name: default\n")
