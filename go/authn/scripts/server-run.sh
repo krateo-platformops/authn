@@ -16,4 +16,9 @@ kubectl apply -f testdata/ns.yaml
 kubectl apply -f testdata/basic.yaml
 
 
-go run main.go -jwt-sign-key 'AbbraCadabbra' -kubeconfig ${HOME}/.kube/config
+# authn signs with an RSA key read from a file. This one is for this run only and is deleted on exit.
+KEY_DIR="$(mktemp -d)"
+trap 'rm -rf "${KEY_DIR}"' EXIT
+openssl genrsa -out "${KEY_DIR}/private.pem" 2048
+
+go run main.go -jwt-sign-key-file "${KEY_DIR}/private.pem" -jwt-kid krateo-authn-key-1 -kubeconfig "${HOME}/.kube/config"
