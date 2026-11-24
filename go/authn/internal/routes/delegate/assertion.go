@@ -134,8 +134,9 @@ func (r *route) authenticateAssertion(req *http.Request) (*sav1alpha1.ServiceAcc
 			errors.New("the service's registered certificate couldn't be read"), err)
 	}
 
+	// iss is name: it was read from this very token.
 	var claims jwt.RegisteredClaims
-	_, err = jwt.NewParser(jwt.WithValidMethods(assertionAlgorithms), jwt.WithIssuer(name), jwt.WithSubject(name),
+	_, err = jwt.NewParser(jwt.WithValidMethods(assertionAlgorithms), jwt.WithSubject(name),
 		jwt.WithAudience(r.opts.Audience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(assertionLeeway)).
 		ParseWithClaims(assertion, &claims, func(*jwt.Token) (any, error) { return key, nil })
 	if err != nil {
@@ -163,8 +164,8 @@ func (r *route) registeredKey(ctx context.Context, mapping *sav1alpha1.ServiceAc
 		return nil, err
 	}
 	block, _ := pem.Decode(sec.Data[corev1.TLSCertKey])
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("its %s holds no certificate", corev1.TLSCertKey)
+	if block == nil {
+		return nil, fmt.Errorf("its %s isn't PEM", corev1.TLSCertKey)
 	}
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

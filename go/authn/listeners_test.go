@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -209,5 +210,12 @@ func TestNewListeners(t *testing.T) {
 
 	assert.NotEmpty(t, preflight(pub.Handler, "/strategies"), "the public server answers a CORS preflight")
 	assert.Empty(t, preflight(in.Handler, "/usernames/check"), "the internal server never answers a CORS preflight")
+
+	// The client assertion's exchange is served with TLS only, and never publicly.
+	assert.Equal(t, http.StatusNotFound, serve(in.Handler, http.MethodPost, "/delegate/token"), "without TLS")
+	pub, in, err = newListeners(testRouteOptions(t), testLogger(), true, 8082, 8090, &tls.Config{MinVersion: tls.VersionTLS12})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, serve(in.Handler, http.MethodPost, "/delegate/token"), "with TLS: an empty form")
+	assert.Equal(t, http.StatusNotFound, serve(pub.Handler, http.MethodPost, "/delegate/token"), "publicly")
 
 }

@@ -3,6 +3,7 @@ package delegate
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -45,7 +46,7 @@ func newClientAPI(t *testing.T) (*clientAPI, *rest.Config) {
 	t.Helper()
 	t.Setenv("POD_NAMESPACE", "krateo-system")
 	a := &clientAPI{secrets: map[string][]byte{}}
-	notFound := `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}`
+	notFound := `{"kind":"Status","apiVersion":"v1","status":"Failure","message":"%s not found","reason":"NotFound","code":404}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -62,7 +63,7 @@ func newClientAPI(t *testing.T) (*clientAPI, *rest.Config) {
 			_, _ = w.Write([]byte(a.mapping))
 		case r.Method == http.MethodGet:
 			w.WriteHeader(http.StatusNotFound)
-			_, _ = w.Write([]byte(notFound))
+			_, _ = fmt.Fprintf(w, notFound, name)
 		default:
 			t.Errorf("unexpected apiserver call: %s %s", r.Method, r.URL.Path)
 		}
@@ -200,6 +201,34 @@ func TestClientAssertionAlgorithms(t *testing.T) {
 	}
 }
 
+// An algorithm outside the list is refused even when the registered key is of
+// its kind and the signature verifies.
+func TestClientAssertionOfAnUnlistedAlgorithm(t *testing.T) {
+	g := newGateway(t, toolsAudience)
+	pub, key, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	g.api.set(func(a *clientAPI) { a.secrets["gateway-client"] = validCert(t, key) })
+	s, err := jwt.NewWithClaims(jwt.SigningMethodEdDSA, g.claims(nil)).SignedString(key)
+	require.NoError(t, err)
+	_, err = jwt.Parse(s, func(*jwt.Token) (any, error) { return pub, nil }, jwt.WithLeeway(time.Minute))
+	require.NoError(t, err, "control: it verifies")
+	rec := exchange(g.handler, "", g.form(g.subject(t), s))
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Equal(t, string(CauseClientAssertionInvalid), cause(t, rec))
+}
+
+// A client whose clock is a few seconds off is understood.
+func TestClientAssertionSkew(t *testing.T) {
+	g := newGateway(t, toolsAudience)
+	now := time.Now()
+	for name, over := range map[string]map[string]any{
+		"ahead":  {"iat": now.Add(5 * time.Second).Unix(), "nbf": now.Add(5 * time.Second).Unix()},
+		"behind": {"exp": now.Add(-5 * time.Second).Unix()},
+	} {
+		assert.Equal(t, http.StatusOK, g.exchange(t, g.assertion(t, over)).Code, name)
+	}
+}
+
 // Everything that isn't the service's own fresh assertion to authn is one
 // answer, 401 ClientAssertionInvalid, and leaves no record: nobody was
 // authenticated. The control in each row is the same request unaltered.
@@ -294,6 +323,11 @@ func TestClientAssertionRefused(t *testing.T) {
 		"two assertions": func(t *testing.T, g *gateway) url.Values {
 			f := g.form(g.subject(t), g.assertion(t, nil))
 			f.Add("client_assertion", g.assertion(t, nil))
+			return f
+		},
+		"two assertion types": func(t *testing.T, g *gateway) url.Values {
+			f := g.form(g.subject(t), g.assertion(t, nil))
+			f.Add("client_assertion_type", ClientAssertionType)
 			return f
 		},
 		"another assertion type": func(t *testing.T, g *gateway) url.Values {
@@ -413,6 +447,7 @@ func TestClientAssertionKey(t *testing.T) {
 			assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 			assert.Equal(t, string(CauseClientKeyUnavailable), cause(t, rec))
 			assert.NotContains(t, rec.Body.String(), "gateway-client")
+			assert.NotContains(t, rec.Body.String(), "tls.crt", "the answer says nothing about the Secret")
 			g.api.set(func(a *clientAPI) { a.secrets["gateway-client"] = validCert(t, rotated) })
 			assert.Equal(t, http.StatusOK, g.exchange(t, g.assertion(t, nil)).Code, "control")
 		})
