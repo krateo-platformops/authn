@@ -19,13 +19,24 @@ on:
       app_version:
         description: "App image version (APP_VERSION). Default: latest tag of the app repo."
         required: false
+      dry_run:
+        description: "Rehearse only: build and check everything, push nothing. Set false to publish."
+        type: boolean
+        default: true
 
 jobs:
   release-oci:
-    uses: krateo-platformops/.github/.github/workflows/release-oci.yaml@main
+    # Pinned to a release, as every shared workflow here is. From @main, 2.0.0's new required
+    # index_channel stopped this one at startup: authn 0.57.0 has an image and no charts.
+    uses: krateo-platformops/.github/.github/workflows/release-oci.yaml@7da11cb60cee5cbfc7d9e8c9328692807b43cefd # 2.0.0
     permissions:
       contents: read
       packages: write
     with:
       chart_version: ${{ github.event.inputs.chart_version || '' }}
       app_version: ${{ github.event.inputs.app_version || '' }}
+      # authn's charts are platform components installer pins from ghcr.io/krateo-platformops/charts,
+      # never krateo-blueprints index entries.
+      index_channel: none
+      # A manual run is a rehearsal unless asked otherwise; a tag push never is.
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
