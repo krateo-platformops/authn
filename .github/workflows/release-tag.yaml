@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@main
+    uses: krateo-platformops/.github/.github/workflows/component-image-build.yaml@7da11cb60cee5cbfc7d9e8c9328692807b43cefd # 2.0.0
     permissions:
       contents: read
       packages: write
