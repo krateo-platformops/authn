@@ -184,10 +184,9 @@ SessionCredentialMissing`.
 1. **authn mints per exchange.** `/delegate` issues, with each token, a certificate for
    exactly its username and groups, for its lifetime (at least the CSR API's 10 minutes).
    The token is clamped to the certificate's granted expiry.
-2. **One Secret per person and actor.** It is named by plumbing's
-   `endpoints.DelegatedSecretName(username, act.sub)`, replaced by each exchange through
-   that actor, and deleted by the sweep once expired. Two actors never replace each
-   other's.
+2. **One Secret per person and actor** (changed by §4.3: and set of groups). It is named
+   by plumbing's `endpoints.DelegatedSecretName`, replaced by each exchange through that
+   actor, and deleted by the sweep once expired. Two actors never replace each other's.
 3. **snowplow reads it for any token with `act`,** and serves it only when
    `endpoints.CheckDelegatedCredential` finds it held. Otherwise it answers `401`
    `DelegatedCredentialMissing` or `DelegatedCredentialMismatch`, and the client
@@ -202,3 +201,37 @@ Rejected:
 - one per token: Secret and CSR churn.
 
 The apiserver's own audit still shows the person, not the agent (§3).
+
+### 4.3 Tokens for one recipient, and a gateway that exchanges
+
+Diego decided on 2026-11-24, for tool servers that act for a person: each receives a token
+only it accepts, and reaches Kubernetes with the person's certificate.
+
+1. **The gateway's own token exchange swaps the token** (RFC 8693), rather than a service
+   of ours. agentgateway can sign a client assertion (RFC 7523) and can't send its
+   ServiceAccount token, so `/delegate/token` accepts one for a mapping that registers a
+   key (`spec.clientAssertion`). Proven on agentgateway v1.5.0 and v1.7.0: the tool server
+   gets only a token for its audience, the apiserver sees the person, and a failed
+   exchange sends nothing on.
+2. **On the internal listener only, over TLS.** A person's token and the assertion travel
+   in the request. `/delegate` keeps taking only a ServiceAccount token.
+3. **The key is a Secret's certificate**, read on every exchange: cert-manager rotates it
+   with no restart. A service's ServiceAccount stays its identity for everything else.
+4. **An audience is checked by the recipient** (`jwtutil.WithAudience`,
+   `WithRequiredAudience`): a token naming someone else is refused, one naming no one is a
+   sign-in's. At the exchange, `audienceRequired` and `subjectAudiences` keep a limited
+   token from being widened.
+5. **One delegated credential per person, actor and set of groups**, changing §4.2's one
+   per person and actor. A client that caches a token, as a gateway does, kept presenting
+   it after another sign-in of the person with other groups had replaced the Secret, and
+   was refused until it expired (5 of 6 calls, measured). No delegated credential was in
+   use, so nothing was migrated; the reader moves with the writer.
+
+A replica takes an assertion once; another replica would take it again within its five
+minutes. Replaying one needs the gateway's TLS connection to authn. A shared store for
+`jti` was left out: it would put a write in front of every exchange.
+
+Rejected:
+- a small exchange service of ours beside the gateway: the gateway already has one;
+- a client secret (`client_secret_basic`): a shared secret to distribute and rotate;
+- one audience for all tool servers: a compromised one could use its token at another.

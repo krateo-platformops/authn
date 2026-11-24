@@ -400,7 +400,7 @@ func (g *kubeconfigGenerator) generateStepUp(strategy storage.Strategy, userInfo
 func (g *kubeconfigGenerator) GenerateDelegated(strategy storage.Strategy, userInfo userinfo.Info, actor, claim string, ttl time.Duration, opts ...IssueOption) (Issued, error) {
 	target := ""
 	if userInfo.GetUserName() != "" && actor != "" {
-		target = storage.DelegatedSecretName(userInfo.GetUserName(), actor)
+		target = storage.DelegatedSecretName(userInfo.GetUserName(), actor, userInfo.GetGroups())
 	}
 	o := NewIssueOptions(opts...)
 	log := o.logger(g.log)

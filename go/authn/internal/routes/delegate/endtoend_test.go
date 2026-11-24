@@ -91,8 +91,9 @@ func (a *secretsAPI) read(name string) (*corev1.Secret, bool) {
 // authn#167 in one test, with the real generator, signer and store under the
 // route: the token /delegate answers and the Secret it stored agree, by the
 // very check snowplow serves the Secret by. alice's step-up group is in
-// neither, and a second exchange through the same actor with other groups
-// replaces the credential, which the first token then no longer matches.
+// neither. A second exchange through the same actor with other groups stores
+// another credential: the first token, which a client may still hold, keeps
+// its own. A third with the first one's groups replaces that one's.
 func TestTheIssuedTokenIsTheStoredCredentials(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
 	k := newKeys(t)
@@ -107,8 +108,8 @@ func TestTheIssuedTokenIsTheStoredCredentials(t *testing.T) {
 	out, nfo := issued(t, k, exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil))))
 	require.NotNil(t, nfo.Act)
 	assert.Equal(t, []string{"devs"}, nfo.Groups)
-	sec, ok := api.read(endpoints.DelegatedSecretName(nfo.Username, nfo.Act.Sub))
-	require.True(t, ok, "the credential is stored under the token's person and actor")
+	sec, ok := api.read(endpoints.DelegatedSecretName(nfo.Username, nfo.Act.Sub, nfo.Groups))
+	require.True(t, ok, "the credential is stored under the token's person, actor and groups")
 	assert.Equal(t, endpoints.DelegatedCredentialHeld,
 		endpoints.CheckDelegatedCredential(sec, nfo.Username, nfo.Act.Sub, nfo.Groups, time.Now()))
 	assert.Equal(t, endpoints.DelegatedCredentialHeld,
@@ -116,15 +117,24 @@ func TestTheIssuedTokenIsTheStoredCredentials(t *testing.T) {
 		"held for as long as the token lives")
 	assert.Len(t, api.stored, 1, "only the delegated Secret is written")
 
-	// A second exchange, with groups that differ, replaces it.
-	other := tokenWithGroups(t, k, []string{"devs", "ops"})
-	_, second := issued(t, k, exchange(h, "projected-sa-token", form(other)))
-	sec, _ = api.read(endpoints.DelegatedSecretName(second.Username, second.Act.Sub))
+	// A second exchange, with groups that differ, is another credential.
+	_, second := issued(t, k, exchange(h, "projected-sa-token", form(tokenWithGroups(t, k, []string{"devs", "ops"}))))
+	assert.Len(t, api.stored, 2)
+	for _, n := range []jwtutil.UserInfo{nfo, second} {
+		sec, ok = api.read(endpoints.DelegatedSecretName(n.Username, n.Act.Sub, n.Groups))
+		require.True(t, ok, n.Groups)
+		assert.Equal(t, endpoints.DelegatedCredentialHeld,
+			endpoints.CheckDelegatedCredential(sec, n.Username, n.Act.Sub, n.Groups, time.Now()), n.Groups)
+	}
+
+	// A third, with the first one's groups, replaces the first's.
+	first, _ := api.read(endpoints.DelegatedSecretName(nfo.Username, nfo.Act.Sub, nfo.Groups))
+	_, third := issued(t, k, exchange(h, "projected-sa-token", form(token(t, k.current, "current", time.Hour, nil))))
+	assert.Len(t, api.stored, 2)
+	sec, _ = api.read(endpoints.DelegatedSecretName(third.Username, third.Act.Sub, third.Groups))
+	assert.NotEqual(t, first.Data, sec.Data)
 	assert.Equal(t, endpoints.DelegatedCredentialHeld,
-		endpoints.CheckDelegatedCredential(sec, second.Username, second.Act.Sub, second.Groups, time.Now()))
-	assert.Equal(t, endpoints.DelegatedCredentialMismatch,
-		endpoints.CheckDelegatedCredential(sec, nfo.Username, nfo.Act.Sub, nfo.Groups, time.Now()),
-		"the first token's groups are no longer the credential's")
+		endpoints.CheckDelegatedCredential(sec, nfo.Username, nfo.Act.Sub, nfo.Groups, time.Now()), "the first token's too")
 }
 
 // tokenWithGroups is alice's authn token with groups.

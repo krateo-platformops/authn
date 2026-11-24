@@ -46,6 +46,26 @@ type ServiceAccountSpec struct {
 	// allowed false: the service can't. The check issues nothing.
 	// +optional
 	UsernameCheck *UsernameCheck `json:"usernameCheck,omitempty"`
+
+	// ClientAssertion lets this service authenticate at POST /delegate/token,
+	// on authn's internal listener, with a JWT it signs (RFC 7523 private_key_jwt)
+	// instead of its ServiceAccount token: a gateway whose built-in token
+	// exchange can sign one but can't send its ServiceAccount token. Its
+	// client_id is the mapping's name. Omitted: the service authenticates with
+	// its ServiceAccount token only.
+	// +optional
+	ClientAssertion *ClientAssertion `json:"clientAssertion,omitempty"`
+}
+
+// ClientAssertion is the key a service signs its client assertions with.
+type ClientAssertion struct {
+	// CertificateSecretName names the Secret, in the mapping's namespace, whose
+	// tls.crt holds the key's certificate, such as a cert-manager
+	// Certificate's. authn reads it on every exchange, so a rotated key needs
+	// no restart. Only the public half is used.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	CertificateSecretName string `json:"certificateSecretName"`
 }
 
 // UsernameCheck is a service's opt-in to ask whether a username is available.
@@ -55,6 +75,7 @@ type UsernameCheck struct {
 }
 
 // Delegation is a service's opt-in to act for people.
+// +kubebuilder:validation:XValidation:rule="!has(self.audienceRequired) || !self.audienceRequired || (has(self.audiences) && size(self.audiences) > 0)",message="audienceRequired needs audiences: without one the service could obtain no token"
 type Delegation struct {
 	// Allowed opts the service in.
 	Allowed bool `json:"allowed"`
@@ -90,6 +111,25 @@ type Delegation struct {
 	// +kubebuilder:validation:items:XValidation:rule="self.matches('^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$') && size(self) <= 253 || size(self) <= 2048 && self.matches('^https://[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*(:([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?(/[A-Za-z0-9._~-]+)*/?$') && !self.matches('/\\\\.\\\\.?(/|$)') && self.substring(8).split('/')[0].split(':')[0].size() <= 253",message="an audience is audit's token_audience: a DNS-1123 subdomain, or an https URI with a DNS-1123 host, an optional port and a path of unreserved characters"
 	// +kubebuilder:validation:items:MaxLength=2048
 	Audiences []string `json:"audiences,omitempty"`
+
+	// AudienceRequired refuses an exchange that names no audience, so every
+	// token this service obtains is for one of Audiences. Omitted, or false:
+	// the service may also obtain a token with no aud, which every service
+	// accepts.
+	// +optional
+	AudienceRequired bool `json:"audienceRequired,omitempty"`
+
+	// SubjectAudiences lists the audiences this service answers to: the names
+	// an authn token may be for and still be exchanged by it. A subject token
+	// whose "aud" lists none of them is refused, since it is meant for someone
+	// else; one with no aud, such as a sign-in's, is accepted. Omitted: the
+	// service exchanges only tokens with no aud.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=2048
+	SubjectAudiences []string `json:"subjectAudiences,omitempty"`
 }
 
 // SubjectTokenSource is an identity provider whose access tokens a service

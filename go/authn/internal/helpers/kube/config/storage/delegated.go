@@ -14,10 +14,11 @@ import (
 )
 
 // DelegatedSecretName names the Secret holding the credential issued with a
-// delegated token for username through actor (authn#167): plumbing's
-// endpoints.DelegatedSecretName, the one definition snowplow reads it by.
-func DelegatedSecretName(username, actor string) string {
-	return endpoints.DelegatedSecretName(username, actor)
+// delegated token for username with groups, through actor (authn#167):
+// plumbing's endpoints.DelegatedSecretName, the one definition snowplow reads
+// it by.
+func DelegatedSecretName(username, actor string, groups []string) string {
+	return endpoints.DelegatedSecretName(username, actor, groups)
 }
 
 // IsDelegatedSecretName reports whether a Secret name is a delegated
@@ -44,13 +45,17 @@ var errDelegatedOptions = errors.New("a delegated credential is neither a step-u
 // actor's exchange isn't a sign-in.
 //
 // The Secret is replaced on every exchange through the same actor for the same
-// person, as the step-up Secret is on every step-up. The exchange was vouched
-// for before it got here. A Secret under the name that isn't this person's and
-// actor's is never replaced: that would take a SHA-256 collision, and is
-// refused all the same.
+// person with the same groups, as the step-up Secret is on every step-up. The
+// exchange was vouched for before it got here. Other groups are another
+// Secret: a client may hold the token of one sign-in while another of the
+// person's, with other groups, is exchanged (Diego, 2026-11-24). A Secret
+// under the name that isn't this person's and actor's is never replaced: that
+// would take a SHA-256 collision, and is refused all the same.
+//
+// The groups are the certificate's, which the reader's check compares with the
+// token's.
 func (st *secretStore) putDelegated(ns, username string, nfo *AuthInfo) (Written, error) {
-	name := DelegatedSecretName(username, nfo.Actor)
-	w := Written{Namespace: ns, Name: name}
+	w := Written{Namespace: ns}
 	if nfo.StepUp || nfo.Owner != nil {
 		return w, errDelegatedOptions
 	}
@@ -59,6 +64,8 @@ func (st *secretStore) putDelegated(ns, username string, nfo *AuthInfo) (Written
 	if err != nil {
 		return w, err
 	}
+	name := DelegatedSecretName(username, nfo.Actor, SplitGroups(identity[GroupsAnnotation]))
+	w.Name = name
 	annotations := CertValidityAnnotations(nfo.CertData)
 	if annotations == nil {
 		annotations = map[string]string{}

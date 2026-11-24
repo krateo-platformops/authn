@@ -14,6 +14,22 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-24 — a token for one recipient, exchanged by the gateway
+
+A tool server that acts for a person should hold a token only it accepts. Diego chose the
+gateway's own RFC 8693 exchange over a service of ours. agentgateway can't send its
+ServiceAccount token, so `POST /delegate/token`, on the internal listener over TLS, takes a
+client assertion (RFC 7523) signed with the key a mapping registers
+(`spec.clientAssertion`). `spec.delegation.audienceRequired` and `subjectAudiences` keep a
+limited token from being widened. **A tightening:** an authn token with an `aud` was
+exchanged by anyone allowed to delegate, and now only by a service it is for.
+
+Proven before it was built, on disposable clusters with agentgateway v1.5.0 and v1.7.0. That
+found the delegated credential's own flaw: one per person and actor meant that two sign-ins
+with different groups replaced each other's, and the token the gateway still cached was
+refused. It is now one per person, actor and set of groups (plumbing v1.109.0). Design:
+[agent-delegation](./design/agent-delegation.md) §4.3.
+
 ## 2026-11-22 — the chart's values schema says that `serviceAccount.create: false` needs a name
 
 authn 0.53.0 (#164) binds authn's RBAC to the ServiceAccount the pod runs as. Since then the chart

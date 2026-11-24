@@ -74,7 +74,7 @@ func TestGenerateDelegated(t *testing.T) {
 					userAs("alice", "kc", "a", "devs", "ops"), "dispatcher", "claim-a", ttl.asked)
 				require.NoError(t, err)
 
-				name := endpoints.DelegatedSecretName("alice", "dispatcher")
+				name := endpoints.DelegatedSecretName("alice", "dispatcher", []string{"devs", "ops"})
 				assert.Equal(t, name, issued.Secret.Name)
 				assert.Nil(t, issued.Kubeconfig)
 				assert.Equal(t, []string{"POST " + name}, api.written, "only the delegated Secret")

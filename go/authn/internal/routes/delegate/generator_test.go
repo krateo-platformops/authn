@@ -48,7 +48,7 @@ func (g *fakeGenerator) GenerateDelegated(strategy storage.Strategy, u userinfo.
 		groups: append([]string{}, u.GetGroups()...), actor: actor, claim: claim, ttl: ttl})
 	// As the generator names a write it failed or refused: the Secret and
 	// the verb it sent, or would have.
-	written := storage.Written{Namespace: "krateo-system", Name: storage.DelegatedSecretName(u.GetUserName(), actor), Verb: "create"}
+	written := storage.Written{Namespace: "krateo-system", Name: storage.DelegatedSecretName(u.GetUserName(), actor, u.GetGroups()), Verb: "create"}
 	if g.err != nil {
 		return kubeconfig.Issued{Secret: written}, g.err
 	}

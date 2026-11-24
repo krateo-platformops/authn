@@ -48,6 +48,8 @@ type routeOptions struct {
 	// Naming is how session Secrets are named (AUTHN_EXACT_USERNAMES,
 	// authn#140); the zero value is the legacy naming.
 	Naming storage.Naming
+	// InternalTLS is whether the internal listener serves TLS.
+	InternalTLS bool
 }
 
 // buildRoutes returns every route authn serves. It is the whole HTTP surface:
@@ -82,18 +84,7 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 	// Agent delegation (AUDIT-6): a service that opted in exchanges a person's
 	// authn JWT for a short-lived one naming the person as subject and itself
 	// as actor (RFC 8693). docs/design/agent-delegation.md.
-	all = append(all, delegate.Route(o.RestConfig, delegate.Options{
-		Audience:     o.ServiceAccountAudience,
-		PrivateKey:   o.PrivateKey,
-		KeyID:        o.KeyID,
-		PreviousKeys: o.PreviousKeys,
-		Audit:        o.Audit,
-		// An identity provider's subject (authn#155) is checked against the
-		// Secrets a sign-in reads.
-		Naming: o.Naming,
-		// Each delegated token is issued with its own credential (authn#167).
-		Generator: o.Generator,
-	}))
+	all = append(all, delegate.Route(o.RestConfig, delegateOptions(o)))
 
 	all = append(all, ldap.Login(o.RestConfig, ldap.LoginOptions{
 		KubeconfigGenerator: o.Generator,
@@ -162,10 +153,35 @@ func buildRoutes(o routeOptions) ([]routes.Route, error) {
 // reach. TestInternalSurface (routes_test.go) pins this list, and
 // TestPublicSurface that none of it is public.
 func buildInternalRoutes(o routeOptions) []routes.Route {
-	return []routes.Route{
+	all := []routes.Route{
 		// Whether a username could be given to a new identity, for an
 		// access-request controller that opted in (spec.usernameCheck).
 		usernames.Route(o.RestConfig, usernames.Options{Audience: o.ServiceAccountAudience,
 			Audit: o.Audit.WithNaming(o.Naming), Naming: o.Naming}),
+	}
+	// The exchange for a service that signs a client assertion
+	// (spec.clientAssertion): a gateway's built-in token exchange. A
+	// person's token and the assertion travel in the request, so it needs TLS.
+	if o.InternalTLS {
+		d := delegateOptions(o)
+		d.ClientAssertions = true
+		all = append(all, delegate.Route(o.RestConfig, d))
+	}
+	return all
+}
+
+// delegateOptions is how both listeners serve the exchange.
+func delegateOptions(o routeOptions) delegate.Options {
+	return delegate.Options{
+		Audience:     o.ServiceAccountAudience,
+		PrivateKey:   o.PrivateKey,
+		KeyID:        o.KeyID,
+		PreviousKeys: o.PreviousKeys,
+		Audit:        o.Audit,
+		// An identity provider's subject (authn#155) is checked against the
+		// Secrets a sign-in reads.
+		Naming: o.Naming,
+		// Each delegated token is issued with its own credential (authn#167).
+		Generator: o.Generator,
 	}
 }

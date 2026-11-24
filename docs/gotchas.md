@@ -83,6 +83,11 @@ constraints outside authn rely on its shape:
   hex. That shape can never select a `<user>-clientconfig` Secret, which authn must never
   delete. snowplow's learned identities also skip it by the same suffix.
 
+- **Reader and writer move together.** The name carries the token's groups since plumbing
+  v1.109.0. A reader that computes it without them finds nothing, and answers `401
+  DelegatedCredentialMissing`. Roll the reader first or with authn, before anything is
+  mapped with `spec.delegation`.
+
 `TestPutDelegated` (no labels) and plumbing's `TestDelegatedSecretName` (never a session
 suffix) fail if either changes.
 

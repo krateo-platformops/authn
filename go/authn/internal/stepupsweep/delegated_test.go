@@ -20,9 +20,9 @@ import (
 // step-up one, and recorded as its own action. A valid one, one within the
 // grace, and a Secret merely starting like a delegated name stay.
 func TestSweepDeletesExpiredDelegatedSecrets(t *testing.T) {
-	expired := storage.DelegatedSecretName("alice", "dispatcher")
-	valid := storage.DelegatedSecretName("alice", "ide-agent")
-	inGrace := storage.DelegatedSecretName("bob", "dispatcher")
+	expired := storage.DelegatedSecretName("alice", "dispatcher", []string{"devs"})
+	valid := storage.DelegatedSecretName("alice", "ide-agent", []string{"devs"})
+	inGrace := storage.DelegatedSecretName("bob", "dispatcher", []string{"devs"})
 	c := fake.NewSimpleClientset(
 		secret(expired, "krateo-system", certData(t, now.Add(-time.Hour))),
 		secret(valid, "krateo-system", certData(t, now.Add(10*time.Minute))),
