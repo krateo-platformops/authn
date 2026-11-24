@@ -23,6 +23,7 @@ import (
 // (wrapListeners), each on its own port (newServers). main calls only this, so
 // TestNewListeners pins the whole composition.
 func newListeners(o routeOptions, log zerolog.Logger, corsOn bool, publicPort, internalPort int, internalTLS *tls.Config) (*http.Server, *http.Server, error) {
+	o.InternalTLS = internalTLS != nil
 	public, internal, err := listenerHandlers(o, log)
 	if err != nil {
 		return nil, nil, fmt.Errorf("building routes: %w", err)

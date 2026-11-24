@@ -33,6 +33,10 @@ import (
 
 const (
 	Path = "/delegate"
+	// AssertionPath is the same exchange for an actor that authenticates with
+	// a client assertion (RFC 7523): OAuth's token endpoint for it. Served on
+	// the internal listener only, and only over TLS.
+	AssertionPath = "/delegate/token"
 
 	// GrantType, TokenTypeJWT and TokenTypeAccessToken are RFC 8693's
 	// identifiers (§2.1, §3). A subject of TokenTypeJWT is an authn token; one
@@ -62,6 +66,9 @@ const (
 	// CauseInvalidTarget: the requested audience isn't one the actor's
 	// mapping allows (RFC 8693's invalid_target, authn#155).
 	CauseInvalidTarget status.CauseType = "InvalidTarget" // 400
+	// CauseSubjectAudienceNotAllowed: an authn subject token verified but is
+	// for another audience than the actor's (spec.delegation.subjectAudiences).
+	CauseSubjectAudienceNotAllowed status.CauseType = "SubjectAudienceNotAllowed" // 403
 	// CauseGroupNotAllowed: an identity provider's subject is in none of
 	// its OIDCConfig's allowedGroups: /oidc/login's cause of the same name.
 	CauseGroupNotAllowed status.CauseType = "GroupNotAllowed" // 403
@@ -102,6 +109,10 @@ type Options struct {
 	// (authn#167). Without one, every exchange fails: a delegated token is
 	// never issued without its credential.
 	Generator kubeconfig.Generator
+	// ClientAssertions serves AssertionPath instead of Path: the actor
+	// authenticates with a client assertion (RFC 7523), never with its
+	// ServiceAccount token. Only for the internal listener over TLS.
+	ClientAssertions bool
 }
 
 func Route(rc *rest.Config, opts Options) routes.Route {
@@ -132,11 +143,19 @@ type route struct {
 	// its keys are fetched once and refreshed by the source (authn#155).
 	mu      sync.Mutex
 	idpKeys map[string]*jwtutil.JWKSKeySource
+
+	// jtis are the client assertions already used.
+	jtis seenJTIs
 }
 
-func (r *route) Name() string    { return "delegate" }
-func (r *route) Pattern() string { return Path }
-func (r *route) Method() string  { return http.MethodPost }
+func (r *route) Name() string { return "delegate" }
+func (r *route) Pattern() string {
+	if r.opts.ClientAssertions {
+		return AssertionPath
+	}
+	return Path
+}
+func (r *route) Method() string { return http.MethodPost }
 
 func (r *route) Handler() http.HandlerFunc {
 	return func(wri http.ResponseWriter, req *http.Request) {
@@ -150,7 +169,7 @@ func (r *route) Handler() http.HandlerFunc {
 		}
 
 		token, ok := serviceaccount.BearerToken(req)
-		if !ok {
+		if !ok && !r.opts.ClientAssertions {
 			wri.Header().Set("WWW-Authenticate", `Bearer realm="krateo"`)
 			err := errors.New("the actor's ServiceAccount token must be sent as Authorization: Bearer")
 			encode.Failure(wri, status.New(http.StatusUnauthorized, err).
@@ -164,11 +183,21 @@ func (r *route) Handler() http.HandlerFunc {
 			return
 		}
 
-		actor, verified, err := serviceaccount.Authenticate(req.Context(), r.rc, r.opts.Audience, token)
+		var actor *sav1alpha1.ServiceAccount
+		if r.opts.ClientAssertions {
+			// One that isn't authenticated has no record, as a ServiceAccount
+			// token that doesn't verify has none.
+			actor, err = r.authenticateAssertion(req)
+		} else {
+			var verified serviceaccount.Verified
+			actor, verified, err = serviceaccount.Authenticate(req.Context(), r.rc, r.opts.Audience, token)
+			if err != nil {
+				// An actor the TokenReview verified is recorded however it was
+				// refused or failed at its mapping (authn#132).
+				serviceaccount.RecordUnmapped(r.opts.Audit, req, auditlog.ActionDelegate, verified)
+			}
+		}
 		if err != nil {
-			// An actor the TokenReview verified is recorded however it was
-			// refused or failed at its mapping (authn#132).
-			serviceaccount.RecordUnmapped(r.opts.Audit, req, auditlog.ActionDelegate, verified)
 			fail(err, "delegation actor not authenticated")
 			return
 		}
@@ -210,11 +239,13 @@ func (r *route) Handler() http.HandlerFunc {
 				return
 			}
 		} else {
-			subject, exp, why, err = r.verifySubject(x.subjectToken)
+			var verified *jwtutil.UserInfo
+			subject, exp, verified, why, err = r.verifySubject(actor, x.subjectToken)
 			if err != nil {
 				// The actor is verified: refusing its subject token is a decision
-				// about it, and the most security-relevant one.
-				r.opts.Audit.Delegation(req, actor, actorPrincipal, nil, nil, audit.OutcomeDenied, why, "")
+				// about it, and the most security-relevant one. A token that
+				// verified and is for someone else names its person.
+				r.opts.Audit.Delegation(req, actor, actorPrincipal, verified, nil, audit.OutcomeDenied, why, "")
 				fail(err, "delegation subject token refused")
 				return
 			}
@@ -371,6 +402,9 @@ func readExchange(req *http.Request) (exchangeRequest, error) {
 // actor, so each returns its record's reason and the audience it may name.
 func requestedAudience(actor *sav1alpha1.ServiceAccount, sent []string) (string, auditlog.DelegationDenial, error) {
 	switch {
+	case len(sent) == 0 && actor.Spec.Delegation.AudienceRequired:
+		return "", auditlog.InvalidRequest, status.BadRequest(CauseInvalidTarget,
+			errors.New("the actor's ServiceAccount mapping requires an audience (spec.delegation.audienceRequired)"))
 	case len(sent) == 0:
 		return "", auditlog.NoDelegationDenial, nil
 	case len(sent) > 1:
@@ -413,18 +447,28 @@ func delegationDepth(actor *sav1alpha1.ServiceAccount) (int, error) {
 }
 
 // verifySubject checks that authn signed the subject token, with its current
-// key or a previous one, and that it hasn't expired. It returns the token's
-// identity and expiry, or the refusal with its record's reason: expired for a
-// token that verified but has lapsed or is about to, invalid for one that
-// didn't verify (a bad signature, a kid authn has no key for, a retired one
-// among them, malformed, or no expiry, which authn never issues). The answer is
+// key or a previous one, that it hasn't expired, and that it isn't meant for
+// another audience than the actor's. It returns the token's identity and
+// expiry, or the refusal with its record's reason: expired for a token that
+// verified but has lapsed or is about to, invalid for one that didn't verify (a
+// bad signature, a kid authn has no key for, a retired one among them,
+// malformed, or no expiry, which authn never issues). The answer is
 // SubjectTokenInvalid either way; only the record tells them apart.
-func (r *route) verifySubject(token string) (jwtutil.UserInfo, time.Time, auditlog.DelegationDenial, error) {
-	refuse := func(why auditlog.DelegationDenial, err error) (jwtutil.UserInfo, time.Time, auditlog.DelegationDenial, error) {
-		return jwtutil.UserInfo{}, time.Time{}, why, subjectInvalid(err)
+//
+// A token for another audience is SubjectAudienceNotAllowed. Exchanging it
+// would turn a token one service accepts into one another does, so only a
+// service it is for may. It verified: its identity is returned for the record.
+func (r *route) verifySubject(actor *sav1alpha1.ServiceAccount, token string) (jwtutil.UserInfo, time.Time, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
+	refuse := func(why auditlog.DelegationDenial, err error) (jwtutil.UserInfo, time.Time, *jwtutil.UserInfo, auditlog.DelegationDenial, error) {
+		return jwtutil.UserInfo{}, time.Time{}, nil, why, subjectInvalid(err)
 	}
-	claims, err := jwtutil.ValidateClaimsWithKeySource(r.keys, token)
+	claims, err := jwtutil.ValidateClaimsWithKeySource(r.keys, token,
+		jwtutil.WithAudience(actor.Spec.Delegation.SubjectAudiences...))
 	switch {
+	case errors.Is(err, jwtutil.ErrAudienceMismatch):
+		// audit has no reason of its own for it yet (snowplow adds one).
+		return jwtutil.UserInfo{}, time.Time{}, &claims.UserInfo, auditlog.SubjectTokenInvalid,
+			status.Refused(CauseSubjectAudienceNotAllowed, errors.New("the subject token is for another audience than this service's (spec.delegation.subjectAudiences)"))
 	case errors.Is(err, jwtutil.ErrTokenExpired):
 		return refuse(auditlog.SubjectTokenExpired, fmt.Errorf("the subject token has expired: %w", err))
 	case err != nil:
@@ -437,7 +481,7 @@ func (r *route) verifySubject(token string) (jwtutil.UserInfo, time.Time, auditl
 	if time.Until(exp) < time.Second {
 		return refuse(auditlog.SubjectTokenExpired, errors.New("the subject token is about to expire"))
 	}
-	return claims.UserInfo, exp, auditlog.NoDelegationDenial, nil
+	return claims.UserInfo, exp, nil, auditlog.NoDelegationDenial, nil
 }
 
 // withoutReserved drops reserved groups: a krateo:loa: step-up group proves a

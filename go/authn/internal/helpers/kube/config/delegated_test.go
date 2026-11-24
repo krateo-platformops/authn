@@ -74,7 +74,7 @@ func TestGenerateDelegated(t *testing.T) {
 					userAs("alice", "kc", "a", "devs", "ops"), "dispatcher", "claim-a", ttl.asked)
 				require.NoError(t, err)
 
-				name := endpoints.DelegatedSecretName("alice", "dispatcher")
+				name := endpoints.DelegatedSecretName("alice", "dispatcher", []string{"devs", "ops"})
 				assert.Equal(t, name, issued.Secret.Name)
 				assert.Nil(t, issued.Kubeconfig)
 				assert.Equal(t, []string{"POST " + name}, api.written, "only the delegated Secret")
@@ -98,8 +98,9 @@ func TestGenerateDelegatedRefusesBeforeMinting(t *testing.T) {
 	api, rc := newStoreAPI(t, nil)
 	gen := legacyGenerator(t, rc)
 
-	_, err := gen.GenerateDelegated(storage.StrategyOIDC, userAs("alice", "kc", "a", "devs", "krateo:loa:2"), "dispatcher", "c", time.Minute)
+	issued, err := gen.GenerateDelegated(storage.StrategyOIDC, userAs("alice", "kc", "a", "devs", "krateo:loa:2"), "dispatcher", "c", time.Minute)
 	require.Error(t, err)
+	assert.Equal(t, storage.DelegatedSecretName("alice", "dispatcher", []string{"devs"}), issued.Secret.Name, "the Secret it would have written")
 	_, err = gen.GenerateDelegated(storage.StrategyOIDC, userAs("alice", "kc", "a", "devs"), "", "c", time.Minute)
 	require.Error(t, err)
 	assert.Equal(t, status.CauseIssuanceFailed, causeOf(err))

@@ -59,7 +59,7 @@ func TestPutDelegated(t *testing.T) {
 			w, err := st.Put("alice", delegatedNfo(t, "alice", "dispatcher", "devs", "ops"))
 			require.NoError(t, err)
 
-			name := endpoints.DelegatedSecretName("alice", "dispatcher")
+			name := endpoints.DelegatedSecretName("alice", "dispatcher", []string{"ops", "devs"})
 			assert.Equal(t, name, w.Name)
 			assert.Equal(t, "create", w.Verb)
 			assert.Equal(t, "krateo-system", w.Namespace)
@@ -80,36 +80,56 @@ func TestPutDelegated(t *testing.T) {
 	}
 }
 
-// Each exchange through the same actor for the same person replaces its
-// Secret, conditionally on the version it read; another actor's is another
-// Secret.
+// Each exchange through the same actor for the same person with the same
+// groups replaces its Secret, conditionally on the version it read. Another
+// actor's is another Secret, and so is another set of groups: a client may
+// still hold the first one's token.
 func TestPutDelegatedReplacesOnlyItsOwn(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
 	api, rc := newSecretsAPI(t)
 	st := Default(rc)
-	_, err := st.Put("alice", delegatedNfo(t, "alice", "dispatcher", "devs"))
-	require.NoError(t, err)
-	_, err = st.Put("alice", delegatedNfo(t, "alice", "ide-agent", "devs"))
-	require.NoError(t, err)
+	put := func(actor string, groups ...string) (string, Written) {
+		t.Helper()
+		w, err := st.Put("alice", delegatedNfo(t, "alice", actor, groups...))
+		require.NoError(t, err)
+		assert.Equal(t, endpoints.DelegatedSecretName("alice", actor, groups), w.Name)
+		return w.Name, w
+	}
+	mine, _ := put("dispatcher", "devs")
+	other, _ := put("ide-agent", "devs")
+	more, w := put("dispatcher", "devs", "ops")
+	assert.Equal(t, "create", w.Verb, "other groups are another Secret")
+	none, w := put("dispatcher")
+	assert.Equal(t, "create", w.Verb, "and so are none")
 
-	w, err := st.Put("alice", delegatedNfo(t, "alice", "dispatcher", "devs", "ops"))
-	require.NoError(t, err)
+	before := api.stored[mine]
+	again, w := put("dispatcher", "devs")
+	assert.Equal(t, mine, again)
 	assert.Equal(t, "update", w.Verb)
-	name := endpoints.DelegatedSecretName("alice", "dispatcher")
 	assert.Equal(t, "1", api.written[len(api.written)-1].ResourceVersion, "the update names the version it read")
-	assert.Equal(t, endpoints.DelegatedCredentialHeld,
-		endpoints.CheckDelegatedCredential(asRead(api.stored[name]), "alice", "dispatcher", []string{"devs", "ops"}, time.Now()))
-	other := endpoints.DelegatedSecretName("alice", "ide-agent")
-	assert.Equal(t, endpoints.DelegatedCredentialHeld,
-		endpoints.CheckDelegatedCredential(asRead(api.stored[other]), "alice", "ide-agent", []string{"devs"}, time.Now()),
-		"the other actor's credential is untouched")
+	assert.NotEqual(t, before, api.stored[mine], "replaced")
+
+	for name, tc := range map[string]struct {
+		actor  string
+		groups []string
+	}{
+		mine:  {"dispatcher", []string{"devs"}},
+		other: {"ide-agent", []string{"devs"}},
+		more:  {"dispatcher", []string{"ops", "devs"}},
+		none:  {"dispatcher", nil},
+	} {
+		assert.Equal(t, endpoints.DelegatedCredentialHeld,
+			endpoints.CheckDelegatedCredential(asRead(api.stored[name]), "alice", tc.actor, tc.groups, time.Now()),
+			"%s with %v is still held", tc.actor, tc.groups)
+	}
+	assert.Len(t, api.stored, 4)
 }
 
 // A Secret under the name that isn't this person's and actor's is never
 // replaced, and one replaced between the read and the update is a conflict.
 func TestPutDelegatedNeverReplacesAnothers(t *testing.T) {
 	t.Setenv(util.NamespaceEnvVar, "krateo-system")
-	name := endpoints.DelegatedSecretName("alice", "dispatcher")
+	name := endpoints.DelegatedSecretName("alice", "dispatcher", []string{"devs"})
 	for _, ann := range []map[string]string{
 		{UsernameAnnotation: "bob", endpoints.ActorAnnotation: "dispatcher"},
 		{UsernameAnnotation: "alice", endpoints.ActorAnnotation: "ide-agent"},
@@ -153,8 +173,8 @@ func TestPutDelegatedRefusesSignInOptions(t *testing.T) {
 }
 
 func TestDelegatedSecretNames(t *testing.T) {
-	name := DelegatedSecretName("alice", "dispatcher")
-	assert.Equal(t, endpoints.DelegatedSecretName("alice", "dispatcher"), name)
+	name := DelegatedSecretName("alice", "dispatcher", []string{"devs"})
+	assert.Equal(t, endpoints.DelegatedSecretName("alice", "dispatcher", []string{"devs"}), name)
 	assert.True(t, IsDelegatedSecretName(name))
 	assert.False(t, IsDelegatedSecretName("alice-clientconfig"))
 	assert.False(t, IsStepUpSecretName(name))

@@ -60,7 +60,7 @@ func TestDelegatedTokenAndCredentialCarryTheSameGroups(t *testing.T) {
 	assert.Equal(t, audit.OutcomeSuccess, auditlogtest.String(r, "krateo.audit.outcome"))
 	assert.Equal(t, "alice", auditlogtest.String(r, "user.name"))
 	assert.Equal(t, "secrets", auditlogtest.String(r, "krateo.audit.object_ref.resource"))
-	assert.Equal(t, storage.DelegatedSecretName("alice", "kagent"), auditlogtest.String(r, "krateo.audit.object_ref.name"))
+	assert.Equal(t, storage.DelegatedSecretName("alice", "kagent", []string{"devs"}), auditlogtest.String(r, "krateo.audit.object_ref.name"))
 	assert.Equal(t, audit.OutcomeSuccess,
 		auditlogtest.String(auditlogtest.OnlyAction(t, records, auditlog.ActionDelegate), "krateo.audit.outcome"))
 }

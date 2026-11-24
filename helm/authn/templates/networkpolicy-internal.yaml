@@ -3,7 +3,8 @@
 {{- fail "internal.networkPolicy.from must list at least one peer: an empty `from` would admit everyone to the internal port" }}
 {{- end }}
 # authn's pods admit anyone on the public port, as without a policy, and only
-# the configured callers on the internal one (POST /usernames/check). Selecting
+# the configured callers on the internal one (POST /usernames/check, and POST
+# /delegate/token when it serves TLS). Selecting
 # the pods for Ingress isolates every port the rules don't list, so both are
 # listed.
 apiVersion: networking.k8s.io/v1

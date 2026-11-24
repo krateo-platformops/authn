@@ -333,6 +333,14 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   issued token's `aud` may be, through RFC 8693's `audience` parameter (at most one; a
   malformed one is `400 InvalidRequestBody`, an unlisted one `400 InvalidTarget`). Each
   audience is audit's `token_audience` format, which the CRD's CEL rule mirrors.
+  `audienceRequired` refuses an exchange that names none (`400 InvalidTarget`), so the
+  service never holds a token every other service accepts. `subjectAudiences[]` are the
+  service's own names: an authn token with an `aud` that lists none of them is `403
+  SubjectAudienceNotAllowed` (`jwtutil.WithAudience`), so a token one service accepts is
+  never turned into one for another by a service it isn't for. A token with no `aud`,
+  which every sign-in's is, is exchanged as before. The refusal verified the token, so its
+  record names the person (`on_behalf_of`); its denial reason is `subject_token_invalid`
+  until audit has one of its own.
   The subject token is verified against authn's current and previous keys
   (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
   minus reserved ones, and its `principal`, adds `act` (`plumbing/jwtutil.Actor`) with
@@ -348,9 +356,14 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   generator refuses a reserved group rather than dropping it. The certificate is requested
   for the token's lifetime (at least `config.MinCertDuration`, 10 minutes, the CSR API's
   minimum), and the token is clamped to its granted `NotAfter`. It is stored as
-  `endpoints.DelegatedSecretName(username, act.sub)`: one Secret per person and actor,
-  replaced on each exchange (conditionally on the version read). A Secret under the name
-  that isn't this person's and actor's is never replaced. It carries the username, actor,
+  `endpoints.DelegatedSecretName(username, act.sub, groups)`: one Secret per person, actor
+  and set of groups, replaced on each exchange (conditionally on the version read). The
+  groups are the certificate's, which the reader's check compares with the token's. With
+  one Secret per person and actor, a token a client still held was refused as soon as
+  another sign-in of the person, with other groups, was exchanged through the same actor
+  (Diego, 2026-11-24). Expired ones are deleted by the sweep, so a person's are bounded by
+  the sets used in the last half hour. A Secret under the name that isn't this person's
+  and actor's is never replaced. It carries the username, actor,
   strategy, groups, validity and claim annotations, and none of the labels the tenant
   policy selects sign-ins by. For an identity provider's token the strategy is `oidc` and
   the claim the one the claim-first rule vouched for. For an authn token they are read

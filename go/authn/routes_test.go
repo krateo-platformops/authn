@@ -349,18 +349,27 @@ func TestSmokeAnswers(t *testing.T) {
 // internalSurface is every route on authn's internal listener.
 var internalSurface = []string{"POST /usernames/check"}
 
+// internalTLSSurface is every route on it when it serves TLS.
+var internalTLSSurface = []string{"POST /delegate/token", "POST /usernames/check"}
+
 // TestInternalSurface pins the internal listener's routes, and that none of
 // them is on the public listener: the public routes (HTTPRoutes forward every
 // path to authn's public port) must never reach an internal-only call, or
 // anyone could ask whether a name is held.
 func TestInternalSurface(t *testing.T) {
-	internal := buildInternalRoutes(routeOptions{ServiceAccountAudience: "authn"})
-	var got []string
-	for _, r := range internal {
-		got = append(got, r.Method()+" "+r.Pattern())
+	surface := func(rs []routes.Route) []string {
+		var got []string
+		for _, r := range rs {
+			got = append(got, r.Method()+" "+r.Pattern())
+		}
+		sort.Strings(got)
+		return got
 	}
-	sort.Strings(got)
-	require.Equal(t, internalSurface, got, "the internal surface changed: review the new route, then update internalSurface")
+	o := testRouteOptions(t)
+	require.Equal(t, internalSurface, surface(buildInternalRoutes(o)), "the internal surface changed: review the new route, then update internalSurface")
+	o.InternalTLS = true
+	internal := buildInternalRoutes(o)
+	require.Equal(t, internalTLSSurface, surface(internal), "the internal surface changed: review the new route, then update internalTLSSurface")
 
 	public := map[string]bool{}
 	for _, r := range publicRoutes(t, &mintCounter{}) {
@@ -376,6 +385,10 @@ func TestInternalSurface(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNotFound, rec.Code, "the public listener must not serve /usernames/check")
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/delegate/token", nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code, "the public listener must not serve /delegate/token")
 }
 
 // GenerateDelegated is /delegate's (authn#167); no login issues one.

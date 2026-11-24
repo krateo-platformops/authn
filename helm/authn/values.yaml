@@ -65,7 +65,9 @@ service:
   port: 8082
 
 # authn's internal listener: calls only in-cluster services make
-# (POST /usernames/check). It is served by its own ClusterIP Service,
+# (POST /usernames/check, and with internal.tls POST /delegate/token, the token
+# exchange for a service that signs a client assertion, such as a gateway). It is
+# served by its own ClusterIP Service,
 # <release>-internal, which no Ingress or HTTPRoute may reference: the public
 # Service's routes forward every path to the public port, never to this one.
 internal:
