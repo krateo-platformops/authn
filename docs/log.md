@@ -14,6 +14,13 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-28 — a subject token for another audience is `audience_mismatch`
+
+`/delegate` recorded a subject token that verified but is for another service
+(`SubjectAudienceNotAllowed`) as `subject_token_invalid`, as audit had no reason of its own.
+audit v0.17.0 adds `audience_mismatch` (snowplow#1596); the record now says it. Records only:
+the answer, its cause and status are unchanged.
+
 ## 2026-11-28 — an audience is the target's `<service>.<namespace>`
 
 Agreed with agentiko for agentgateway: every audience is the target's in-cluster Service name and namespace, one per target and never shared, with no https URIs; each recipient reads its own name from configuration. snowplow (`snowplow.krateo-system`) is the first recipient.

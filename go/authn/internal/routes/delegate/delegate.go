@@ -466,8 +466,10 @@ func (r *route) verifySubject(actor *sav1alpha1.ServiceAccount, token string) (j
 		jwtutil.WithAudience(actor.Spec.Delegation.SubjectAudiences...))
 	switch {
 	case errors.Is(err, jwtutil.ErrAudienceMismatch):
-		// audit has no reason of its own for it yet (snowplow adds one).
-		return jwtutil.UserInfo{}, time.Time{}, &claims.UserInfo, auditlog.SubjectTokenInvalid,
+		// The token verified, so the record names the person; its reason is
+		// audit's own (v0.17.0), not subject_token_invalid, which is a token
+		// that didn't verify.
+		return jwtutil.UserInfo{}, time.Time{}, &claims.UserInfo, auditlog.AudienceMismatch,
 			status.Refused(CauseSubjectAudienceNotAllowed, errors.New("the subject token is for another audience than this service's (spec.delegation.subjectAudiences)"))
 	case errors.Is(err, jwtutil.ErrTokenExpired):
 		return refuse(auditlog.SubjectTokenExpired, fmt.Errorf("the subject token has expired: %w", err))

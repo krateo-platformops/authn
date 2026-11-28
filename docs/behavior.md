@@ -339,8 +339,8 @@ The intra-service-auth exchange allowlist; `metadata.name` is the issued usernam
   SubjectAudienceNotAllowed` (`jwtutil.WithAudience`), so a token one service accepts is
   never turned into one for another by a service it isn't for. A token with no `aud`,
   which every sign-in's is, is exchanged as before. The refusal verified the token, so its
-  record names the person (`on_behalf_of`); its denial reason is `subject_token_invalid`
-  until audit has one of its own.
+  record names the person (`on_behalf_of`); its denial reason is `audience_mismatch`
+  (audit v0.17.0), not `subject_token_invalid`, which is a token that didn't verify.
   The subject token is verified against authn's current and previous keys
   (`delegate.keySet`). The issued token keeps the subject's `username` and `groups`,
   minus reserved ones, and its `principal`, adds `act` (`plumbing/jwtutil.Actor`) with
@@ -846,7 +846,8 @@ or a log line.
   refused subject token: `subject_token_expired` when it verified but has lapsed or is
   about to, `subject_token_invalid` when it didn't verify (a bad signature, a kid authn
   has no key for, including a retired one, or malformed). Both answer `401`
-  `SubjectTokenInvalid`. For an identity provider's access token (#155) the same two
+  `SubjectTokenInvalid`. A token that verified but is for another audience answers `403`
+  `SubjectAudienceNotAllowed`, with reason `audience_mismatch` (audit v0.17.0). For an identity provider's access token (#155) the same two
   reasons apply (a wrong `iss`, `aud` or `alg` is `subject_token_invalid`); once it
   verified, a refusal names the person (`on_behalf_of`) and records the sign-in's
   reason: `subject_not_signed_in`, `name_claimed`, `name_held_legacy`,
