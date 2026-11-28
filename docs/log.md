@@ -14,6 +14,14 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-28 — a gateway that fronts several targets
+
+Diego chose, for the Agentiko bridge and `krateo-agent-gateway`: the bridge exchanges the
+person's token for one addressed to the gateway (`krateo-agent-gateway.krateo-system`), which
+exchanges it per target at `/delegate/token` for the target's own name. The gateway's mapping
+takes `subjectAudiences` of its own name and `maxDepth: 2`. Documented in
+[agent-delegation §4.3](./design/agent-delegation.md); docs only.
+
 ## 2026-11-28 — a subject token for another audience is `audience_mismatch`
 
 `/delegate` recorded a subject token that verified but is for another service
