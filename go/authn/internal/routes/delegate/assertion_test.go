@@ -565,7 +565,7 @@ func TestSubjectAudiences(t *testing.T) {
 			assert.Equal(t, http.StatusForbidden, rec.Code)
 			assert.Equal(t, "SubjectAudienceNotAllowed", cause(t, rec))
 			assert.Equal(t, "denied", auditlogtest.String(r, "krateo.audit.outcome"))
-			assert.Equal(t, "subject_token_invalid", auditlogtest.String(r, "krateo.audit.denial_reason"))
+			assert.Equal(t, "audience_mismatch", auditlogtest.String(r, "krateo.audit.denial_reason"))
 			assert.NotContains(t, rec.Body.String(), "alice")
 		})
 	}

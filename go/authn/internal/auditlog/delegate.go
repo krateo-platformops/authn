@@ -32,6 +32,10 @@ const (
 	SubjectTokenExpired DelegationDenial = audit.DenialReasonSubjectTokenExpired
 	// SubjectTokenInvalid: the subject token didn't verify.
 	SubjectTokenInvalid DelegationDenial = audit.DenialReasonSubjectTokenInvalid
+	// AudienceMismatch: the subject token verified but is for another audience
+	// than this service's (spec.delegation.subjectAudiences). The answer is
+	// SubjectAudienceNotAllowed; the record says which of the two refusals it was.
+	AudienceMismatch DelegationDenial = audit.DenialReasonAudienceMismatch
 	// InvalidRequest: the requested audience is malformed, or there is more
 	// than one (authn#155).
 	InvalidRequest DelegationDenial = audit.DenialReasonInvalidRequest
