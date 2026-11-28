@@ -227,6 +227,34 @@ only it accepts, and reaches Kubernetes with the person's certificate.
    target is refused by every other recipient that checks its audience. A recipient reads its own name from configuration,
    not from code. We do not use https URIs: there is no external issuer to tell apart, and
    the short form reads well in audit records.
+   **A gateway that fronts several targets** (Diego, 2026-11-28, for the Agentiko bridge and
+   `krateo-agent-gateway`). The first actor, the bridge, exchanges the person's token for one
+   whose audience is the gateway's own name, `krateo-agent-gateway.krateo-system`: the gateway
+   receives it and forwards it along a path, through an agent, to many tools. The gateway then
+   exchanges it per target at `POST /delegate/token` for a token whose audience is that
+   target's own name. The mappings:
+   - the first actor: `spec.delegation.audiences` lists the gateway's name (and any other
+     target it calls directly, such as `snowplow.krateo-system`), `audienceRequired: true`,
+     `maxDepth: 1`;
+   - the gateway: `subjectAudiences: [<its own name>]`, so authn accepts a subject token
+     addressed to it (`verifySubject` checks it with `WithAudience(subjectAudiences...)`; a
+     token with no `aud` is accepted anyway), `maxDepth: 2`, because the new `act` is
+     `{sub: gateway, act: <the subject's act>}` and the chain counts the new link,
+     `audiences` listing each target, and `audienceRequired: true`.
+
+   The person's `principal` is kept from the subject token. Each actor gets its own delegated
+   credential, keyed on the outermost actor (`endpoints.DelegatedSecretName(username, actor,
+   groups)`); two exchanges by the same actor for the same person and groups share one Secret,
+   replaced each time, which is harmless because `endpoints.CheckDelegatedCredential` compares
+   username, actor, groups and validity, not the token. A token never outlives its subject
+   token. Three rules go with the pattern:
+   - A hop that only forwards the token, the agent, is not a recipient: if it ever checks
+     `aud`, it accepts the gateway's name, not its own.
+   - A target starts checking its own audience (`WithAudience(<its name>)`) only after the
+     gateway exchanges for its route. Until then the route forwards a token addressed to the
+     gateway, and a target that checks would refuse every call.
+   - A token addressed to the gateway is never sent to a target directly (snowplow, say):
+     the first actor makes a separate exchange naming that target.
 5. **One delegated credential per person, actor and set of groups**, changing §4.2's one
    per person and actor. A client that caches a token, as a gateway does, kept presenting
    it after another sign-in of the person with other groups had replaced the Secret, and
@@ -241,3 +269,7 @@ Rejected:
 - a small exchange service of ours beside the gateway: the gateway already has one;
 - a client secret (`client_secret_basic`): a shared secret to distribute and rotate;
 - one audience for all tool servers: a compromised one could use its token at another.
+- for a gateway chain, the agent's name as the audience: it couples every tool route to one
+  agent's name;
+- for a gateway chain, no audience: it leaves a token every recipient accepts and
+  contradicts `audienceRequired`.
