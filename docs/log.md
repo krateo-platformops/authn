@@ -14,6 +14,10 @@ Curated history, newest first. Durable decisions live in
 [architecture](./architecture.md) / [behavior](./behavior.md) /
 [gotchas](./gotchas.md).
 
+## 2026-11-28 — an audience is the target's `<service>.<namespace>`
+
+Agreed with agentiko for agentgateway: every audience is the target's in-cluster Service name and namespace, one per target and never shared, with no https URIs; each recipient reads its own name from configuration. snowplow (`snowplow.krateo-system`) is the first recipient.
+
 ## 2026-11-24 — a token for one recipient, exchanged by the gateway
 
 A tool server that acts for a person should hold a token only it accepts. Diego chose the

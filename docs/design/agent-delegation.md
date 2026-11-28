@@ -221,6 +221,12 @@ only it accepts, and reaches Kubernetes with the person's certificate.
    `WithRequiredAudience`): a token naming someone else is refused, one naming no one is a
    sign-in's. At the exchange, `audienceRequired` and `subjectAudiences` keep a limited
    token from being widened.
+   An audience is the target's in-cluster Service name and namespace,
+   `<service>.<namespace>`: `snowplow.krateo-system` for snowplow, `kagent-tools.<namespace>`
+   for a tool server. There is one per target and none is shared, so a token for one
+   target is refused by every other. A recipient reads its own name from configuration,
+   not from code. We do not use https URIs: there is no external issuer to tell apart, and
+   the short form reads well in audit records.
 5. **One delegated credential per person, actor and set of groups**, changing §4.2's one
    per person and actor. A client that caches a token, as a gateway does, kept presenting
    it after another sign-in of the person with other groups had replaced the Secret, and
